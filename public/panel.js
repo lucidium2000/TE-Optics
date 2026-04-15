@@ -1,0 +1,2072 @@
+(function () {
+  'use strict';
+  if (document.getElementById('te-panel-root')) return;
+
+  // ---------------------------------------------------------------------------
+  // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
+  // ---------------------------------------------------------------------------
+  let csrfToken = null;
+  let teInitData = null;  // response from /ajax/settings/tests/init
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  let agents = [];
+  let accountGroups = [];
+  let selectedAgentIds = new Set();
+
+  // ---------------------------------------------------------------------------
+  // Styles (scoped via #te-panel-root)
+  // ---------------------------------------------------------------------------
+  const STYLES = `
+    #te-panel-root {
+      position: fixed; top: 0; right: 0; z-index: 2147483647;
+      width: var(--tep-width, 480px); height: 100vh;
+      background: #0f172a; color: #e2e8f0;
+      border-left: 1px solid #334155;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px; box-shadow: -4px 0 20px rgba(0,0,0,.4);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #te-panel-root * { box-sizing: border-box; }
+
+    /* Resize gutter */
+    #tep-resize-handle {
+      position: fixed; top: 0; width: 6px; height: 100vh;
+      cursor: col-resize; z-index: 2147483648;
+      background: transparent;
+    }
+    #tep-resize-handle:hover, #tep-resize-handle.active {
+      background: #3b82f6;
+    }
+
+    /* Header */
+    .tep-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; background: #1e293b; border-bottom: 1px solid #334155;
+      user-select: none; gap: 8px;
+    }
+    .tep-header h2 { font-size: 15px; font-weight: 700; color: #f1f5f9; margin: 0; flex: 1; }
+    .tep-dark-toggle {
+      background: none; border: 1px solid #475569; color: #94a3b8; font-size: 16px;
+      cursor: pointer; padding: 2px 6px; border-radius: 6px; line-height: 1;
+    }
+    .tep-dark-toggle:hover { color: #f1f5f9; border-color: #64748b; }
+    .tep-dark-toggle.active { color: #facc15; border-color: #facc15; }
+    .tep-close {
+      background: none; border: none; color: #94a3b8; font-size: 20px;
+      cursor: pointer; line-height: 1; padding: 0 4px;
+    }
+    .tep-close:hover { color: #f87171; }
+
+    /* Body */
+    .tep-body { padding: 16px; overflow-y: auto; flex: 1; }
+
+    /* Status bar */
+    .tep-status {
+      padding: 8px 12px; font-size: 12px; color: #94a3b8;
+      background: #1e293b; border-bottom: 1px solid #334155;
+    }
+    .tep-status.ok { color: #4ade80; }
+    .tep-status.err { color: #f87171; }
+
+    /* Toast notifications */
+    .tep-toast {
+      padding: 8px 14px; font-size: 12px; font-weight: 600;
+      border-radius: 6px; margin: 6px 16px 0; animation: tepFadeIn .2s;
+    }
+    .tep-toast-ok { background: #064e3b; color: #4ade80; border: 1px solid #065f46; }
+    .tep-toast-err { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+    .tep-toast-processing { background: #1e293b; color: #38bdf8; border: 1px solid #0ea5e9; animation: tepFadeIn .2s, tepPulse 1.5s ease-in-out infinite; }
+    @keyframes tepFadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes tepPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    /* Form elements */
+    .tep-label {
+      display: block; font-size: 12px; font-weight: 600; color: #94a3b8;
+      margin-bottom: 4px; margin-top: 12px;
+    }
+    .tep-label:first-child { margin-top: 0; }
+    .tep-input, .tep-select, .tep-textarea {
+      width: 100%; padding: 10px 10px; background: #1e293b;
+      border: 1px solid #334155; border-radius: 6px; color: #e2e8f0;
+      font-size: 13px; outline: none; transition: border-color .15s;
+    }
+    .tep-input:focus, .tep-select:focus, .tep-textarea:focus {
+      border-color: #3b82f6;
+    }
+    .tep-textarea { resize: vertical; min-height: 70px; font-family: monospace; }
+    .tep-input { height: 38px; }
+    .tep-select { appearance: auto; height: 38px; line-height: 18px; }
+
+    /* Agent list */
+    .tep-agents-box {
+      max-height: 180px; overflow-y: auto; background: #1e293b;
+      border: 1px solid #334155; border-radius: 6px; padding: 6px;
+      margin-top: 4px;
+    }
+    .tep-agent-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 6px; border-radius: 4px; cursor: pointer;
+    }
+    .tep-agent-item:hover { background: #334155; }
+    .tep-agent-item input { accent-color: #3b82f6; }
+    .tep-agent-name { color: #e2e8f0; font-size: 12px; }
+    .tep-agent-loc { color: #64748b; font-size: 11px; }
+    .tep-agent-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 2px; flex-shrink: 0; }
+    .tep-agent-status.online { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
+    .tep-agent-status.offline { background: #f87171; box-shadow: 0 0 4px #f87171; }
+    .tep-agent-status.unknown { background: #64748b; }
+
+    /* Filter */
+    .tep-agent-filter {
+      width: 100%; padding: 6px 8px; background: #0f172a;
+      border: 1px solid #334155; border-radius: 4px; color: #e2e8f0;
+      font-size: 12px; margin-bottom: 6px; outline: none;
+    }
+    .tep-agent-filter:focus { border-color: #3b82f6; }
+
+    /* Buttons */
+    .tep-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 9px 18px; border: none; border-radius: 7px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: background .15s, transform .1s;
+    }
+    .tep-btn:active { transform: scale(0.97); }
+    .tep-btn-primary { background: #3b82f6; color: #fff; }
+    .tep-btn-primary:hover { background: #2563eb; }
+    .tep-btn-primary:disabled { background: #1e40af; opacity: 0.5; cursor: not-allowed; }
+    .tep-btn-secondary { background: #334155; color: #e2e8f0; }
+    .tep-btn-secondary:hover { background: #475569; }
+    .tep-btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    .tep-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+    /* Results log */
+    .tep-log-wrap {
+      margin-top: 14px;
+    }
+    .tep-log-toggle {
+      background: #1e293b; border: 1px solid #334155; border-radius: 6px;
+      color: #94a3b8; font-size: 11px; font-weight: 600; padding: 5px 10px;
+      cursor: pointer; width: 100%; text-align: left;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .tep-log-toggle:hover { background: #334155; color: #e2e8f0; }
+    .tep-log-toggle .tep-log-arrow { transition: transform .15s; display: inline-block; }
+    .tep-log-toggle.open .tep-log-arrow { transform: rotate(90deg); }
+    .tep-log {
+      background: #020617; border: 1px solid #1e293b;
+      border-radius: 0 0 6px 6px; padding: 10px; font-family: monospace; font-size: 11px;
+      max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+      line-height: 1.6; display: none;
+    }
+    .tep-log.open { display: block; }
+    .tep-log-ok { color: #4ade80; }
+    .tep-log-err { color: #f87171; }
+    .tep-log-info { color: #94a3b8; }
+
+    /* Tabs */
+    .tep-tabs { display: flex; gap: 2px; margin-bottom: 14px; }
+    .tep-tab {
+      flex: 1; padding: 7px 4px; text-align: center; font-size: 12px;
+      font-weight: 600; background: #1e293b; border: 1px solid #334155;
+      color: #94a3b8; cursor: pointer; border-radius: 6px;
+      transition: background .15s, color .15s;
+    }
+    .tep-tab:hover { background: #334155; color: #e2e8f0; }
+    .tep-tab.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+    /* Section toggles */
+    .tep-section-title {
+      font-size: 13px; font-weight: 700; color: #cbd5e1;
+      margin-top: 16px; margin-bottom: 8px;
+      padding-bottom: 4px; border-bottom: 1px solid #1e293b;
+    }
+
+    /* Top-level view switcher */
+    .tep-view-tabs { display: flex; border-bottom: 1px solid #334155; }
+    .tep-view-tab {
+      flex: 1; padding: 10px; text-align: center; font-size: 13px;
+      font-weight: 600; color: #94a3b8; cursor: pointer;
+      background: #1e293b; border: none; transition: all .15s;
+    }
+    .tep-view-tab:hover { color: #e2e8f0; background: #273449; }
+    .tep-view-tab.active { color: #3b82f6; border-bottom: 2px solid #3b82f6; background: #0f172a; }
+    .tep-view-panel { display: none; }
+    .tep-view-panel.active { display: block; }
+
+    /* Test cards */
+    .tep-test-card {
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 8px; transition: border-color .15s;
+    }
+    .tep-test-card:hover { border-color: #475569; }
+    .tep-test-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .tep-test-card-name { font-weight: 600; color: #e2e8f0; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+    .tep-test-link { font-size: 11px; text-decoration: none; opacity: 0.35; transition: opacity .15s; flex-shrink: 0; }
+    .tep-test-link:hover { opacity: 1; }
+    .tep-test-card-meta { display: flex; gap: 8px; margin-top: 6px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
+    .tep-test-card-meta span { display: inline-flex; align-items: center; gap: 3px; }
+    .tep-type-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
+    }
+    .tep-type-http { background: #1e3a5f; color: #60a5fa; }
+    .tep-type-a2s { background: #1a3f2e; color: #4ade80; }
+    .tep-type-page { background: #3b1f5e; color: #c084fc; }
+    .tep-type-dns { background: #3b3510; color: #facc15; }
+    .tep-type-other { background: #334155; color: #94a3b8; }
+    .tep-test-actions { display: flex; gap: 4px; }
+    .tep-test-actions button {
+      background: #334155; border: 1px solid #475569; color: #94a3b8;
+      font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+      transition: all .15s;
+    }
+    .tep-test-actions button:hover { background: #475569; color: #e2e8f0; }
+    .tep-test-actions button.tep-btn-danger:hover { background: #7f1d1d; color: #fca5a5; border-color: #991b1b; }
+    .tep-enabled-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .tep-enabled-dot.on { background: #4ade80; }
+    .tep-enabled-dot.off { background: #f87171; }
+    .tep-manage-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+    .tep-manage-toolbar select, .tep-manage-toolbar input {
+      padding: 6px 8px; background: #1e293b; border: 1px solid #334155;
+      border-radius: 6px; color: #e2e8f0; font-size: 12px; outline: none;
+    }
+    .tep-manage-toolbar input { flex: 1; min-width: 120px; }
+    .tep-manage-toolbar select { min-width: 100px; }
+    .tep-test-list { max-height: calc(100vh - 340px); overflow-y: auto; }
+    .tep-test-count { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+
+    /* Edit form inline */
+    .tep-edit-form { margin-top: 8px; padding-top: 8px; border-top: 1px solid #334155; }
+    .tep-edit-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
+    .tep-edit-row label { font-size: 11px; color: #94a3b8; min-width: 60px; }
+    .tep-edit-row input, .tep-edit-row select {
+      flex: 1; padding: 5px 8px; background: #0f172a; border: 1px solid #334155;
+      border-radius: 4px; color: #e2e8f0; font-size: 12px; outline: none;
+    }
+    .tep-edit-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .tep-edit-agents-box {
+      max-height: 150px; overflow-y: auto; background: #0f172a;
+      border: 1px solid #334155; border-radius: 4px; padding: 4px;
+      margin-top: 4px;
+    }
+    .tep-edit-agents-box label {
+      display: flex; align-items: center; gap: 5px; padding: 3px 5px;
+      border-radius: 3px; cursor: pointer; font-size: 11px; color: #e2e8f0;
+      min-width: auto;
+    }
+    .tep-edit-agents-box label:hover { background: #334155; }
+    .tep-edit-agents-box input { accent-color: #3b82f6; }
+    .tep-edit-agent-filter {
+      width: 100%; padding: 4px 6px; background: #0f172a; border: 1px solid #334155;
+      border-radius: 4px; color: #e2e8f0; font-size: 11px; outline: none; margin-bottom: 4px;
+    }
+    .tep-edit-agent-filter:focus { border-color: #3b82f6; }
+
+    /* Bulk actions bar */
+    .tep-bulk-bar {
+      display: none; background: #1e3a5f; border: 1px solid #3b82f6; border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 10px; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .tep-bulk-bar.active { display: flex; }
+    .tep-bulk-bar span { font-size: 12px; font-weight: 600; color: #93c5fd; white-space: nowrap; }
+    .tep-bulk-bar select {
+      padding: 5px 8px; background: #0f172a; border: 1px solid #334155;
+      border-radius: 4px; color: #e2e8f0; font-size: 12px; outline: none;
+    }
+    .tep-bulk-bar button {
+      padding: 5px 12px; border: none; border-radius: 5px; font-size: 12px;
+      font-weight: 600; cursor: pointer; transition: background .15s;
+    }
+    .tep-bulk-apply { background: #3b82f6; color: #fff; }
+    .tep-bulk-apply:hover { background: #2563eb; }
+    .tep-bulk-delete { background: #7f1d1d; color: #fca5a5; }
+    .tep-bulk-delete:hover { background: #991b1b; }
+    .tep-test-card-check { accent-color: #3b82f6; margin-right: 4px; cursor: pointer; flex-shrink: 0; }
+    .tep-select-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+    .tep-select-bar button { background: none; border: none; color: #3b82f6; font-size: 12px; cursor: pointer; padding: 0; }
+    .tep-select-bar button:hover { text-decoration: underline; }
+
+    /* Scrollbar */
+    #te-panel-root ::-webkit-scrollbar { width: 6px; }
+    #te-panel-root ::-webkit-scrollbar-track { background: transparent; }
+    #te-panel-root ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  `;
+
+  // ---------------------------------------------------------------------------
+  // CSP-safe style injection (works on Firefox + Chrome)
+  // ---------------------------------------------------------------------------
+  function tepInjectCSS(css) {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return {
+        update(newCss) { sheet.replaceSync(newCss); },
+        remove() { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(s => s !== sheet); }
+      };
+    } catch (_) {
+      // Fallback for older browsers
+      const el = document.createElement('style');
+      el.textContent = css;
+      (document.head || document.documentElement).appendChild(el);
+      return {
+        update(newCss) { el.textContent = newCss; },
+        remove() { el.remove(); }
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Create DOM
+  // ---------------------------------------------------------------------------
+  // Create resize gutter
+  const resizeHandle = document.createElement('div');
+  resizeHandle.id = 'tep-resize-handle';
+  document.body.appendChild(resizeHandle);
+
+  const root = document.createElement('div');
+  root.id = 'te-panel-root';
+
+  const mainStyles = tepInjectCSS(STYLES);
+
+  // Push TE page content to the left
+  const TEP_WIDTH_KEY = 'tep-panel-width';
+  let panelWidth = parseInt(localStorage.getItem(TEP_WIDTH_KEY), 10) || 576;
+  const constrainStyles = tepInjectCSS('');
+  function applyWidth(w) {
+    panelWidth = Math.max(320, Math.min(w, window.innerWidth - 300));
+    root.style.setProperty('--tep-width', panelWidth + 'px');
+    resizeHandle.style.right = (panelWidth - 3) + 'px';
+    localStorage.setItem(TEP_WIDTH_KEY, panelWidth);
+    constrainStyles.update(`
+      html {
+        margin-right: ${panelWidth}px !important;
+        overflow-x: hidden !important;
+      }
+      body {
+        overflow-x: hidden !important;
+        min-width: 0 !important;
+        width: auto !important;
+      }
+      /* Force all TE content containers to respect available width */
+      body > *:not(#te-panel-root):not(#tep-resize-handle):not(script):not(style):not(link) {
+        max-width: calc(100vw - ${panelWidth}px) !important;
+        overflow-x: auto !important;
+      }
+    `);
+  }
+  applyWidth(panelWidth);
+
+  root.insertAdjacentHTML('beforeend', `
+    <div class="tep-header" id="tep-drag-handle">
+      <h2>TE Optics</h2>
+      <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle dark mode on TE page">&#9789;</button>
+      <button class="tep-close" id="tep-close">&times;</button>
+    </div>
+    <div class="tep-status" id="tep-status">Detecting session&hellip;</div>
+
+    <!-- Top-level view switcher -->
+    <div class="tep-view-tabs">
+      <div class="tep-view-tab active" data-view="create">Create Tests</div>
+      <div class="tep-view-tab" data-view="manage">Manage Tests</div>
+    </div>
+
+    <div class="tep-body" id="tep-body">
+      <!-- ============== CREATE PANEL ============== -->
+      <div class="tep-view-panel active" id="tep-panel-create">
+        <div class="tep-tabs" id="tep-tabs">
+          <div class="tep-tab active" data-type="http-server">HTTP Server</div>
+          <div class="tep-tab" data-type="agent-to-server">Agent&rarr;Server</div>
+          <div class="tep-tab" data-type="page-load">Page Load</div>
+        </div>
+
+        <label class="tep-label">Test Name (use {target} as placeholder for bulk)</label>
+        <input class="tep-input" id="tep-testname" value="HTTP Test - {target}" placeholder="My test name">
+
+        <label class="tep-label">Targets (one per line)</label>
+        <textarea class="tep-textarea" id="tep-targets" placeholder="https://example.com&#10;https://another.com"></textarea>
+
+        <div id="tep-a2s-fields" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:8px 0;">
+          <div>
+            <label class="tep-label">Protocol</label>
+            <select class="tep-select" id="tep-a2s-protocol" style="width:auto;">
+              <option value="TCP-SACK" selected>TCP / SACK</option>
+              <option value="TCP-SYN">TCP / SYN</option>
+              <option value="ICMP">ICMP</option>
+            </select>
+          </div>
+          <div id="tep-a2s-tcp-opts" style="display:contents;">
+            <div>
+              <label class="tep-label">Port</label>
+              <input class="tep-input" id="tep-a2s-port" type="number" value="443" min="1" max="65535" style="width:80px;">
+            </div>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#94a3b8;cursor:pointer;padding-bottom:2px;">
+              <input type="checkbox" id="tep-a2s-insession" checked> In-Session
+            </label>
+          </div>
+        </div>
+
+        <label class="tep-label">Test Interval</label>
+        <select class="tep-select" id="tep-interval">
+          <option value="60">1 minute</option>
+          <option value="120" selected>2 minutes</option>
+          <option value="300">5 minutes</option>
+          <option value="600">10 minutes</option>
+          <option value="900">15 minutes</option>
+          <option value="1800">30 minutes</option>
+          <option value="3600">60 minutes</option>
+        </select>
+
+
+        <div class="tep-section-title">
+          Agents
+          <button class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-load-agents" style="float:right;">Reload Agents</button>
+        </div>
+        <input class="tep-agent-filter" id="tep-agent-filter" placeholder="Filter agents&hellip;">
+        <div class="tep-agents-box" id="tep-agents-box">
+          <span class="tep-log-info">Agents will load after auth&hellip;</span>
+        </div>
+
+        <div class="tep-actions">
+          <button class="tep-btn tep-btn-primary" id="tep-create">Create Tests</button>
+          <button class="tep-btn tep-btn-secondary" id="tep-retry-auth">Retry Auth</button>
+          <button class="tep-btn tep-btn-secondary" id="tep-clear-log">Clear Log</button>
+        </div>
+      </div>
+
+      <!-- ============== MANAGE PANEL ============== -->
+      <div class="tep-view-panel" id="tep-panel-manage">
+        <div class="tep-manage-toolbar">
+          <select id="tep-manage-type-filter">
+            <option value="">All Types</option>
+            <option value="Http">HTTP Server</option>
+            <option value="A2s">Agent→Server</option>
+            <option value="Page">Page Load</option>
+            <option value="DnsServer">DNS Server</option>
+            <option value="DnsTrace">DNS Trace</option>
+          </select>
+          <input id="tep-manage-search" placeholder="Search tests&hellip;">
+          <select id="tep-manage-sort" style="width:auto;">
+            <option value="default">Sort: Default</option>
+            <option value="name">Sort: Name</option>
+            <option value="modified">Sort: Date Modified</option>
+            <option value="created">Sort: Date Created</option>
+          </select>
+          <button class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-manage-load">Load Tests</button>
+        </div>
+        <div class="tep-bulk-bar" id="tep-bulk-bar">
+          <span id="tep-bulk-count">0 selected</span>
+          <select id="tep-bulk-action">
+            <option value="">— Bulk Action —</option>
+            <option value="enable">Enable All</option>
+            <option value="disable">Disable All</option>
+            <option value="interval">Change Interval</option>
+            <option value="protocol">Change Protocol</option>
+            <option value="delete">Delete All</option>
+          </select>
+          <select id="tep-bulk-protocol" style="display:none;">
+            <option value="TCP-SACK">TCP / SACK</option>
+            <option value="TCP-SYN">TCP / SYN</option>
+            <option value="ICMP">ICMP</option>
+          </select>
+          <label id="tep-bulk-insession" style="display:none;font-size:11px;color:#94a3b8;cursor:pointer;align-items:center;gap:4px;">
+            <input type="checkbox" id="tep-bulk-insession-cb" checked> In-Session
+          </label>
+          <select id="tep-bulk-interval" style="display:none;">
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+            <option value="900">15 min</option>
+            <option value="1800">30 min</option>
+            <option value="3600">60 min</option>
+          </select>
+          <button class="tep-bulk-apply" id="tep-bulk-apply">Apply</button>
+        </div>
+        <div class="tep-select-bar" id="tep-select-bar" style="display:none;">
+          <button id="tep-select-all">Select All</button>
+          <button id="tep-select-none">Deselect All</button>
+          <button id="tep-select-filtered">Select Filtered</button>
+        </div>
+        <div class="tep-test-count" id="tep-test-count"></div>
+        <div class="tep-test-list" id="tep-test-list">
+          <span class="tep-log-info">Click "Load Tests" or switch to this tab after auth.</span>
+        </div>
+      </div>
+
+      <!-- Log (shared) -->
+      <div class="tep-log-wrap">
+        <button class="tep-log-toggle" id="tep-log-toggle"><span class="tep-log-arrow">&#9654;</span> Log</button>
+        <div class="tep-log" id="tep-log"></div>
+      </div>
+    </div>
+  `);
+
+  document.body.appendChild(root);
+
+  // ---------------------------------------------------------------------------
+  // Refs
+  // ---------------------------------------------------------------------------
+  const $ = (sel) => root.querySelector(sel);
+  const statusEl = $('#tep-status');
+  const logEl = $('#tep-log');
+  const agentsBox = $('#tep-agents-box');
+  const filterInput = $('#tep-agent-filter');
+  const tabsContainer = $('#tep-tabs');
+  let currentType = 'http-server';
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = 'tep-status' + (cls ? ' ' + cls : '');
+  }
+
+  function log(msg, cls) {
+    const span = document.createElement('span');
+    span.className = cls || 'tep-log-info';
+    span.textContent = msg + '\n';
+    logEl.appendChild(span);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function toast(msg, type) {
+    const el = document.createElement('div');
+    el.className = 'tep-toast ' + (type === 'ok' ? 'tep-toast-ok' : 'tep-toast-err');
+    el.textContent = msg;
+    const body = root.querySelector('.tep-body');
+    body.insertBefore(el, body.firstChild);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3500);
+    setTimeout(() => el.remove(), 4000);
+  }
+
+  function toastProcessing(msg) {
+    const el = document.createElement('div');
+    el.className = 'tep-toast tep-toast-processing';
+    el.textContent = msg || 'Processing…';
+    const body = root.querySelector('.tep-body');
+    body.insertBefore(el, body.firstChild);
+    return () => el.remove();
+  }
+
+  // ---------------------------------------------------------------------------
+  // CSRF detection (Angular apps often use XSRF-TOKEN cookie)
+  // ---------------------------------------------------------------------------
+  function detectCsrfToken() {
+    try {
+      const patterns = ['XSRF-TOKEN', 'csrf_token', 'csrftoken', '_csrf'];
+      for (const c of document.cookie.split(';')) {
+        const eq = c.indexOf('=');
+        if (eq < 0) continue;
+        const name = c.substring(0, eq).trim();
+        if (patterns.some(p => name.toUpperCase() === p.toUpperCase())) {
+          const val = decodeURIComponent(c.substring(eq + 1).trim());
+          if (val) {
+            log(`Found CSRF cookie "${name}"`, 'tep-log-info');
+            return { headerName: 'X-' + name, value: val };
+          }
+        }
+      }
+    } catch { /* no access */ }
+    return null;
+  }
+
+  // Check if running on a ThousandEyes page
+  function isOnTEPage() {
+    return /thousandeyes\.com$/i.test(window.location.hostname);
+  }
+
+  // Internal AJAX caller — same-origin, cookies sent automatically
+  function ajax(path, options = {}) {
+    const headers = {
+      'Accept': 'application/json',
+      ...(options.headers || {})
+    };
+    if (options.body) headers['Content-Type'] = 'application/json';
+    if (csrfToken) headers[csrfToken.headerName] = csrfToken.value;
+    return fetch(path, { ...options, headers, credentials: 'include' });
+  }
+
+  function stopPersistentIntercept() { /* no-op now */ }
+
+  // ---------------------------------------------------------------------------
+  // Main auth flow — uses TE internal /ajax/ API with session cookies
+  // ---------------------------------------------------------------------------
+  async function initAuth() {
+    if (!isOnTEPage()) {
+      setStatus('⚠ Not on app.thousandeyes.com — inject this script there', 'err');
+      log('This script must run on app.thousandeyes.com.', 'tep-log-err');
+      return;
+    }
+
+    const csrf = detectCsrfToken();
+    if (csrf) csrfToken = csrf;
+
+    setStatus('Verifying session via internal API…');
+    log('Calling /ajax/settings/tests/init to verify session…', 'tep-log-info');
+
+    try {
+      const resp = await ajax('/ajax/settings/tests/init?includeTeConfig=false');
+      if (!resp.ok) {
+        setStatus(`Session check failed (${resp.status}) — are you logged in?`, 'err');
+        log(`/ajax/settings/tests/init returned ${resp.status}. Make sure you are logged into ThousandEyes.`, 'tep-log-err');
+        return;
+      }
+      teInitData = await resp.json();
+      log('Session verified via internal API.', 'tep-log-ok');
+
+      // Load account groups and populate dropdown
+      await loadAccountGroups();
+
+      setStatus(`Authenticated — loading agents…`, 'ok');
+      log(`Session OK. Loading agents…`, 'tep-log-ok');
+      loadAgents();
+    } catch (e) {
+      setStatus('Auth failed — ' + e.message, 'err');
+      log('Error: ' + e.message, 'tep-log-err');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Load account groups and populate dropdown
+  // ---------------------------------------------------------------------------
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  async function loadAccountGroups() {
+    // 1. Read teAccount cookie (set by TE when switching account groups)
+    const cookieAid = getCookie('teAccount');
+    if (cookieAid) {
+      teInitData._currentAid = parseInt(cookieAid, 10) || cookieAid;
+      log(`Account group from cookie: ${cookieAid}`, 'tep-log-ok');
+      return;
+    }
+
+    // 2. Fallback: try URL ?aid= parameter
+    try {
+      const urlAid = new URLSearchParams(window.location.search).get('aid');
+      if (urlAid) {
+        teInitData._currentAid = parseInt(urlAid, 10) || urlAid;
+        log(`Account group from URL: ${urlAid}`, 'tep-log-info');
+        return;
+      }
+    } catch { /* */ }
+
+    log('No teAccount cookie found. Aid will be auto-detected from agents.', 'tep-log-info');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Load agents from TE internal endpoints
+  // ---------------------------------------------------------------------------
+  async function loadAgents() {
+    try {
+      agentsBox.innerHTML = '<span class="tep-log-info">Loading agents…</span>';
+      agents = [];
+
+      // Fetch agents from /ajax/settings/tests/virtual-agents
+      // The vAgents array contains agents assigned to the current account group
+      try {
+        const vResp = await ajax('/ajax/settings/tests/virtual-agents');
+        if (vResp.ok) {
+          const vData = await vResp.json();
+          const vAgents = vData.vAgents || vData.virtualAgents || (Array.isArray(vData) ? vData : []);
+
+          // Auto-detect current aid from agents if not set
+          if (!teInitData._currentAid && vAgents.length) {
+            // Find the most common primaryAid among non-cloud agents (those with a primaryAid)
+            const aidCounts = {};
+            for (const a of vAgents) {
+              if (a.primaryAid) aidCounts[a.primaryAid] = (aidCounts[a.primaryAid] || 0) + 1;
+            }
+            // The current account group's enterprise agents share the same primaryAid
+            const sorted = Object.entries(aidCounts).sort((a, b) => b[1] - a[1]);
+            if (sorted.length) {
+              teInitData._currentAid = parseInt(sorted[0][0], 10) || sorted[0][0];
+              log(`Auto-detected account group ID: ${teInitData._currentAid} (${sorted[0][1]} agents)`, 'tep-log-info');
+            }
+          }
+
+          const activeAid = teInitData._currentAid;
+          let enterpriseCount = 0, cloudCount = 0;
+
+          for (const a of vAgents) {
+            const isEnterprise = activeAid && a.primaryAid === activeAid;
+            if (isEnterprise) enterpriseCount++; else cloudCount++;
+            // Build location string from location object or countryId
+            let loc = '';
+            if (a.location && typeof a.location === 'object') {
+              loc = [a.location.city, a.location.state, a.location.country].filter(Boolean).join(', ');
+            } else if (typeof a.location === 'string') {
+              loc = a.location;
+            }
+            if (!loc) loc = a.countryId || '';
+            agents.push({
+              agentId: a.vAgentId || a.agentId || a.id,
+              agentName: a.displayName || a.name || ('Agent ' + (a.vAgentId || a.agentId)),
+              agentType: isEnterprise ? 'Enterprise' : 'Cloud',
+              location: loc,
+              status: 'unknown',
+              physicalId: a.agentId || a.physicalAgentId || null,
+              lastSeen: null
+            });
+          }
+          log(`Loaded ${enterpriseCount} enterprise + ${cloudCount} cloud agent(s).`, 'tep-log-ok');
+        }
+      } catch (e) { log('Agent load error: ' + e.message, 'tep-log-err'); }
+
+      // Fetch enterprise physical agent status for online/offline
+      try {
+        const pResp = await ajax('/ajax/settings/tests/physical-agents/enterprise');
+        if (pResp.ok) {
+          const pData = await pResp.json();
+          // Response may be keyed by aid or a flat array
+          let physicalAgents = [];
+          if (Array.isArray(pData)) {
+            physicalAgents = pData;
+          } else {
+            for (const k of Object.keys(pData)) {
+              const v = pData[k];
+              if (Array.isArray(v)) physicalAgents.push(...v);
+            }
+          }
+
+          // Build a map of agentId -> status info
+          const statusMap = {};
+          for (const pa of physicalAgents) {
+            const id = pa.agentId || pa.id;
+            if (!id) continue;
+            // TE uses agentStatus or status field; "ONLINE" or 1 = online
+            const raw = pa.agentStatus || pa.status || pa.agentState || '';
+            const isOnline = raw === 'ONLINE' || raw === 'Online' || raw === 1 || raw === true
+              || (typeof raw === 'string' && raw.toLowerCase().includes('online'));
+            const isOffline = raw === 'OFFLINE' || raw === 'Offline' || raw === 0 || raw === false
+              || (typeof raw === 'string' && raw.toLowerCase().includes('offline'));
+            statusMap[id] = isOnline ? 'online' : (isOffline ? 'offline' : 'unknown');
+            // Also try to map via name or vAgentId
+            if (pa.vAgentId) statusMap['v_' + pa.vAgentId] = statusMap[id];
+          }
+
+          // Log first physical agent structure for debugging
+          if (physicalAgents.length) {
+            const sample = physicalAgents[0];
+            const statusKeys = Object.keys(sample).filter(k => /status|state|online|last/i.test(k));
+            log(`Physical agents: ${physicalAgents.length}, status keys: ${statusKeys.join(', ')} = ${statusKeys.map(k => sample[k]).join(', ')}`, 'tep-log-info');
+          }
+
+          // Match physical agent status to virtual agents
+          let matched = 0;
+          for (const a of agents) {
+            if (a.agentType !== 'Enterprise') continue;
+            const s = statusMap[a.physicalId] || statusMap['v_' + a.agentId];
+            if (s) { a.status = s; matched++; }
+          }
+          log(`Matched status for ${matched} enterprise agent(s).`, 'tep-log-info');
+        }
+      } catch (e) { log('Physical agent status error: ' + e.message, 'tep-log-info'); }
+
+      agents.sort((a, b) => {
+        // Enterprise first, then by status (online first), then by name
+        if (a.agentType !== b.agentType) return a.agentType === 'Enterprise' ? -1 : 1;
+        if (a.status !== b.status) {
+          if (a.status === 'online') return -1;
+          if (b.status === 'online') return 1;
+          if (a.status === 'offline') return 1;
+          if (b.status === 'offline') return -1;
+        }
+        return (a.agentName || '').localeCompare(b.agentName || '');
+      });
+      renderAgents();
+      setStatus(`Authenticated — ${agents.length} agent(s) loaded`, 'ok');
+    } catch (e) {
+      agentsBox.innerHTML = `<span class="tep-log-err">Error: ${e.message}</span>`;
+    }
+  }
+
+  function renderAgents(filter) {
+    const q = (filter || '').toLowerCase();
+    const filtered = q
+      ? agents.filter(a =>
+          (a.agentName || '').toLowerCase().includes(q) ||
+          (a.location || '').toLowerCase().includes(q) ||
+          (a.agentType || '').toLowerCase().includes(q)
+        )
+      : agents;
+
+    if (!filtered.length) {
+      agentsBox.innerHTML = '<span class="tep-log-info">No agents match filter.</span>';
+      return;
+    }
+
+    const enterprise = filtered.filter(a => a.agentType === 'Enterprise');
+    const cloud = filtered.filter(a => a.agentType !== 'Enterprise');
+
+    agentsBox.innerHTML = '';
+
+    const renderSection = (title, list, defaultOpen) => {
+      const section = document.createElement('div');
+      section.style.marginBottom = '6px';
+      const header = document.createElement('div');
+      header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
+      header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${defaultOpen ? '▼' : '▶'}</span>`;
+      const body = document.createElement('div');
+      body.style.display = defaultOpen ? '' : 'none';
+
+      header.addEventListener('click', () => {
+        const open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : '';
+        header.querySelector('.tep-section-arrow').textContent = open ? '▶' : '▼';
+      });
+
+      list.forEach(agent => {
+        const item = document.createElement('label');
+        item.className = 'tep-agent-item';
+        const checked = selectedAgentIds.has(agent.agentId) ? 'checked' : '';
+        const statusDot = agent.agentType === 'Enterprise'
+          ? `<span class="tep-agent-status ${agent.status}" title="${agent.status}"></span>`
+          : '';
+        item.innerHTML = `
+          <input type="checkbox" value="${agent.agentId}" ${checked}>
+          ${statusDot}
+          <span class="tep-agent-name">${agent.agentName || 'Agent ' + agent.agentId}</span>
+          <span class="tep-agent-loc">${agent.location || ''}</span>
+        `;
+        const cb = item.querySelector('input');
+        cb.addEventListener('change', () => {
+          if (cb.checked) selectedAgentIds.add(agent.agentId);
+          else selectedAgentIds.delete(agent.agentId);
+        });
+        body.appendChild(item);
+      });
+
+      section.appendChild(header);
+      section.appendChild(body);
+      agentsBox.appendChild(section);
+    };
+
+    const hasFilter = !!q;
+    if (enterprise.length) renderSection('🏢 Enterprise Agents', enterprise, true);
+    if (cloud.length) renderSection('☁️ Cloud Agents', cloud, hasFilter || false);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Manage Tests — state & functions
+  // ---------------------------------------------------------------------------
+  let allTests = [];
+  let selectedTestIds = new Set();
+  const testListEl = $('#tep-test-list');
+  const testCountEl = $('#tep-test-count');
+  const manageTypeFilter = $('#tep-manage-type-filter');
+  const manageSearch = $('#tep-manage-search');
+  const manageSort = $('#tep-manage-sort');
+  const bulkBar = $('#tep-bulk-bar');
+  const bulkCount = $('#tep-bulk-count');
+  const bulkAction = $('#tep-bulk-action');
+  const bulkInterval = $('#tep-bulk-interval');
+  const bulkProtocol = $('#tep-bulk-protocol');
+  const bulkInsessionLabel = $('#tep-bulk-insession');
+  const bulkInsessionCb = $('#tep-bulk-insession-cb');
+  const selectBar = $('#tep-select-bar');
+
+  const TYPE_LABELS = {
+    'Http': 'HTTP Server', 'A2s': 'Agent→Server', 'Page': 'Page Load',
+    'DnsServer': 'DNS Server', 'DnsTrace': 'DNS Trace', 'Bgp': 'BGP',
+    'Voip': 'Voice', 'WebTransaction': 'Transaction', 'Ftp': 'FTP',
+    'Dnssec': 'DNSSEC', 'OneWayNetwork': 'One-Way'
+  };
+  const TYPE_CSS = {
+    'Http': 'tep-type-http', 'A2s': 'tep-type-a2s', 'Page': 'tep-type-page',
+    'DnsServer': 'tep-type-dns', 'DnsTrace': 'tep-type-dns'
+  };
+  const TYPE_API_PATH = {
+    'Http': 'http-server', 'A2s': 'agent-to-server', 'Page': 'page-load',
+    'DnsServer': 'dns-server', 'DnsTrace': 'dns-trace',
+    'Voip': 'voip', 'WebTransaction': 'web-transaction', 'Ftp': 'ftp',
+    'Dnssec': 'dnssec', 'Bgp': 'bgp', 'Network': 'network',
+    'HTTP': 'http-server', 'DNS': 'dns-server', 'Voice': 'voip',
+    'OneWayNetwork': 'network', 'Sip': 'sip-server'
+  };
+  const SLUG_REMAP = {
+    'browserbot': 'page-load',
+    'sip': 'sip-server',
+    'webtransaction': 'web-transaction',
+    'http server': 'http-server',
+    'HTTP Server': 'http-server',
+    'agent to server': 'agent-to-server',
+    'Agent to Server': 'agent-to-server',
+    'page load': 'page-load',
+    'Page Load': 'page-load',
+    'dns server': 'dns-server',
+    'DNS Server': 'dns-server',
+    'dns trace': 'dns-trace',
+    'DNS Trace': 'dns-trace'
+  };
+  const NO_API_SLUGS = new Set(['onewaynetwork', 'api']);
+  function isReadOnly(t) {
+    return NO_API_SLUGS.has((t.type || '').toLowerCase());
+  }
+  function canEnrich(t) {
+    return !isReadOnly(t);
+  }
+
+  const TYPE_NORMALIZE = {
+    'http-server': 'Http', 'Http': 'Http', 'HTTP': 'Http', 'http_server': 'Http',
+    'agent-to-server': 'A2s', 'A2s': 'A2s', 'agent_to_server': 'A2s',
+    'page-load': 'Page', 'Page': 'Page', 'page_load': 'Page',
+    'dns-server': 'DnsServer', 'DnsServer': 'DnsServer', 'dns_server': 'DnsServer',
+    'dns-trace': 'DnsTrace', 'DnsTrace': 'DnsTrace', 'dns_trace': 'DnsTrace',
+    'voice': 'Voip', 'Voip': 'Voip', 'Voice': 'Voip',
+    'web-transactions': 'WebTransaction', 'WebTransaction': 'WebTransaction', 'web_transactions': 'WebTransaction',
+    'ftp-server': 'Ftp', 'Ftp': 'Ftp', 'ftp_server': 'Ftp',
+    'dnssec': 'Dnssec', 'Dnssec': 'Dnssec',
+    'bgp': 'Bgp', 'Bgp': 'Bgp'
+  };
+
+  function normalizeTest(t) {
+    if (!t.testType && t.type) {
+      t.testType = TYPE_NORMALIZE[t.type] || t.type;
+    } else if (t.testType && !TYPE_NORMALIZE[t.testType]) {
+      t.testType = TYPE_NORMALIZE[t.testType] || t.testType;
+    }
+    if (!t.testType && typeof t.type === 'number') {
+      const numMap = {1:'Http', 2:'Page', 3:'A2s', 5:'DnsServer', 6:'DnsTrace', 7:'Voip', 8:'WebTransaction', 12:'Ftp', 14:'Dnssec', 30:'Bgp'};
+      t.testType = numMap[t.type] || ('Type' + t.type);
+    }
+    return t;
+  }
+
+  function getInterval(t) {
+    return t.freqHttp || t.freqA2s || t.freqPage || t.freqDns
+      || t.freqVoip || t.freqBgp || t.freqFtp || t.freqSip
+      || t.frequency || t.testInterval || t.intervalInSeconds
+      || t.interval || 0;
+  }
+
+  function formatInterval(seconds) {
+    if (!seconds) return '—';
+    if (seconds >= 3600) return (seconds / 3600) + 'h';
+    if (seconds >= 60) return (seconds / 60) + 'm';
+    return seconds + 's';
+  }
+
+  function getTestAgentIds(t) {
+    if (t.agentSet) {
+      if (Array.isArray(t.agentSet.vAgentIds) && t.agentSet.vAgentIds.length) return t.agentSet.vAgentIds;
+      if (Array.isArray(t.agentSet.agentIds) && t.agentSet.agentIds.length) return t.agentSet.agentIds;
+      if (Array.isArray(t.agentSet.agents) && t.agentSet.agents.length) return t.agentSet.agents.map(a => a.agentId || a.id || a);
+    }
+    if (Array.isArray(t.agents) && t.agents.length) return t.agents.map(a => a.agentId || a.id || a);
+    if (Array.isArray(t.agentIds) && t.agentIds.length) return t.agentIds;
+    if (Array.isArray(t.vAgentIds) && t.vAgentIds.length) return t.vAgentIds;
+    if (t.config) {
+      if (t.config.agentSet && Array.isArray(t.config.agentSet.vAgentIds)) return t.config.agentSet.vAgentIds;
+      if (Array.isArray(t.config.agents)) return t.config.agents.map(a => a.agentId || a.id || a);
+    }
+    return [];
+  }
+
+  function testApiUrl(t, { forWrite = false } = {}) {
+    let slug = t.type || '';
+    const slugLower = slug.toLowerCase();
+    if (SLUG_REMAP[slug] || SLUG_REMAP[slugLower]) {
+      slug = SLUG_REMAP[slug] || SLUG_REMAP[slugLower];
+    } else if (slug && slug === slugLower && /^[a-z0-9-]+$/.test(slug)) {
+      // already a valid slug like 'network', 'http-server', 'ftp', 'voip'
+    } else {
+      slug = TYPE_API_PATH[slug] || TYPE_API_PATH[t.testType] || slugLower;
+    }
+    if (forWrite) return `/ajax/tests/${slug}`;
+    const aid = t.aid;
+    const testId = t.testId || t.id;
+    return `/ajax/tests/${slug}/${aid}/${testId}`;
+  }
+
+  async function fetchTestDetail(t) {
+    const url = testApiUrl(t);
+    if (!t.aid || !(t.type || t.testType)) { t._agentsLoaded = true; return null; }
+    try {
+      const resp = await ajax(url);
+      if (resp.ok) {
+        const detail = await resp.json();
+        const preserve = new Set(['testType', '_agentsLoaded', '_fetchStatus', '_fetchError', 'type']);
+        for (const k of Object.keys(detail)) {
+          if (preserve.has(k)) continue;
+          t[k] = detail[k];
+        }
+        t._agentsLoaded = true;
+        return detail;
+      }
+    } catch (e) { /* silent */ }
+    t._agentsLoaded = true;
+    return null;
+  }
+
+  async function enrichTestsWithAgents() {
+    log('Enriching tests with agent data…', 'tep-log-info');
+    const BATCH = 5;
+    let enriched = 0;
+    let debugged = false;
+
+    for (let i = 0; i < allTests.length; i += BATCH) {
+      const batch = allTests.slice(i, i + BATCH);
+      await Promise.all(batch.map(async (t) => {
+        if (t._agentsLoaded) return;
+        if (!canEnrich(t)) { t._agentsLoaded = true; return; }
+        const detail = await fetchTestDetail(t);
+
+        if (detail && !debugged) {
+          debugged = true;
+          const agentKeys = Object.keys(detail).filter(k => /agent/i.test(k));
+          log(`  Detail keys: ${Object.keys(detail).slice(0,20).join(', ')}`, 'tep-log-info');
+          log(`  Agent keys: ${agentKeys.join(', ') || 'none'}`, 'tep-log-info');
+          for (const ak of agentKeys) {
+            log(`    ${ak}: ${JSON.stringify(detail[ak]).substring(0, 250)}`, 'tep-log-info');
+          }
+        }
+        // Debug: log server-related fields for A2S/network tests
+        if (detail && (t.testType === 'A2s' || (t.type || '').toLowerCase() === 'agent-to-server' || (t.type || '').toLowerCase() === 'network')) {
+          const srvKeys = Object.keys(detail).filter(k => /server|target|host|port|proto|freq/i.test(k));
+          log(`  A2S detail [${t.name}]: ${srvKeys.map(k => k+'='+JSON.stringify(detail[k])).join(', ')}`, 'tep-log-info');
+        }
+
+        const count = getTestAgentIds(t).length;
+        if (count > 0) enriched++;
+
+        const tid = String(t.testId || t.id || '');
+        const card = testListEl.querySelector(`.tep-test-card[data-test-id="${tid}"]`);
+        if (card) {
+          const metaSpans = card.querySelectorAll('.tep-test-card-meta span');
+          if (metaSpans.length >= 4) {
+            metaSpans[2].textContent = `${formatInterval(getInterval(t))} interval`;
+            metaSpans[3].textContent = `${count} agent(s)`;
+          }
+        }
+      }));
+    }
+
+    log(`Agent enrichment complete: ${enriched} of ${allTests.length} test(s) have agents`, 'tep-log-ok');
+    renderTests();
+  }
+
+  function getTarget(t) {
+    if (t.url && typeof t.url === 'object') {
+      if (typeof t.url.url === 'string') return t.url.url;
+      if (typeof t.url.target === 'string') return t.url.target;
+      if (typeof t.url.href === 'string') return t.url.href;
+      return String(t.url.url || t.url.target || t.url.href || '');
+    }
+    if (typeof t.url === 'string' && t.url) return t.url;
+    if (t.server && typeof t.server === 'object') return t.server.serverName || '';
+    if (t.server) return t.server;
+    if (t.domain) return t.domain;
+    if (t.target) return t.target;
+    if (t.hostname) return t.hostname;
+    if (t.testTarget) return t.testTarget;
+    if (t.serverName) return t.serverName;
+    if (t.destination) return t.destination;
+    if (t.config) {
+      if (t.config.url && typeof t.config.url === 'object') return t.config.url.url || '';
+      if (typeof t.config.url === 'string') return t.config.url;
+      if (t.config.server) return t.config.server;
+      if (t.config.domain) return t.config.domain;
+      if (t.config.target) return t.config.target;
+    }
+    return '';
+  }
+
+  async function loadTests() {
+    testListEl.innerHTML = '<span class="tep-log-info">Loading tests…</span>';
+    allTests = [];
+
+    const endpoints = [
+      '/ajax/settings/tests',
+      '/ajax/settings/tests/list',
+      '/ajax/network-app-synthetics/test-settings',
+      '/ajax/tests/list',
+      '/ajax/tests'
+    ];
+
+    let found = false;
+    for (const ep of endpoints) {
+      try {
+        const resp = await ajax(ep);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (Array.isArray(data)) {
+            allTests = data;
+          } else {
+            // Try to find arrays of tests inside the response
+            for (const k of Object.keys(data)) {
+              if (Array.isArray(data[k])) allTests.push(...data[k]);
+            }
+            // If no arrays found, maybe the response IS the list as object
+            if (!allTests.length && typeof data === 'object') {
+              // Log structure for debugging
+              log(`${ep} → keys: ${Object.keys(data).slice(0, 10).join(', ')}`, 'tep-log-info');
+              // Check if values contain test-like objects
+              for (const k of Object.keys(data)) {
+                const v = data[k];
+                if (v && typeof v === 'object' && !Array.isArray(v) && v.testType) {
+                  allTests.push(v);
+                }
+              }
+            }
+          }
+          if (allTests.length) {
+            allTests = allTests.map(normalizeTest);
+            log(`Loaded ${allTests.length} test(s) from ${ep}`, 'tep-log-ok');
+            found = true;
+            break;
+          } else {
+            log(`${ep} → 200 but 0 tests (${typeof data}, keys: ${Object.keys(data).slice(0,5).join(',')})`, 'tep-log-info');
+          }
+        } else {
+          log(`${ep} → ${resp.status}`, 'tep-log-info');
+        }
+      } catch (e) {
+        log(`${ep} → error: ${e.message}`, 'tep-log-info');
+      }
+    }
+
+    if (!found) {
+      log('Could not find test list endpoint. Check log above.', 'tep-log-err');
+      testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
+    } else {
+      renderTests();
+      enrichTestsWithAgents();
+    }
+  }
+
+  function updateBulkUI() {
+    const count = selectedTestIds.size;
+    bulkCount.textContent = `${count} selected`;
+    bulkBar.classList.toggle('active', count > 0);
+  }
+
+  function getFilteredTests() {
+    const typeF = manageTypeFilter.value;
+    const searchQ = manageSearch.value.toLowerCase();
+    let filtered = allTests;
+    if (typeF) filtered = filtered.filter(t => t.testType === typeF);
+    if (searchQ) filtered = filtered.filter(t =>
+      (t.name || '').toLowerCase().includes(searchQ) ||
+      getTarget(t).toLowerCase().includes(searchQ)
+    );
+    const TYPE_ORDER = {
+      'http-server': 0, 'Http': 0,
+      'network': 1, 'agent-to-server': 1, 'A2s': 1,
+      'onewaynetwork': 2, 'agent-to-agent': 2,
+      'browserbot': 3, 'page-load': 3, 'Page': 3,
+      'web-transaction': 4, 'webtransaction': 4, 'Transaction': 4
+    };
+    function typeRank(t) {
+      const slug = (t.type || '').toLowerCase();
+      if (slug in TYPE_ORDER) return TYPE_ORDER[slug];
+      const tt = t.testType || '';
+      if (tt in TYPE_ORDER) return TYPE_ORDER[tt];
+      return 99;
+    }
+    const sortMode = manageSort.value;
+    return filtered.sort((a, b) => {
+      if (sortMode === 'modified') {
+        const da = a.modifiedDate || a.lastModified || a.dateModified || '';
+        const db = b.modifiedDate || b.lastModified || b.dateModified || '';
+        if (da || db) return da > db ? -1 : da < db ? 1 : 0;
+      }
+      if (sortMode === 'created') {
+        const da = a.createdDate || a.dateCreated || a.createDate || '';
+        const db = b.createdDate || b.dateCreated || b.createDate || '';
+        if (da || db) return da > db ? -1 : da < db ? 1 : 0;
+      }
+      if (sortMode === 'name') {
+        return (a.name || '').localeCompare(b.name || '');
+      }
+      // Default: enabled first, then type, then name
+      const ea = a.flagEnabled ? 0 : 1;
+      const eb = b.flagEnabled ? 0 : 1;
+      if (ea !== eb) return ea - eb;
+      const ra = typeRank(a);
+      const rb = typeRank(b);
+      if (ra !== rb) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }
+
+  function renderTests() {
+    const filtered = getFilteredTests();
+    testCountEl.textContent = `Showing ${filtered.length} of ${allTests.length} test(s)`;
+    selectBar.style.display = allTests.length ? '' : 'none';
+
+    if (!filtered.length) {
+      testListEl.innerHTML = '<span class="tep-log-info">No tests match filter.</span>';
+      return;
+    }
+
+    testListEl.innerHTML = '';
+    for (const t of filtered) {
+      const tid = String(t.testId || t.id || '');
+      const card = document.createElement('div');
+      card.className = 'tep-test-card';
+      card.dataset.testId = tid;
+      const typeCss = TYPE_CSS[t.testType] || 'tep-type-other';
+      const typeLabel = TYPE_LABELS[t.testType] || t.testType || '?';
+      const target = getTarget(t);
+      const interval = getInterval(t);
+      const enabled = t.flagEnabled ? 'on' : 'off';
+      const agentCount = t._agentsLoaded ? getTestAgentIds(t).length : '…';
+
+      card.innerHTML = `
+        <div class="tep-test-card-header">
+          <input type="checkbox" class="tep-test-card-check" data-tid="${tid}" ${selectedTestIds.has(tid) ? 'checked' : ''}>
+          <span class="tep-type-badge ${typeCss}">${typeLabel}</span>
+          <span class="tep-test-card-name" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'} <a class="tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="Open in ThousandEyes">&#x1F517;</a></span>
+          <div class="tep-test-actions">
+            ${isReadOnly(t) ? '<span style="font-size:10px;color:#64748b;">read-only</span>' : `
+            <button data-action="edit" title="Edit">Edit</button>
+            <button data-action="clone" title="Clone">Clone</button>
+            <button data-action="toggle" title="${t.flagEnabled ? 'Disable' : 'Enable'}">${t.flagEnabled ? 'Disable' : 'Enable'}</button>
+            <button data-action="delete" class="tep-btn-danger" title="Delete">Del</button>`}
+          </div>
+        </div>
+        <div class="tep-test-card-meta">
+          <span><span class="tep-enabled-dot ${enabled}"></span> ${enabled === 'on' ? 'Enabled' : 'Disabled'}</span>
+          <span>${target ? String(target).substring(0, 50) : '—'}</span>
+          <span>${formatInterval(interval)} interval</span>
+          <span>${agentCount} agent(s)</span>
+        </div>
+      `;
+
+      // Checkbox handler
+      card.querySelector('.tep-test-card-check').addEventListener('change', (e) => {
+        if (e.target.checked) selectedTestIds.add(tid); else selectedTestIds.delete(tid);
+        updateBulkUI();
+      });
+
+      // Action handlers
+      card.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+
+        if (action === 'edit') {
+          toggleEditForm(card, t);
+        } else if (action === 'clone') {
+          await cloneTest(t);
+        } else if (action === 'toggle') {
+          await toggleTest(t, card);
+        } else if (action === 'delete') {
+          await deleteTest(t, card);
+        }
+      });
+
+      testListEl.appendChild(card);
+    }
+  }
+
+  function toggleEditForm(card, t) {
+    const existing = card.querySelector('.tep-edit-form');
+    if (existing) { existing.remove(); return; }
+
+    const target = getTarget(t);
+    const interval = getInterval(t);
+    const testAgentIds = getTestAgentIds(t);
+    const currentAgentIds = new Set(testAgentIds.map(String));
+    const editAgentIds = new Set(currentAgentIds);
+
+    const form = document.createElement('div');
+    form.className = 'tep-edit-form';
+    form.innerHTML = `
+      <div class="tep-edit-row">
+        <label>Name</label>
+        <input class="tep-edit-name" value="${(t.name || '').replace(/"/g, '&quot;')}">
+      </div>
+      <div class="tep-edit-row">
+        <label>Target</label>
+        <input class="tep-edit-target" value="${target.replace(/"/g, '&quot;')}">
+      </div>
+      <div class="tep-edit-row">
+        <label>Interval</label>
+        <select class="tep-edit-interval">
+          ${[60,120,300,600,900,1800,3600].map(v =>
+            `<option value="${v}" ${v === interval ? 'selected' : ''}>${v/60}m</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="tep-edit-row">
+        <label>Enabled</label>
+        <select class="tep-edit-enabled">
+          <option value="1" ${t.flagEnabled ? 'selected' : ''}>Enabled</option>
+          <option value="0" ${!t.flagEnabled ? 'selected' : ''}>Disabled</option>
+        </select>
+      </div>
+      ${/A2s|Network|Http|Page/i.test(t.testType || t.type || '') ? (() => {
+        const curProto = t.protocol === 'ICMP' ? 'ICMP' : (t.probeMode === 'SYN' ? 'TCP-SYN' : 'TCP-SACK');
+        return `
+      <div class="tep-edit-row" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">
+        <div>
+          <label>Protocol</label>
+          <select class="tep-edit-protocol">
+            <option value="TCP-SACK" ${curProto === 'TCP-SACK' ? 'selected' : ''}>TCP / SACK</option>
+            <option value="TCP-SYN" ${curProto === 'TCP-SYN' ? 'selected' : ''}>TCP / SYN</option>
+            <option value="ICMP" ${curProto === 'ICMP' ? 'selected' : ''}>ICMP</option>
+          </select>
+        </div>
+        <div class="tep-edit-tcp-opts" style="${t.protocol === 'ICMP' ? 'display:none;' : 'display:contents;'}">
+          <div>
+            <label>Port</label>
+            <input type="number" class="tep-edit-port" value="${(typeof t.server === 'object' && t.server ? t.server.port : t.port) || 443}" min="1" max="65535" style="width:80px;">
+          </div>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;padding-bottom:2px;">
+            <input type="checkbox" class="tep-edit-insession" ${t.pathtraceInSession ? 'checked' : ''}> In-Session
+          </label>
+        </div>
+      </div>
+      `; })() : ''}
+      <div style="margin-top:8px;">
+        <label style="font-size:11px;color:#94a3b8;font-weight:600;">Agents (${currentAgentIds.size} assigned)</label>
+        <input class="tep-edit-agent-filter" placeholder="Filter agents…">
+        <div class="tep-edit-agents-box"></div>
+      </div>
+      <div class="tep-edit-actions">
+        <button class="tep-btn tep-btn-primary tep-btn-sm tep-save-edit">Save</button>
+        <button class="tep-btn tep-btn-secondary tep-btn-sm tep-cancel-edit">Cancel</button>
+      </div>
+    `;
+
+    // Render agent checkboxes in the edit form
+    const editAgentsBox = form.querySelector('.tep-edit-agents-box');
+    const editFilterInput = form.querySelector('.tep-edit-agent-filter');
+
+    function renderEditAgents(filter) {
+      const q = (filter || '').toLowerCase();
+      const filtered = q
+        ? agents.filter(a => (a.agentName || '').toLowerCase().includes(q) || (a.agentType || '').toLowerCase().includes(q))
+        : agents;
+      editAgentsBox.innerHTML = '';
+      if (!filtered.length) {
+        editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
+        return;
+      }
+      const sorted = [...filtered].sort((a, b) => {
+        const aIn = editAgentIds.has(String(a.agentId)) ? 0 : 1;
+        const bIn = editAgentIds.has(String(b.agentId)) ? 0 : 1;
+        if (aIn !== bIn) return aIn - bIn;
+        // Enterprise before Cloud
+        const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
+        const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
+        if (aEnt !== bEnt) return aEnt - bEnt;
+        return (a.agentName || '').localeCompare(b.agentName || '');
+      });
+      for (const agent of sorted) {
+        const aid = String(agent.agentId);
+        const lbl = document.createElement('label');
+        const checked = editAgentIds.has(aid) ? 'checked' : '';
+        const statusDot = agent.agentType === 'Enterprise'
+          ? `<span class="tep-agent-status ${agent.status}" style="width:6px;height:6px;"></span>` : '';
+        const locTxt = agent.location ? ` <span style="color:#64748b;font-size:10px;">${agent.location}</span>` : '';
+        lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:#64748b;font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
+        const cb = lbl.querySelector('input');
+        cb.addEventListener('change', () => {
+          if (cb.checked) editAgentIds.add(aid); else editAgentIds.delete(aid);
+        });
+        editAgentsBox.appendChild(lbl);
+      }
+    }
+
+    renderEditAgents();
+    editFilterInput.addEventListener('input', () => renderEditAgents(editFilterInput.value));
+
+    // Protocol toggle for edit form
+    const editProtoSel = form.querySelector('.tep-edit-protocol');
+    const editTcpOpts = form.querySelector('.tep-edit-tcp-opts');
+    if (editProtoSel && editTcpOpts) {
+      editProtoSel.addEventListener('change', () => {
+        editTcpOpts.style.display = editProtoSel.value.startsWith('TCP') ? 'contents' : 'none';
+      });
+    }
+
+    form.querySelector('.tep-cancel-edit').addEventListener('click', () => form.remove());
+    form.querySelector('.tep-save-edit').addEventListener('click', async () => {
+      const dismissProcessing = toastProcessing('Saving…');
+      const newName = form.querySelector('.tep-edit-name').value.trim();
+      const newTarget = form.querySelector('.tep-edit-target').value.trim();
+      const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
+      const newEnabled = parseInt(form.querySelector('.tep-edit-enabled').value, 10);
+
+      // Build updated body — start from enriched test, strip internal keys
+      const updated = { ...t };
+      Object.keys(updated).forEach(k => { if (k.startsWith('_')) delete updated[k]; });
+      updated.name = newName;
+      updated.flagEnabled = newEnabled;
+      updated.flagIgnoreWarnings = 0;
+
+      // Set target
+      if (updated.url && typeof updated.url === 'object') updated.url.url = newTarget;
+      else if (updated.server !== undefined) {
+        // Network/A2S tests use server as { serverName, port }
+        if (typeof updated.server === 'object' && updated.server !== null) {
+          let host = newTarget.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
+          let port = updated.server.port || 443;
+          const ci = host.lastIndexOf(':');
+          if (ci > 0 && !host.includes('[')) {
+            const mp = parseInt(host.substring(ci + 1), 10);
+            if (mp > 0 && mp < 65536) { port = mp; host = host.substring(0, ci); }
+          }
+          updated.server = { serverName: host, port: port };
+        } else {
+          updated.server = newTarget;
+        }
+      }
+      else if (updated.domain !== undefined) updated.domain = newTarget;
+
+      // Set ALL interval/freq fields to new value so the API sees a consistent change
+      for (const k of Object.keys(updated)) {
+        if (/^(freq|interval)/i.test(k) && typeof updated[k] === 'number') {
+          updated[k] = newInterval;
+        }
+      }
+      // Apply protocol settings for A2S/Network/Http/Page tests
+      if (editProtoSel) {
+        const pv = editProtoSel.value;
+        const proto = pv.startsWith('TCP') ? 'TCP' : 'ICMP';
+        updated.protocol = proto;
+        updated.flagIcmp = proto === 'ICMP' ? 1 : 0;
+        if (proto === 'TCP') {
+          const is = form.querySelector('.tep-edit-insession');
+          updated.probeMode = pv === 'TCP-SYN' ? 'SYN' : 'SACK';
+          updated.pathtraceInSession = is ? (is.checked ? 1 : 0) : (updated.pathtraceInSession || 0);
+        } else {
+          updated.probeMode = 'AUTO';
+          updated.pathtraceInSession = 0;
+        }
+        const portInput = form.querySelector('.tep-edit-port');
+        const newPort = portInput ? parseInt(portInput.value, 10) || 443 : 443;
+        if (typeof updated.server === 'object' && updated.server) {
+          updated.server.port = newPort;
+        } else {
+          updated.port = newPort;
+        }
+      }
+
+      // Ensure freq and interval are always present
+      updated.interval = newInterval;
+      updated.freq = newInterval;
+      if (!updated.dscp && updated.dscp !== 0) {
+        const tt = (t.testType || t.type || '').toLowerCase();
+        if (/a2s|network|agent/i.test(tt)) updated.dscp = updated.dscp || 0;
+      }
+      if (!Object.keys(updated).some(k => /^freq/i.test(k))) {
+        const tt = (t.testType || t.type || '').toLowerCase();
+        if (/page|browser/i.test(tt)) updated.freqPage = newInterval;
+        else if (/a2s|agent|network/i.test(tt)) updated.freqA2s = newInterval;
+        else if (/dns/i.test(tt)) updated.freqDns = newInterval;
+        else updated.freqHttp = newInterval;
+      }
+
+      // Set agents
+      if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
+      updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
+
+      // Debug: log freq fields being sent
+      const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
+      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval input: ${newInterval}`, 'tep-log-info');
+
+      try {
+        const resp = await ajax(testApiUrl(t, { forWrite: true }), {
+          method: 'POST',
+          body: JSON.stringify(updated)
+        });
+        dismissProcessing();
+        if (resp.ok) {
+          log(`  ✓ Updated "${newName}"`, 'tep-log-ok');
+          toast(`Test "${newName}" saved successfully.`, 'ok');
+          form.remove();
+          loadTests();
+        } else {
+          const txt = await resp.text().catch(() => '');
+          log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+          toast(`Failed to save "${newName}": ${resp.status}`, 'err');
+        }
+      } catch (e) { dismissProcessing(); log(`  ✗ Error: ${e.message}`, 'tep-log-err'); toast(`Error saving "${newName}"`, 'err'); }
+    });
+
+    card.appendChild(form);
+  }
+
+  async function cloneTest(t) {
+    const newName = prompt('Name for cloned test:', (t.name || '') + ' (copy)');
+    if (!newName) return;
+
+    const cloned = { ...t };
+    delete cloned.testId;
+    delete cloned.id;
+    delete cloned.createTime;
+    delete cloned.modifiedTime;
+    cloned.name = newName;
+
+    try {
+      log(`Cloning "${t.name}" as "${newName}"…`, 'tep-log-info');
+      const resp = await ajax(testApiUrl(t, { forWrite: true }), {
+        method: 'POST',
+        body: JSON.stringify(cloned)
+      });
+      if (resp.ok || resp.status === 201) {
+        log(`  ✓ Cloned as "${newName}"`, 'tep-log-ok');
+        toast(`Test cloned as "${newName}".`, 'ok');
+        loadTests();
+      } else {
+        const txt = await resp.text().catch(() => '');
+        log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+      }
+    } catch (e) { log(`  ✗ Error: ${e.message}`, 'tep-log-err'); }
+  }
+
+  async function toggleTest(t, card) {
+    const newState = t.flagEnabled ? 0 : 1;
+    const action = newState ? 'Enabling' : 'Disabling';
+    try {
+      log(`${action} "${t.name}"…`, 'tep-log-info');
+      const updated = { ...t, flagEnabled: newState, flagIgnoreWarnings: 0 };
+      const resp = await ajax(testApiUrl(t, { forWrite: true }), {
+        method: 'POST',
+        body: JSON.stringify(updated)
+      });
+      if (resp.ok) {
+        log(`  ✓ ${action.replace('ing', 'ed')} "${t.name}"`, 'tep-log-ok');
+        toast(`${action.replace('ing', 'ed')} "${t.name}".`, 'ok');
+        loadTests();
+      } else {
+        const txt = await resp.text().catch(() => '');
+        log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+      }
+    } catch (e) { log(`  ✗ Error: ${e.message}`, 'tep-log-err'); }
+  }
+
+  async function deleteTest(t, card) {
+    if (!confirm(`Delete test "${t.name}"? This cannot be undone.`)) return;
+    const testId = t.testId || t.id;
+    try {
+      log(`Deleting "${t.name}"…`, 'tep-log-info');
+      const resp = await ajax(testApiUrl(t), {
+        method: 'DELETE'
+      });
+      if (resp.ok) {
+        log(`  ✓ Deleted "${t.name}"`, 'tep-log-ok');
+        toast(`Deleted "${t.name}".`, 'ok');
+        card.remove();
+        allTests = allTests.filter(x => (x.testId || x.id) !== testId);
+        testCountEl.textContent = `Showing ${testListEl.children.length} of ${allTests.length} test(s)`;
+      } else {
+        const txt = await resp.text().catch(() => '');
+        log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+      }
+    } catch (e) { log(`  ✗ Error: ${e.message}`, 'tep-log-err'); }
+  }
+
+  async function bulkApply() {
+    const action = bulkAction.value;
+    if (!action) { log('Select a bulk action first.', 'tep-log-err'); return; }
+    const selected = allTests.filter(t => selectedTestIds.has(String(t.testId || t.id)));
+    if (!selected.length) { log('No tests selected.', 'tep-log-err'); return; }
+
+    if (action === 'delete') {
+      if (!confirm(`Delete ${selected.length} test(s)? This cannot be undone.`)) return;
+    }
+
+    log(`Bulk ${action} on ${selected.length} test(s)…`, 'tep-log-info');
+    const dismissProcessing = toastProcessing(`Bulk ${action} on ${selected.length} test(s)…`);
+    let ok = 0, fail = 0;
+
+    for (const t of selected) {
+      if (isReadOnly(t)) { log(`  Skipping "${t.name}" — read-only type`, 'tep-log-info'); fail++; continue; }
+      try {
+        let resp;
+        if (action === 'enable' || action === 'disable') {
+          const updated = { ...t, flagEnabled: action === 'enable' ? 1 : 0, flagIgnoreWarnings: 0 };
+          resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
+        } else if (action === 'interval') {
+          const newInterval = parseInt(bulkInterval.value, 10);
+          const updated = { ...t };
+          if (updated.freqHttp !== undefined) updated.freqHttp = newInterval;
+          else if (updated.freqA2s !== undefined) updated.freqA2s = newInterval;
+          else if (updated.freqPage !== undefined) updated.freqPage = newInterval;
+          else if (updated.freqDns !== undefined) updated.freqDns = newInterval;
+          resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
+        } else if (action === 'protocol') {
+          const tt = (t.testType || t.type || '').toLowerCase();
+          if (!/a2s|network|http|page/i.test(tt)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
+          const pv = bulkProtocol.value;
+          const proto = pv.startsWith('TCP') ? 'TCP' : 'ICMP';
+          const pm = pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO');
+          const inSess = proto === 'TCP' ? (bulkInsessionCb.checked ? 1 : 0) : 0;
+          const updated = { ...t, flagIgnoreWarnings: 0 };
+          updated.protocol = proto;
+          updated.flagIcmp = proto === 'ICMP' ? 1 : 0;
+          updated.probeMode = proto === 'TCP' ? pm : 'AUTO';
+          updated.pathtraceInSession = inSess;
+          if (typeof updated.server === 'object' && updated.server) {
+            updated.server.port = updated.server.port || 443;
+          }
+          const writeUrl = testApiUrl(t, { forWrite: true });
+          log(`  DEBUG bulk protocol → ${writeUrl} type="${t.type}" testType="${t.testType}"`, 'tep-log-info');
+          resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(updated) });
+        } else if (action === 'delete') {
+          resp = await ajax(testApiUrl(t), { method: 'DELETE' });
+        }
+
+        if (resp && resp.ok) { ok++; }
+        else { fail++; log(`  ✗ "${t.name}" → ${resp ? resp.status : 'no response'}`, 'tep-log-err'); }
+      } catch (e) { fail++; log(`  ✗ "${t.name}" error: ${e.message}`, 'tep-log-err'); }
+    }
+
+    dismissProcessing();
+    log(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, ok ? 'tep-log-ok' : 'tep-log-err');
+    toast(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, fail ? 'err' : 'ok');
+    selectedTestIds.clear();
+    updateBulkUI();
+    loadTests();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tabs (create test type tabs)
+  // ---------------------------------------------------------------------------
+  tabsContainer.addEventListener('click', (e) => {
+    const tab = e.target.closest('.tep-tab');
+    if (!tab) return;
+    tabsContainer.querySelectorAll('.tep-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentType = tab.dataset.type;
+
+    // Show/hide type-specific fields
+    $('#tep-a2s-fields').style.display = (currentType === 'http-server' || currentType === 'agent-to-server' || currentType === 'page-load') ? 'flex' : 'none';
+
+    // Update placeholder & name template
+    const nameInput = $('#tep-testname');
+    const targetsInput = $('#tep-targets');
+    switch (currentType) {
+      case 'http-server':
+        nameInput.value = 'HTTP Test - {target}';
+        targetsInput.placeholder = 'https://example.com\nhttps://another.com';
+        break;
+      case 'agent-to-server':
+        nameInput.value = 'A2S Test - {target}';
+        targetsInput.placeholder = 'example.com\n10.0.0.1';
+        break;
+      case 'page-load':
+        nameInput.value = 'Page Load - {target}';
+        targetsInput.placeholder = 'https://example.com\nhttps://another.com';
+        break;
+    }
+  });
+
+  // A2S protocol toggle — show/hide TCP options when ICMP is selected
+  $('#tep-a2s-protocol').addEventListener('change', () => {
+    $('#tep-a2s-tcp-opts').style.display = $('#tep-a2s-protocol').value.startsWith('TCP') ? 'contents' : 'none';
+  });
+
+  // ---------------------------------------------------------------------------
+  // TE internal test body builders (matched to actual TE AJAX format)
+  // ---------------------------------------------------------------------------
+  function baseBody(name, vAgentIds, aid) {
+    return {
+      alertSuppressionWindowIds: [],
+      alerts: [],
+      description: '',
+      flagAlertsEnabled: 1,
+      flagDeleted: 0,
+      flagEnabled: 1,
+      flagInstant: 0,
+      flagLocked: 0,
+      flagShared: 0,
+      flagSnapshot: 0,
+      labelsIds: null,
+      tagIds: [],
+      name: name,
+      agentInterfaces: {},
+      agentSet: { agentSetId: 0, vAgentIds: vAgentIds, vAgentsFlagEnabled: {} },
+      flagCloudMonitoring: 0,
+      flagRandomizedStartTime: 0,
+      flagAvailBw: 0,
+      flagContinuousMode: 0,
+      flagMtu: 0,
+      flagPing: 1,
+      numTraceroutes: 3,
+      probePacketRate: null,
+      flagBgp: 1,
+      flagUsePublicBgp: 1,
+      privateMonitorSet: { monitorSetId: null, bgpMonitors: [] },
+      ipv6Policy: 'USE_AGENT_POLICY',
+      pathtraceInSession: 1,
+      probeMode: 'AUTO',
+      accountBindings: aid ? [String(aid)] : []
+    };
+  }
+
+  function buildHttpServerBody(name, target, interval, vAgentIds, aid, opts) {
+    opts = opts || {};
+    const proto = opts.protocol || 'TCP';
+    const probeMode = opts.probeMode || 'SACK';
+    const inSession = opts.pathtraceInSession != null ? opts.pathtraceInSession : 1;
+    const port = opts.port || 443;
+    return {
+      ...baseBody(name, vAgentIds, aid),
+      authType: 'NONE',
+      customHeaders: '',
+      customHeadersForm: '{}',
+      flagAllowUnsafeLegacyRenegotiation: 1,
+      defaultResponseCode: true,
+      flagCollectProxyNetworkData: 0,
+      flagDistributedTracing: false,
+      flagIcmp: proto === 'ICMP' ? 1 : 0,
+      flagOverrideAgentProxy: 0,
+      flagVerifyCertHostname: 1,
+      freqHttp: interval,
+      httpTimeLimit: 5,
+      httpVersion: 2,
+      maxRedirects: 10,
+      oAuth: { url: { url: '' } },
+      overrideResolvedIp: false,
+      protocol: proto,
+      probeMode: proto === 'TCP' ? probeMode : 'AUTO',
+      pathtraceInSession: proto === 'TCP' ? inSession : 0,
+      port: port,
+      requestMethod: 'GET',
+      sslVersion: 0,
+      targetResponseTime: 1000,
+      url: { url: target },
+      userAgent: null,
+      testType: 'Http',
+      vaultSecrets: [],
+      clientCertPresent: false,
+      allowVerifyContent: false,
+      proxyId: null
+    };
+  }
+
+  function buildAgentToServerBody(name, target, interval, vAgentIds, aid, opts) {
+    opts = opts || {};
+    const proto = opts.protocol || 'TCP';
+    const probeMode = opts.probeMode || 'SACK';
+    const inSession = opts.pathtraceInSession != null ? opts.pathtraceInSession : 1;
+    // Strip protocol and path — TE expects a plain hostname or IP
+    let host = target.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
+    let port = opts.port || 443;
+    // If host contains :port, extract it (overrides default/opts only if present in target)
+    const colonIdx = host.lastIndexOf(':');
+    if (colonIdx > 0 && !host.includes('[')) {
+      const maybePort = parseInt(host.substring(colonIdx + 1), 10);
+      if (maybePort > 0 && maybePort < 65536) { port = maybePort; host = host.substring(0, colonIdx); }
+    }
+    return {
+      ...baseBody(name, vAgentIds, aid),
+      freqA2s: interval,
+      interval: interval,
+      freq: interval,
+      server: { serverName: host, port: port },
+      protocol: proto,
+      dscp: 0,
+      testType: 'A2s',
+      flagIcmp: proto === 'ICMP' ? 1 : 0,
+      flagBgp: 1,
+      flagUsePublicBgp: 1,
+      ipv6Policy: 'USE_AGENT_POLICY',
+      pathtraceInSession: proto === 'TCP' ? inSession : 0,
+      probeMode: proto === 'TCP' ? probeMode : 'AUTO'
+    };
+  }
+
+  function buildPageLoadBody(name, target, interval, vAgentIds, aid, opts) {
+    opts = opts || {};
+    const proto = opts.protocol || 'TCP';
+    const probeMode = opts.probeMode || 'SACK';
+    const inSession = opts.pathtraceInSession != null ? opts.pathtraceInSession : 1;
+    const port = opts.port || 443;
+    return {
+      ...baseBody(name, vAgentIds, aid),
+      authType: 'NONE',
+      customHeaders: '',
+      customHeadersForm: '{}',
+      flagAllowUnsafeLegacyRenegotiation: 1,
+      defaultResponseCode: true,
+      flagCollectProxyNetworkData: 0,
+      flagIcmp: proto === 'ICMP' ? 1 : 0,
+      flagOverrideAgentProxy: 0,
+      flagVerifyCertHostname: 1,
+      freqHttp: interval,
+      freqBrowserbot: Math.max(interval, 120),
+      freqHttp: interval,
+      httpTimeLimit: 10,
+      httpVersion: 2,
+      maxRedirects: 10,
+      oAuth: { url: { url: '' } },
+      overrideResolvedIp: false,
+      protocol: proto,
+      probeMode: proto === 'TCP' ? probeMode : 'AUTO',
+      pathtraceInSession: proto === 'TCP' ? inSession : 0,
+      port: port,
+      requestMethod: 'GET',
+      sslVersion: 0,
+      targetResponseTime: 1000,
+      url: { url: target },
+      userAgent: null,
+      testType: 'Page',
+      vaultSecrets: [],
+      clientCertPresent: false,
+      allowVerifyContent: false,
+      proxyId: null,
+      pageLoadTimeLimit: 10
+    };
+  }
+
+  function buildDnsServerBody(name, target, interval, vAgentIds, aid, dnsServers) {
+    const domain = target.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
+    return {
+      ...baseBody(name, vAgentIds, aid),
+      freqDns: interval,
+      domain: domain,
+      dnsQueryClass: 'IN',
+      dnsTransportProtocol: 'UDP',
+      recursiveQueries: 1,
+      testType: 'DnsServer',
+      servers: (dnsServers || []).map(s => ({ serverName: s }))
+    };
+  }
+
+  function buildDnsTraceBody(name, target, interval, vAgentIds, aid) {
+    const domain = target.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
+    return {
+      ...baseBody(name, vAgentIds, aid),
+      freqDns: interval,
+      domain: domain,
+      dnsQueryClass: 'IN',
+      dnsTransportProtocol: 'UDP',
+      testType: 'DnsTrace'
+    };
+  }
+
+  const TE_TYPE_MAP = {
+    'http-server':     { apiPath: 'http-server',     buildBody: buildHttpServerBody },
+    'agent-to-server': { apiPath: 'network',          buildBody: buildAgentToServerBody },
+    'page-load':       { apiPath: 'page-load',       buildBody: buildPageLoadBody },
+    'dns-server':      { apiPath: 'dns-server',      buildBody: buildDnsServerBody },
+    'dns-trace':       { apiPath: 'dns-trace',       buildBody: buildDnsTraceBody }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Create tests via TE internal AJAX API
+  // ---------------------------------------------------------------------------
+  async function createTests() {
+    const nameTemplate = $('#tep-testname').value.trim();
+    const targets = $('#tep-targets').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    const interval = parseInt($('#tep-interval').value, 10);
+    const vAgentIds = [...selectedAgentIds];
+    const aid = teInitData._currentAid || '';
+
+    if (!targets.length) { log('No targets specified.', 'tep-log-err'); return; }
+    if (!vAgentIds.length) { log('No agents selected.', 'tep-log-err'); return; }
+
+    const createBtn = $('#tep-create');
+    createBtn.disabled = true;
+    const dismissProcessing = toastProcessing(`Creating ${targets.length} test(s)…`);
+    const typeInfo = TE_TYPE_MAP[currentType];
+    if (!typeInfo) { log(`Unknown test type: ${currentType}`, 'tep-log-err'); createBtn.disabled = false; return; }
+
+    for (const target of targets) {
+      const testName = nameTemplate.replace(/\{target\}/g, target);
+
+      let body;
+      const pv = $('#tep-a2s-protocol').value;
+      const protoOpts = {
+        protocol: pv.startsWith('TCP') ? 'TCP' : 'ICMP',
+        port: parseInt($('#tep-a2s-port').value, 10) || 443,
+        probeMode: pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO'),
+        pathtraceInSession: $('#tep-a2s-insession').checked ? 1 : 0
+      };
+      body = typeInfo.buildBody(testName, target, interval, vAgentIds, aid, protoOpts);
+
+      // For network tests, try to fetch an existing one first to discover field format
+      if (currentType === 'agent-to-server') {
+        const netTest = allTests.find(tt => (tt.type || '').toLowerCase() === 'network');
+        if (netTest) {
+          try {
+            const dUrl = testApiUrl(netTest);
+            log(`DEBUG: fetching existing network test: ${dUrl}`, 'tep-log-info');
+            const dr = await ajax(dUrl);
+            if (dr.ok) {
+              const dd = await dr.json();
+              const srvKeys = Object.keys(dd).filter(k => /server|target|host|port|proto|freq|url|addr/i.test(k));
+              log(`DEBUG A2S fields: ${srvKeys.map(k => k+'='+JSON.stringify(dd[k])).join(', ')}`, 'tep-log-info');
+            } else {
+              log(`DEBUG: fetch failed ${dr.status}`, 'tep-log-err');
+            }
+          } catch(e) { log(`DEBUG fetch err: ${e.message}`, 'tep-log-err'); }
+        } else {
+          log('DEBUG: no existing network test found to inspect', 'tep-log-info');
+        }
+      }
+
+      log(`Creating ${currentType} test: "${testName}"…`, 'tep-log-info');
+      log(`DEBUG POST /ajax/tests/${typeInfo.apiPath} body: ${JSON.stringify({server: body.server, serverName: body.serverName, port: body.port, protocol: body.protocol, testType: body.testType, freqA2s: body.freqA2s, name: body.name})}`, 'tep-log-info');
+
+      try {
+        const resp = await ajax(`/ajax/tests/${typeInfo.apiPath}`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+
+        const respText = await resp.text().catch(() => '');
+
+        if (resp.ok || resp.status === 201) {
+          let data = {};
+          try { data = JSON.parse(respText); } catch {}
+          const testId = data.testId || data.id || data.test?.testId || '?';
+          log(`  ✓ Created "${testName}" (id: ${testId})`, 'tep-log-ok');
+          toast(`Created "${testName}" (id: ${testId})`, 'ok');
+        } else {
+          log(`  ✗ ${resp.status}: ${respText.substring(0, 300)}`, 'tep-log-err');
+          toast(`Failed to create "${testName}": ${resp.status}`, 'err');
+        }
+      } catch (e) {
+        log(`  ✗ Error: ${e.message}`, 'tep-log-err');
+        toast(`Error creating "${testName}"`, 'err');
+      }
+    }
+
+    createBtn.disabled = false;
+    dismissProcessing();
+    log('Done.', 'tep-log-info');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Event listeners
+  // ---------------------------------------------------------------------------
+
+  // Log toggle
+  $('#tep-log-toggle').addEventListener('click', () => {
+    const btn = $('#tep-log-toggle');
+    const log = $('#tep-log');
+    btn.classList.toggle('open');
+    log.classList.toggle('open');
+  });
+
+  // Top-level view tab switcher
+  root.querySelectorAll('.tep-view-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      root.querySelectorAll('.tep-view-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      root.querySelectorAll('.tep-view-panel').forEach(p => p.classList.remove('active'));
+      const panel = $(`#tep-panel-${tab.dataset.view}`);
+      if (panel) panel.classList.add('active');
+      // Auto-load tests when switching to manage tab
+      if (tab.dataset.view === 'manage' && allTests.length === 0 && teInitData) {
+        loadTests();
+      }
+    });
+  });
+
+
+  // Create panel listeners
+  $('#tep-close').addEventListener('click', () => {
+    stopPersistentIntercept();
+    mainStyles.remove();
+    constrainStyles.remove();
+    if (darkStyles) darkStyles.remove();
+    resizeHandle.remove();
+    root.remove();
+  });
+  $('#tep-load-agents').addEventListener('click', loadAgents);
+  $('#tep-create').addEventListener('click', createTests);
+  $('#tep-retry-auth').addEventListener('click', () => {
+    stopPersistentIntercept();
+    log('--- Retrying auth ---', 'tep-log-info');
+    initAuth();
+  });
+  $('#tep-clear-log').addEventListener('click', () => { logEl.innerHTML = ''; });
+  filterInput.addEventListener('input', () => renderAgents(filterInput.value));
+
+  // Dark mode toggle for TE page
+  let darkStyles = null;
+  const darkToggle = $('#tep-dark-toggle');
+  const TE_DARK_CSS = `
+    html { filter: invert(0.9) hue-rotate(180deg); }
+    img, svg, video, canvas, [class*="chart"], [class*="map"], [class*="graph"] {
+      filter: invert(1) hue-rotate(180deg);
+    }
+    #te-panel-root, #tep-resize-handle {
+      filter: invert(1) hue-rotate(180deg);
+    }
+  `;
+  function toggleDarkMode() {
+    if (darkStyles) {
+      darkStyles.remove();
+      darkStyles = null;
+      darkToggle.classList.remove('active');
+      localStorage.removeItem('tep-dark-mode');
+    } else {
+      darkStyles = tepInjectCSS(TE_DARK_CSS);
+      darkToggle.classList.add('active');
+      localStorage.setItem('tep-dark-mode', '1');
+    }
+  }
+  darkToggle.addEventListener('click', toggleDarkMode);
+  // Restore dark mode if it was on
+  if (localStorage.getItem('tep-dark-mode') === '1') toggleDarkMode();
+
+  // Manage panel listeners
+  $('#tep-manage-load').addEventListener('click', loadTests);
+  manageTypeFilter.addEventListener('change', renderTests);
+  manageSearch.addEventListener('input', renderTests);
+  manageSearch.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadTests(); });
+  manageSort.addEventListener('change', renderTests);
+
+  // Bulk controls
+  $('#tep-select-all').addEventListener('click', () => {
+    allTests.forEach(t => selectedTestIds.add(String(t.testId || t.id)));
+    renderTests(); updateBulkUI();
+  });
+  $('#tep-select-none').addEventListener('click', () => {
+    selectedTestIds.clear();
+    renderTests(); updateBulkUI();
+  });
+  $('#tep-select-filtered').addEventListener('click', () => {
+    getFilteredTests().forEach(t => selectedTestIds.add(String(t.testId || t.id)));
+    renderTests(); updateBulkUI();
+  });
+  bulkAction.addEventListener('change', () => {
+    bulkInterval.style.display = bulkAction.value === 'interval' ? '' : 'none';
+    bulkProtocol.style.display = bulkAction.value === 'protocol' ? '' : 'none';
+    bulkInsessionLabel.style.display = (bulkAction.value === 'protocol' && bulkProtocol.value.startsWith('TCP')) ? 'flex' : 'none';
+  });
+  bulkProtocol.addEventListener('change', () => {
+    bulkInsessionLabel.style.display = bulkProtocol.value.startsWith('TCP') ? 'flex' : 'none';
+  });
+  $('#tep-bulk-apply').addEventListener('click', bulkApply);
+
+  // ---------------------------------------------------------------------------
+  // Horizontal resize
+  // ---------------------------------------------------------------------------
+  let resizing = false;
+  resizeHandle.addEventListener('mousedown', (e) => {
+    resizing = true;
+    resizeHandle.classList.add('active');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!resizing) return;
+    applyWidth(window.innerWidth - e.clientX);
+  });
+  document.addEventListener('mouseup', () => {
+    if (resizing) { resizing = false; resizeHandle.classList.remove('active'); }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Init — fully automatic auth detection
+  // ---------------------------------------------------------------------------
+  initAuth();
+})();
