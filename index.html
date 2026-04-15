@@ -2284,12 +2284,18 @@
 
     // Hosted loader bookmarklet (all browsers — tiny URL)
     function buildLoaderBookmarklet(url) {
-      // Uses fetch+eval first (bypasses CSP script-src), falls back to <script src>
+      // Try fetch+eval (works even when CSP blocks external script elements)
+      // Fall back to script-src, then alert on total failure
       var loader = '(function(){' +
-        'fetch("' + url + '").then(function(r){return r.text()}).then(function(t){' +
-        'var s=document.createElement("script");s.textContent=t;document.body.appendChild(s)' +
-        '}).catch(function(){' +
-        'var s=document.createElement("script");s.src="' + url + '";document.body.appendChild(s)' +
+        'fetch("' + url + '",{cache:"no-store"})' +
+        '.then(function(r){if(!r.ok)throw new Error(r.status);return r.text()})' +
+        '.then(function(t){try{eval(t)}catch(e){' +
+          'var s=document.createElement("script");s.textContent=t;document.body.appendChild(s)' +
+        '}})' +
+        '.catch(function(e){' +
+          'var s=document.createElement("script");s.src="' + url + '";' +
+          's.onerror=function(){alert("TE Optics: Failed to load script.\\n"+e)};' +
+          'document.body.appendChild(s)' +
         '})' +
         '})()';
       return 'javascript:void(' + encodeURIComponent(loader) + ')';
@@ -2314,10 +2320,12 @@
       }
     }
 
-    // Restore saved URL
+    // Restore saved URL (only if valid and not stale)
     try {
       var saved = localStorage.getItem('te-optics-url');
-      if (saved) document.getElementById('hosted-url').value = saved;
+      if (saved && saved.indexOf('/panel.js') !== -1) {
+        document.getElementById('hosted-url').value = saved;
+      }
     } catch(e) {}
     updateHostedBookmarklet();
 
