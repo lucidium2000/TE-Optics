@@ -1,224 +1,17 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TE Optics</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      padding: 3rem 1rem;
-    }
-    .container { max-width: 720px; width: 100%; }
-    h1 {
-      font-size: 2rem;
-      font-weight: 700;
-      color: #f8fafc;
-      margin-bottom: 0.5rem;
-    }
-    .subtitle {
-      color: #94a3b8;
-      font-size: 1.05rem;
-      margin-bottom: 2.5rem;
-      line-height: 1.6;
-    }
-    .step {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 1.5rem;
-      margin-bottom: 1.25rem;
-    }
-    .step-number {
-      display: inline-block;
-      background: #3b82f6;
-      color: #fff;
-      font-weight: 700;
-      font-size: 0.85rem;
-      width: 28px;
-      height: 28px;
-      line-height: 28px;
-      text-align: center;
-      border-radius: 50%;
-      margin-right: 0.75rem;
-    }
-    .step h2 {
-      display: inline;
-      font-size: 1.1rem;
-      color: #f1f5f9;
-    }
-    .step p, .step ul {
-      margin-top: 0.75rem;
-      color: #94a3b8;
-      line-height: 1.6;
-    }
-    .step ul { padding-left: 1.25rem; }
-    .step li { margin-bottom: 0.3rem; }
-    .bookmarklet-link {
-      display: inline-block;
-      margin-top: 1rem;
-      padding: 0.7rem 1.5rem;
-      background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: #fff;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 0.95rem;
-      border-radius: 8px;
-      cursor: grab;
-      transition: transform 0.15s, box-shadow 0.15s;
-    }
-    .bookmarklet-link:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
-    }
-    .copy-btn {
-      display: inline-block;
-      margin-top: 1rem;
-      padding: 0.65rem 1.3rem;
-      background: #334155;
-      color: #e2e8f0;
-      border: 1px solid #475569;
-      font-weight: 600;
-      font-size: 0.9rem;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .copy-btn:hover { background: #475569; }
-    .hint {
-      display: block;
-      margin-top: 0.6rem;
-      font-size: 0.82rem;
-      color: #64748b;
-    }
-    code {
-      background: #0f172a;
-      padding: 0.15em 0.4em;
-      border-radius: 4px;
-      font-size: 0.9em;
-      color: #93c5fd;
-    }
-    .or-divider {
-      text-align: center;
-      color: #64748b;
-      font-size: 0.85rem;
-      margin: 1rem 0 0.5rem;
-    }
-    .note {
-      background: #172554;
-      border: 1px solid #1e40af;
-      border-radius: 10px;
-      padding: 1rem 1.25rem;
-      margin-top: 2rem;
-      color: #93c5fd;
-      font-size: 0.9rem;
-      line-height: 1.6;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>TE Optics</h1>
-    <p class="subtitle">
-      Bulk-create ThousandEyes tests using your existing browser session.
-      No API tokens needed &mdash; this tool piggybacks on the session you already
-      have open in <code>app.thousandeyes.com</code>.
-    </p>
+// ==UserScript==
+// @name         TE Optics
+// @namespace    https://github.com/lucidium2000/TE-Optics
+// @version      1.0.0
+// @description  ThousandEyes test manager — bulk create, manage, and edit tests
+// @author       lucidium2000
+// @match        *://*.thousandeyes.com/*
+// @grant        none
+// @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/lucidium2000/TE-Optics/main/te-optics.user.js
+// @downloadURL  https://raw.githubusercontent.com/lucidium2000/TE-Optics/main/te-optics.user.js
+// ==/UserScript==
 
-    <div class="step">
-      <span class="step-number">1</span>
-      <h2>Log into ThousandEyes</h2>
-      <p>
-        Open <a href="https://app.thousandeyes.com" target="_blank" style="color:#60a5fa;">app.thousandeyes.com</a>
-        in your browser and make sure you&rsquo;re signed in.
-      </p>
-    </div>
-
-    <div class="step">
-      <span class="step-number">2</span>
-      <h2>Launch the panel</h2>
-      <p>Choose one of these methods:</p>
-
-      <p style="margin-top:1rem;"><strong style="color:#e2e8f0;">Option A &mdash; Tampermonkey</strong> <span style="font-size:0.8rem;color:#4ade80;">(recommended &mdash; all browsers)</span><br>
-        Install once, runs automatically on every ThousandEyes page. No manual steps after setup.</p>
-      <ol style="margin:0.75rem 0 0.5rem 1.25rem;color:#94a3b8;line-height:1.8;font-size:0.9rem;">
-        <li>Install <a href="https://www.tampermonkey.net/" target="_blank" style="color:#60a5fa;">Tampermonkey</a> for your browser (Chrome, Firefox, Edge, Safari)</li>
-        <li>Click the install link below &mdash; Tampermonkey will prompt to install:
-          <div style="margin-top:0.5rem;">
-            <a href="https://raw.githubusercontent.com/lucidium2000/TE-Optics/main/te-optics.user.js"
-              target="_blank" class="bookmarklet-link" style="display:inline-block;font-size:0.85rem;padding:0.55rem 1.2rem;">
-              Install TE Optics Userscript
-            </a>
-          </div>
-        </li>
-        <li>Visit <code>app.thousandeyes.com</code> &mdash; the panel appears automatically</li>
-      </ol>
-      <span class="hint">
-        Auto-updates from GitHub when new versions are pushed. Bypasses ThousandEyes CSP restrictions.
-      </span>
-
-      <div class="or-divider">&mdash; or &mdash;</div>
-
-      <p><strong style="color:#e2e8f0;">Option B &mdash; Bookmarklet</strong> <span style="font-size:0.8rem;color:#f59e0b;">(Chrome/Edge only)</span><br>
-        Drag this button to your bookmarks bar, then click it while on <code>app.thousandeyes.com</code>:</p>
-      <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(0);" style="background:linear-gradient(135deg,#475569,#334155);">
-        TE Optics
-      </a>
-      <span class="hint">
-        Drag &amp; drop onto your bookmarks toolbar. Too large for Firefox&rsquo;s URL limit.
-      </span>
-
-      <div class="or-divider">&mdash; or &mdash;</div>
-
-      <p><strong style="color:#e2e8f0;">Option C &mdash; Console paste</strong> <span style="font-size:0.8rem;color:#4ade80;">(all browsers)</span><br>
-        On <code>app.thousandeyes.com</code>, press <code>F12</code> &rarr; <strong>Console</strong> tab, then:</p>
-      <div style="display:flex;gap:8px;margin-top:0.75rem;">
-        <button class="copy-btn" id="copy-btn">Copy Script to Clipboard</button>
-        <button class="copy-btn" id="reveal-btn" style="background:#1e3a5f;border-color:#3b82f6;">Show Script</button>
-      </div>
-      <div id="script-reveal" style="display:none;margin-top:0.75rem;">
-        <textarea id="script-text" readonly style="width:100%;height:140px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px;font-family:monospace;font-size:11px;resize:vertical;"></textarea>
-        <span class="hint">Select all (<code>Ctrl+A</code> / <code>Cmd+A</code>) inside the box, copy, then paste into the console.</span>
-      </div>
-      <span class="hint">
-        Paste (<code>Ctrl+V</code> / <code>Cmd+V</code>) into the console and press Enter.
-      </span>
-    </div>
-
-    <div class="step">
-      <span class="step-number">3</span>
-      <h2>Create tests</h2>
-      <p>
-        The floating panel will auto-detect your session, load available agents,
-        and let you create tests. Supported types:
-      </p>
-      <ul>
-        <li><strong style="color:#e2e8f0;">HTTP Server</strong> &mdash; monitor web endpoints</li>
-        <li><strong style="color:#e2e8f0;">Agent-to-Server</strong> &mdash; network connectivity</li>
-        <li><strong style="color:#e2e8f0;">Page Load</strong> &mdash; full page render timing</li>
-        <li><strong style="color:#e2e8f0;">DNS Server</strong> &mdash; DNS resolution against specific servers</li>
-        <li><strong style="color:#e2e8f0;">DNS Trace</strong> &mdash; delegation path analysis</li>
-      </ul>
-      <p>Enter multiple targets (one per line) to bulk-create tests.</p>
-    </div>
-
-    <div class="note">
-      <strong>How it works:</strong> The script runs directly inside the
-      <code>app.thousandeyes.com</code> page and automatically detects your
-      active session. It tries cookie auth first, then searches browser storage
-      for tokens, and finally intercepts live TE app requests to capture the
-      auth header &mdash; no separate server or manual token entry required.
-    </div>
-  </div>
-
-  <!-- panel.js source embedded here so everything works from file:// -->
-  <script type="text/plain" id="panel-source">(function () {
+(function () {
   'use strict';
   if (document.getElementById('te-panel-root')) return;
 
@@ -517,6 +310,30 @@
   `;
 
   // ---------------------------------------------------------------------------
+  // CSP-safe style injection (works on Firefox + Chrome)
+  // ---------------------------------------------------------------------------
+  function tepInjectCSS(css) {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return {
+        update(newCss) { sheet.replaceSync(newCss); },
+        remove() { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(s => s !== sheet); }
+      };
+    } catch (_) {
+      // Fallback for older browsers
+      const el = document.createElement('style');
+      el.textContent = css;
+      (document.head || document.documentElement).appendChild(el);
+      return {
+        update(newCss) { el.textContent = newCss; },
+        remove() { el.remove(); }
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Create DOM
   // ---------------------------------------------------------------------------
   // Create resize gutter
@@ -527,22 +344,18 @@
   const root = document.createElement('div');
   root.id = 'te-panel-root';
 
-  const style = document.createElement('style');
-  style.textContent = STYLES;
-  root.appendChild(style);
+  const mainStyles = tepInjectCSS(STYLES);
 
   // Push TE page content to the left
   const TEP_WIDTH_KEY = 'tep-panel-width';
   let panelWidth = parseInt(localStorage.getItem(TEP_WIDTH_KEY), 10) || 576;
-  const tepConstrainStyle = document.createElement('style');
-  tepConstrainStyle.id = 'tep-constrain-style';
-  document.head.appendChild(tepConstrainStyle);
+  const constrainStyles = tepInjectCSS('');
   function applyWidth(w) {
     panelWidth = Math.max(320, Math.min(w, window.innerWidth - 300));
     root.style.setProperty('--tep-width', panelWidth + 'px');
     resizeHandle.style.right = (panelWidth - 3) + 'px';
     localStorage.setItem(TEP_WIDTH_KEY, panelWidth);
-    tepConstrainStyle.textContent = `
+    constrainStyles.update(`
       html {
         margin-right: ${panelWidth}px !important;
         overflow-x: hidden !important;
@@ -557,7 +370,7 @@
         max-width: calc(100vw - ${panelWidth}px) !important;
         overflow-x: auto !important;
       }
-    `;
+    `);
   }
   applyWidth(panelWidth);
 
@@ -899,6 +712,7 @@
           for (const a of vAgents) {
             const isEnterprise = activeAid && a.primaryAid === activeAid;
             if (isEnterprise) enterpriseCount++; else cloudCount++;
+            // Build location string from location object or countryId
             let loc = '';
             if (a.location && typeof a.location === 'object') {
               loc = [a.location.city, a.location.state, a.location.country].filter(Boolean).join(', ');
@@ -1091,7 +905,6 @@
     'HTTP': 'http-server', 'DNS': 'dns-server', 'Voice': 'voip',
     'OneWayNetwork': 'network', 'Sip': 'sip-server'
   };
-  // Remap raw lowercase type values that don't match their API slug
   const SLUG_REMAP = {
     'browserbot': 'page-load',
     'sip': 'sip-server',
@@ -1107,7 +920,6 @@
     'dns trace': 'dns-trace',
     'DNS Trace': 'dns-trace'
   };
-  // Types with no working API endpoint at all
   const NO_API_SLUGS = new Set(['onewaynetwork', 'api']);
   function isReadOnly(t) {
     return NO_API_SLUGS.has((t.type || '').toLowerCase());
@@ -1116,7 +928,6 @@
     return !isReadOnly(t);
   }
 
-  // Map from all known internal type values to the canonical testType
   const TYPE_NORMALIZE = {
     'http-server': 'Http', 'Http': 'Http', 'HTTP': 'Http', 'http_server': 'Http',
     'agent-to-server': 'A2s', 'A2s': 'A2s', 'agent_to_server': 'A2s',
@@ -1130,16 +941,12 @@
     'bgp': 'Bgp', 'Bgp': 'Bgp'
   };
 
-  // Normalize test object field names after loading
   function normalizeTest(t) {
-    // Normalize type → testType
     if (!t.testType && t.type) {
       t.testType = TYPE_NORMALIZE[t.type] || t.type;
     } else if (t.testType && !TYPE_NORMALIZE[t.testType]) {
-      // testType might already be canonical, try normalizing anyway
       t.testType = TYPE_NORMALIZE[t.testType] || t.testType;
     }
-    // Also handle numeric type codes (TE uses these internally)
     if (!t.testType && typeof t.type === 'number') {
       const numMap = {1:'Http', 2:'Page', 3:'A2s', 5:'DnsServer', 6:'DnsTrace', 7:'Voip', 8:'WebTransaction', 12:'Ftp', 14:'Dnssec', 30:'Bgp'};
       t.testType = numMap[t.type] || ('Type' + t.type);
@@ -1162,7 +969,6 @@
   }
 
   function getTestAgentIds(t) {
-    // Try multiple known structures for agent IDs in TE responses
     if (t.agentSet) {
       if (Array.isArray(t.agentSet.vAgentIds) && t.agentSet.vAgentIds.length) return t.agentSet.vAgentIds;
       if (Array.isArray(t.agentSet.agentIds) && t.agentSet.agentIds.length) return t.agentSet.agentIds;
@@ -1178,9 +984,6 @@
     return [];
   }
 
-  // Build correct TE API URL
-  //   READ:  GET  /ajax/tests/{slug}/{aid}/{testId}
-  //   WRITE: POST /ajax/tests/{slug}  (testId & aid go in request body)
   function testApiUrl(t, { forWrite = false } = {}) {
     let slug = t.type || '';
     const slugLower = slug.toLowerCase();
@@ -1204,7 +1007,6 @@
       const resp = await ajax(url);
       if (resp.ok) {
         const detail = await resp.json();
-        // Merge all detail fields back into the test object
         const preserve = new Set(['testType', '_agentsLoaded', '_fetchStatus', '_fetchError', 'type']);
         for (const k of Object.keys(detail)) {
           if (preserve.has(k)) continue;
@@ -1212,23 +1014,14 @@
         }
         t._agentsLoaded = true;
         return detail;
-      } else {
-        t._fetchStatus = resp.status;
       }
-    } catch (e) { t._fetchError = e.message; }
+    } catch (e) { /* silent */ }
     t._agentsLoaded = true;
     return null;
   }
 
-  // Enrich all tests with agent data in background via individual detail fetches
   async function enrichTestsWithAgents() {
-    // Log unique type values so we can see what we're dealing with
-    const typeCounts = {};
-    for (const t of allTests) {
-      const ty = t.type || '(none)';
-      typeCounts[ty] = (typeCounts[ty] || 0) + 1;
-    }
-    log(`Enriching ${allTests.length} tests — types: ${Object.entries(typeCounts).map(([k,v]) => k+'='+v).join(', ')}`, 'tep-log-info');
+    log('Enriching tests with agent data…', 'tep-log-info');
     const BATCH = 5;
     let enriched = 0;
     let debugged = false;
@@ -1240,7 +1033,6 @@
         if (!canEnrich(t)) { t._agentsLoaded = true; return; }
         const detail = await fetchTestDetail(t);
 
-        // Debug first successful detail
         if (detail && !debugged) {
           debugged = true;
           const agentKeys = Object.keys(detail).filter(k => /agent/i.test(k));
@@ -1250,11 +1042,15 @@
             log(`    ${ak}: ${JSON.stringify(detail[ak]).substring(0, 250)}`, 'tep-log-info');
           }
         }
+        // Debug: log server-related fields for A2S/network tests
+        if (detail && (t.testType === 'A2s' || (t.type || '').toLowerCase() === 'agent-to-server' || (t.type || '').toLowerCase() === 'network')) {
+          const srvKeys = Object.keys(detail).filter(k => /server|target|host|port|proto|freq/i.test(k));
+          log(`  A2S detail [${t.name}]: ${srvKeys.map(k => k+'='+JSON.stringify(detail[k])).join(', ')}`, 'tep-log-info');
+        }
 
         const count = getTestAgentIds(t).length;
         if (count > 0) enriched++;
 
-        // Update card in DOM
         const tid = String(t.testId || t.id || '');
         const card = testListEl.querySelector(`.tep-test-card[data-test-id="${tid}"]`);
         if (card) {
@@ -1267,17 +1063,6 @@
       }));
     }
 
-    // Log failed types
-    const failedTypes = {};
-    for (const t of allTests) {
-      if (getTestAgentIds(t).length === 0 && (t._fetchStatus || t._fetchError)) {
-        const key = `${(t.type||'?').toLowerCase()} → ${t._fetchStatus || t._fetchError}`;
-        failedTypes[key] = (failedTypes[key] || 0) + 1;
-      }
-    }
-    if (Object.keys(failedTypes).length) {
-      log(`Failed fetches: ${Object.entries(failedTypes).map(([k,v]) => k+' (×'+v+')').join(', ')}`, 'tep-log-err');
-    }
     log(`Agent enrichment complete: ${enriched} of ${allTests.length} test(s) have agents`, 'tep-log-ok');
     renderTests();
   }
@@ -1298,7 +1083,6 @@
     if (t.testTarget) return t.testTarget;
     if (t.serverName) return t.serverName;
     if (t.destination) return t.destination;
-    // Some TE responses nest the URL inside a config object
     if (t.config) {
       if (t.config.url && typeof t.config.url === 'object') return t.config.url.url || '';
       if (typeof t.config.url === 'string') return t.config.url;
@@ -1348,14 +1132,8 @@
             }
           }
           if (allTests.length) {
-            // Normalize all tests
             allTests = allTests.map(normalizeTest);
             log(`Loaded ${allTests.length} test(s) from ${ep}`, 'tep-log-ok');
-            const sample = allTests[0];
-            log(`Sample test keys: ${Object.keys(sample).slice(0, 20).join(', ')}`, 'tep-log-info');
-            log(`  type=${sample.type}, testType=${sample.testType}, testId=${sample.testId}, agentSetId=${sample.agentSetId}`, 'tep-log-info');
-            const freqKeys = Object.keys(sample).filter(k => /freq|interval|period/i.test(k));
-            log(`  Freq/interval keys: ${freqKeys.map(k => k+'='+sample[k]).join(', ') || 'NONE'}`, 'tep-log-info');
             found = true;
             break;
           } else {
@@ -1374,7 +1152,6 @@
       testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
     } else {
       renderTests();
-      // Fetch individual test details in background to get agent counts
       enrichTestsWithAgents();
     }
   }
@@ -1589,11 +1366,11 @@
         editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
         return;
       }
-      // Show assigned agents first, then Enterprise before Cloud
       const sorted = [...filtered].sort((a, b) => {
         const aIn = editAgentIds.has(String(a.agentId)) ? 0 : 1;
         const bIn = editAgentIds.has(String(b.agentId)) ? 0 : 1;
         if (aIn !== bIn) return aIn - bIn;
+        // Enterprise before Cloud
         const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
         const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
         if (aEnt !== bEnt) return aEnt - bEnt;
@@ -1635,11 +1412,12 @@
       const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
       const newEnabled = parseInt(form.querySelector('.tep-edit-enabled').value, 10);
 
-      // Build updated body — strip internal keys
+      // Build updated body — start from enriched test, strip internal keys
       const updated = { ...t };
       Object.keys(updated).forEach(k => { if (k.startsWith('_')) delete updated[k]; });
       updated.name = newName;
       updated.flagEnabled = newEnabled;
+      updated.flagIgnoreWarnings = 0;
 
       // Set target
       if (updated.url && typeof updated.url === 'object') updated.url.url = newTarget;
@@ -1703,15 +1481,16 @@
         else if (/dns/i.test(tt)) updated.freqDns = newInterval;
         else updated.freqHttp = newInterval;
       }
-      updated.flagIgnoreWarnings = 0;
 
       // Set agents
       if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
       updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
 
+      // Debug: log freq fields being sent
+      const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
+      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval input: ${newInterval}`, 'tep-log-info');
+
       try {
-        const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-        log(`Saving test "${newName}" — freq fields: ${JSON.stringify(freqKeys.reduce((o,k) => (o[k]=updated[k],o), {}))}`, 'tep-log-info');
         const resp = await ajax(testApiUrl(t, { forWrite: true }), {
           method: 'POST',
           body: JSON.stringify(updated)
@@ -2032,7 +1811,7 @@
       flagIcmp: proto === 'ICMP' ? 1 : 0,
       flagOverrideAgentProxy: 0,
       flagVerifyCertHostname: 1,
-      freqPage: interval,
+      freqHttp: interval,
       freqBrowserbot: Math.max(interval, 120),
       freqHttp: interval,
       httpTimeLimit: 10,
@@ -2124,6 +1903,27 @@
       };
       body = typeInfo.buildBody(testName, target, interval, vAgentIds, aid, protoOpts);
 
+      // For network tests, try to fetch an existing one first to discover field format
+      if (currentType === 'agent-to-server') {
+        const netTest = allTests.find(tt => (tt.type || '').toLowerCase() === 'network');
+        if (netTest) {
+          try {
+            const dUrl = testApiUrl(netTest);
+            log(`DEBUG: fetching existing network test: ${dUrl}`, 'tep-log-info');
+            const dr = await ajax(dUrl);
+            if (dr.ok) {
+              const dd = await dr.json();
+              const srvKeys = Object.keys(dd).filter(k => /server|target|host|port|proto|freq|url|addr/i.test(k));
+              log(`DEBUG A2S fields: ${srvKeys.map(k => k+'='+JSON.stringify(dd[k])).join(', ')}`, 'tep-log-info');
+            } else {
+              log(`DEBUG: fetch failed ${dr.status}`, 'tep-log-err');
+            }
+          } catch(e) { log(`DEBUG fetch err: ${e.message}`, 'tep-log-err'); }
+        } else {
+          log('DEBUG: no existing network test found to inspect', 'tep-log-info');
+        }
+      }
+
       log(`Creating ${currentType} test: "${testName}"…`, 'tep-log-info');
       log(`DEBUG POST /ajax/tests/${typeInfo.apiPath} body: ${JSON.stringify({server: body.server, serverName: body.serverName, port: body.port, protocol: body.protocol, testType: body.testType, freqA2s: body.freqA2s, name: body.name})}`, 'tep-log-info');
 
@@ -2187,10 +1987,9 @@
   // Create panel listeners
   $('#tep-close').addEventListener('click', () => {
     stopPersistentIntercept();
-    const constrainEl = document.getElementById('tep-constrain-style');
-    if (constrainEl) constrainEl.remove();
-    const darkEl = document.getElementById('tep-te-dark-mode');
-    if (darkEl) darkEl.remove();
+    mainStyles.remove();
+    constrainStyles.remove();
+    if (darkStyles) darkStyles.remove();
     resizeHandle.remove();
     root.remove();
   });
@@ -2205,7 +2004,7 @@
   filterInput.addEventListener('input', () => renderAgents(filterInput.value));
 
   // Dark mode toggle for TE page
-  let darkStyleEl = null;
+  let darkStyles = null;
   const darkToggle = $('#tep-dark-toggle');
   const TE_DARK_CSS = `
     html { filter: invert(0.9) hue-rotate(180deg); }
@@ -2217,21 +2016,19 @@
     }
   `;
   function toggleDarkMode() {
-    if (darkStyleEl) {
-      darkStyleEl.remove();
-      darkStyleEl = null;
+    if (darkStyles) {
+      darkStyles.remove();
+      darkStyles = null;
       darkToggle.classList.remove('active');
       localStorage.removeItem('tep-dark-mode');
     } else {
-      darkStyleEl = document.createElement('style');
-      darkStyleEl.id = 'tep-te-dark-mode';
-      darkStyleEl.textContent = TE_DARK_CSS;
-      document.head.appendChild(darkStyleEl);
+      darkStyles = tepInjectCSS(TE_DARK_CSS);
       darkToggle.classList.add('active');
       localStorage.setItem('tep-dark-mode', '1');
     }
   }
   darkToggle.addEventListener('click', toggleDarkMode);
+  // Restore dark mode if it was on
   if (localStorage.getItem('tep-dark-mode') === '1') toggleDarkMode();
 
   // Manage panel listeners
@@ -2286,68 +2083,3 @@
   // ---------------------------------------------------------------------------
   initAuth();
 })();
-</script>
-
-  <script>
-    // Read embedded panel.js source (no fetch needed)
-    const panelSource = document.getElementById('panel-source').textContent;
-
-    // Inline bookmarklet (Chrome/Edge only — too large for Firefox)
-    const bmInline = 'javascript:void(' + encodeURIComponent(
-      '(function(){var s=document.createElement("script");s.textContent=' +
-      JSON.stringify(panelSource) + ';document.body.appendChild(s)})()'
-    ) + ')';
-    document.getElementById('bookmarklet-inline').href = bmInline;
-
-    // Copy to clipboard (async-aware for Firefox + file:// fallback)
-    function copyText(text) {
-      if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
-        return navigator.clipboard.writeText(text).catch(function() { return fallbackCopy(text); });
-      }
-      return fallbackCopy(text);
-    }
-    function fallbackCopy(text) {
-      return new Promise(function(resolve, reject) {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;opacity:0;left:-9999px;';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        try {
-          var ok = document.execCommand('copy');
-          ta.remove();
-          ok ? resolve(true) : reject(new Error('execCommand failed'));
-        } catch(e) { ta.remove(); reject(e); }
-      });
-    }
-
-    // Copy button
-    document.getElementById('copy-btn').addEventListener('click', function() {
-      var btn = this;
-      copyText(panelSource).then(function() {
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = 'Copy Script to Clipboard'; }, 2000);
-      }).catch(function(e) {
-        console.error('Copy failed:', e);
-        btn.textContent = 'Copy failed \u2014 use Show Script';
-        setTimeout(function() { btn.textContent = 'Copy Script to Clipboard'; }, 3000);
-      });
-    });
-
-    // Show/hide script
-    document.getElementById('reveal-btn').addEventListener('click', function() {
-      var container = document.getElementById('script-reveal');
-      var ta = document.getElementById('script-text');
-      if (container.style.display === 'none') {
-        container.style.display = '';
-        ta.value = panelSource;
-        this.textContent = 'Hide Script';
-      } else {
-        container.style.display = 'none';
-        this.textContent = 'Show Script';
-      }
-    });
-  </script>
-</body>
-</html>
