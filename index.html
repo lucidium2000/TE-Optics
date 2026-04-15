@@ -157,20 +157,21 @@
 
       <div class="or-divider">&mdash; or &mdash;</div>
 
-      <p><strong style="color:#e2e8f0;">Option B &mdash; Hosted Bookmarklet</strong> <span style="font-size:0.8rem;color:#4ade80;">(all browsers incl. Firefox)</span><br>
-        Enter the URL where <code>panel.js</code> is hosted, then drag the button to your bookmarks bar:</p>
-      <div style="display:flex;gap:8px;align-items:center;margin:0.75rem 0 0.5rem;">
-        <label style="font-size:0.85rem;color:#94a3b8;white-space:nowrap;">panel.js URL:</label>
-        <input id="hosted-url" type="text" value="https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.js" placeholder="https://your-server.com/panel.js"
-          style="flex:1;padding:0.5rem 0.7rem;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:0.85rem;font-family:monospace;outline:none;">
-        <button class="copy-btn" id="update-bm-btn" style="margin:0;padding:0.5rem 1rem;font-size:0.82rem;">Update</button>
+      <p><strong style="color:#e2e8f0;">Option B &mdash; Console paste</strong> <span style="font-size:0.8rem;color:#4ade80;">(all browsers incl. Firefox)</span><br>
+        On <code>app.thousandeyes.com</code>, press <code>F12</code> to open DevTools,
+        go to the <strong>Console</strong> tab, then:</p>
+      <div style="display:flex;gap:8px;margin-top:0.75rem;">
+        <button class="copy-btn" id="copy-btn">Copy Script to Clipboard</button>
+        <button class="copy-btn" id="reveal-btn" style="background:#1e3a5f;border-color:#3b82f6;">Show Script</button>
       </div>
-      <a class="bookmarklet-link" id="bookmarklet" href="javascript:void(0);" style="background:linear-gradient(135deg,#475569,#334155);">
-        TE Optics (Hosted)
-      </a>
+      <div id="script-reveal" style="display:none;margin-top:0.75rem;">
+        <textarea id="script-text" readonly style="width:100%;height:140px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px;font-family:monospace;font-size:11px;resize:vertical;"></textarea>
+        <span class="hint">Select all (<code>Ctrl+A</code> / <code>Cmd+A</code>) inside the box, copy, then paste into the console.</span>
+      </div>
       <span class="hint">
-        Drag &amp; drop onto your bookmarks toolbar. Works in <strong>all browsers</strong> including Firefox &mdash; the loader is tiny.<br>
-        The server hosting <code>panel.js</code> must return CORS header <code>Access-Control-Allow-Origin: *</code>.
+        Paste (<code>Ctrl+V</code> / <code>Cmd+V</code>) into the console and press Enter.<br>
+        <strong>Why no Firefox bookmarklet?</strong> ThousandEyes&rsquo; Content Security Policy blocks loading
+        external scripts, and Firefox has a URL length limit that prevents embedding the full script inline.
       </span>
     </div>
 
@@ -2282,58 +2283,54 @@
     ) + ')';
     document.getElementById('bookmarklet-inline').href = bmInline;
 
-    // Hosted loader bookmarklet (all browsers — tiny URL)
-    function buildLoaderBookmarklet(url) {
-      // 1. Try <script src> (most CSP-friendly, needs proper MIME type)
-      // 2. Fall back to fetch+eval
-      // 3. Alert on total failure
-      var loader = '(function(){' +
-        'var done=false;' +
-        'var s=document.createElement("script");' +
-        's.src="' + url + '";' +
-        's.onload=function(){done=true};' +
-        's.onerror=function(){' +
-          'fetch("' + url + '",{cache:"no-store"})' +
-          '.then(function(r){if(!r.ok)throw new Error(r.status);return r.text()})' +
-          '.then(function(t){eval(t)})' +
-          '.catch(function(e){alert("TE Optics: Could not load script.\\nCSP may be blocking external scripts.\\nUse the inline bookmarklet (Chrome/Edge) or paste the script in the console (F12).\\n\\nError: "+e)})' +
-        '};' +
-        'document.head.appendChild(s)' +
-        '})()';
-      return 'javascript:void(' + encodeURIComponent(loader) + ')';
+    // Copy to clipboard (async-aware for Firefox + file:// fallback)
+    function copyText(text) {
+      if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(function() { return fallbackCopy(text); });
+      }
+      return fallbackCopy(text);
+    }
+    function fallbackCopy(text) {
+      return new Promise(function(resolve, reject) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;left:-9999px;';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          var ok = document.execCommand('copy');
+          ta.remove();
+          ok ? resolve(true) : reject(new Error('execCommand failed'));
+        } catch(e) { ta.remove(); reject(e); }
+      });
     }
 
-    // Set hosted bookmarklet from URL input
-    function updateHostedBookmarklet() {
-      var url = document.getElementById('hosted-url').value.trim();
-      var bmEl = document.getElementById('bookmarklet');
-      if (url) {
-        bmEl.href = buildLoaderBookmarklet(url);
-        bmEl.title = 'Loads panel.js from: ' + url;
-        bmEl.style.opacity = '1';
-        bmEl.style.pointerEvents = '';
-        // Save to localStorage for persistence
-        try { localStorage.setItem('te-optics-url', url); } catch(e) {}
+    // Copy button
+    document.getElementById('copy-btn').addEventListener('click', function() {
+      var btn = this;
+      copyText(panelSource).then(function() {
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy Script to Clipboard'; }, 2000);
+      }).catch(function(e) {
+        console.error('Copy failed:', e);
+        btn.textContent = 'Copy failed \u2014 use Show Script';
+        setTimeout(function() { btn.textContent = 'Copy Script to Clipboard'; }, 3000);
+      });
+    });
+
+    // Show/hide script
+    document.getElementById('reveal-btn').addEventListener('click', function() {
+      var container = document.getElementById('script-reveal');
+      var ta = document.getElementById('script-text');
+      if (container.style.display === 'none') {
+        container.style.display = '';
+        ta.value = panelSource;
+        this.textContent = 'Hide Script';
       } else {
-        bmEl.href = 'javascript:void(0);';
-        bmEl.title = 'Enter a URL first';
-        bmEl.style.opacity = '0.5';
-        bmEl.style.pointerEvents = 'none';
+        container.style.display = 'none';
+        this.textContent = 'Show Script';
       }
-    }
-
-    // Restore saved URL (only if valid and not stale)
-    try {
-      var saved = localStorage.getItem('te-optics-url');
-      if (saved && saved.indexOf('/panel.js') !== -1) {
-        document.getElementById('hosted-url').value = saved;
-      }
-    } catch(e) {}
-    updateHostedBookmarklet();
-
-    document.getElementById('update-bm-btn').addEventListener('click', updateHostedBookmarklet);
-    document.getElementById('hosted-url').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') updateHostedBookmarklet();
     });
   </script>
 </body>
