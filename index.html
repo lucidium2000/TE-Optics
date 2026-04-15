@@ -220,7 +220,18 @@
   <!-- panel.js source embedded here so everything works from file:// -->
   <script type="text/plain" id="panel-source">(function () {
   'use strict';
-  if (document.getElementById('te-panel-root')) return;
+  // If panel already exists, toggle visibility instead of creating a new one
+  const existingRoot = document.getElementById('te-panel-root');
+  const existingToggle = document.getElementById('tep-toggle-btn');
+  if (existingRoot && existingToggle) {
+    const isHidden = existingRoot.style.display === 'none';
+    existingRoot.style.display = isHidden ? '' : 'none';
+    const handle = document.getElementById('tep-resize-handle');
+    if (handle) handle.style.display = isHidden ? '' : 'none';
+    existingToggle.textContent = isHidden ? '✖' : '⚙️';
+    return;
+  }
+  if (existingRoot) return;
 
   // ---------------------------------------------------------------------------
   // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
@@ -517,6 +528,30 @@
   `;
 
   // ---------------------------------------------------------------------------
+  // CSP-safe style injection (works on Firefox + Chrome)
+  // ---------------------------------------------------------------------------
+  function tepInjectCSS(css) {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return {
+        update(newCss) { sheet.replaceSync(newCss); },
+        remove() { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(s => s !== sheet); }
+      };
+    } catch (_) {
+      // Fallback for older browsers
+      const el = document.createElement('style');
+      el.textContent = css;
+      (document.head || document.documentElement).appendChild(el);
+      return {
+        update(newCss) { el.textContent = newCss; },
+        remove() { el.remove(); }
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Create DOM
   // ---------------------------------------------------------------------------
   // Create resize gutter
@@ -527,22 +562,42 @@
   const root = document.createElement('div');
   root.id = 'te-panel-root';
 
-  const style = document.createElement('style');
-  style.textContent = STYLES;
-  root.appendChild(style);
+  // Floating toggle button — persists even when panel is hidden
+  const toggleBtn = document.createElement('div');
+  toggleBtn.id = 'tep-toggle-btn';
+  toggleBtn.textContent = '\u2716';
+  toggleBtn.title = 'Toggle TE Optics panel';
+  toggleBtn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483647;width:44px;height:44px;' +
+    'border-radius:50%;background:#3b82f6;color:#fff;font-size:20px;display:flex;align-items:center;' +
+    'justify-content:center;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:transform .15s,background .15s;' +
+    'user-select:none;';
+  toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.transform = 'scale(1.1)'; });
+  toggleBtn.addEventListener('mouseleave', () => { toggleBtn.style.transform = ''; });
+  toggleBtn.addEventListener('click', () => {
+    const isHidden = root.style.display === 'none';
+    root.style.display = isHidden ? '' : 'none';
+    resizeHandle.style.display = isHidden ? '' : 'none';
+    toggleBtn.textContent = isHidden ? '\u2716' : '\u2699\ufe0f';
+    if (isHidden) {
+      applyWidth(panelWidth);
+    } else {
+      constrainStyles.update('');
+    }
+  });
+  document.body.appendChild(toggleBtn);
+
+  const mainStyles = tepInjectCSS(STYLES);
 
   // Push TE page content to the left
   const TEP_WIDTH_KEY = 'tep-panel-width';
   let panelWidth = parseInt(localStorage.getItem(TEP_WIDTH_KEY), 10) || 576;
-  const tepConstrainStyle = document.createElement('style');
-  tepConstrainStyle.id = 'tep-constrain-style';
-  document.head.appendChild(tepConstrainStyle);
+  const constrainStyles = tepInjectCSS('');
   function applyWidth(w) {
     panelWidth = Math.max(320, Math.min(w, window.innerWidth - 300));
     root.style.setProperty('--tep-width', panelWidth + 'px');
     resizeHandle.style.right = (panelWidth - 3) + 'px';
     localStorage.setItem(TEP_WIDTH_KEY, panelWidth);
-    tepConstrainStyle.textContent = `
+    constrainStyles.update(`
       html {
         margin-right: ${panelWidth}px !important;
         overflow-x: hidden !important;
@@ -557,7 +612,7 @@
         max-width: calc(100vw - ${panelWidth}px) !important;
         overflow-x: auto !important;
       }
-    `;
+    `);
   }
   applyWidth(panelWidth);
 
@@ -899,6 +954,7 @@
           for (const a of vAgents) {
             const isEnterprise = activeAid && a.primaryAid === activeAid;
             if (isEnterprise) enterpriseCount++; else cloudCount++;
+            // Build location string from location object or countryId
             let loc = '';
             if (a.location && typeof a.location === 'object') {
               loc = [a.location.city, a.location.state, a.location.country].filter(Boolean).join(', ');
@@ -1091,7 +1147,6 @@
     'HTTP': 'http-server', 'DNS': 'dns-server', 'Voice': 'voip',
     'OneWayNetwork': 'network', 'Sip': 'sip-server'
   };
-  // Remap raw lowercase type values that don't match their API slug
   const SLUG_REMAP = {
     'browserbot': 'page-load',
     'sip': 'sip-server',
@@ -1107,7 +1162,6 @@
     'dns trace': 'dns-trace',
     'DNS Trace': 'dns-trace'
   };
-  // Types with no working API endpoint at all
   const NO_API_SLUGS = new Set(['onewaynetwork', 'api']);
   function isReadOnly(t) {
     return NO_API_SLUGS.has((t.type || '').toLowerCase());
@@ -1116,7 +1170,6 @@
     return !isReadOnly(t);
   }
 
-  // Map from all known internal type values to the canonical testType
   const TYPE_NORMALIZE = {
     'http-server': 'Http', 'Http': 'Http', 'HTTP': 'Http', 'http_server': 'Http',
     'agent-to-server': 'A2s', 'A2s': 'A2s', 'agent_to_server': 'A2s',
@@ -1130,16 +1183,12 @@
     'bgp': 'Bgp', 'Bgp': 'Bgp'
   };
 
-  // Normalize test object field names after loading
   function normalizeTest(t) {
-    // Normalize type → testType
     if (!t.testType && t.type) {
       t.testType = TYPE_NORMALIZE[t.type] || t.type;
     } else if (t.testType && !TYPE_NORMALIZE[t.testType]) {
-      // testType might already be canonical, try normalizing anyway
       t.testType = TYPE_NORMALIZE[t.testType] || t.testType;
     }
-    // Also handle numeric type codes (TE uses these internally)
     if (!t.testType && typeof t.type === 'number') {
       const numMap = {1:'Http', 2:'Page', 3:'A2s', 5:'DnsServer', 6:'DnsTrace', 7:'Voip', 8:'WebTransaction', 12:'Ftp', 14:'Dnssec', 30:'Bgp'};
       t.testType = numMap[t.type] || ('Type' + t.type);
@@ -1162,7 +1211,6 @@
   }
 
   function getTestAgentIds(t) {
-    // Try multiple known structures for agent IDs in TE responses
     if (t.agentSet) {
       if (Array.isArray(t.agentSet.vAgentIds) && t.agentSet.vAgentIds.length) return t.agentSet.vAgentIds;
       if (Array.isArray(t.agentSet.agentIds) && t.agentSet.agentIds.length) return t.agentSet.agentIds;
@@ -1178,9 +1226,6 @@
     return [];
   }
 
-  // Build correct TE API URL
-  //   READ:  GET  /ajax/tests/{slug}/{aid}/{testId}
-  //   WRITE: POST /ajax/tests/{slug}  (testId & aid go in request body)
   function testApiUrl(t, { forWrite = false } = {}) {
     let slug = t.type || '';
     const slugLower = slug.toLowerCase();
@@ -1204,7 +1249,6 @@
       const resp = await ajax(url);
       if (resp.ok) {
         const detail = await resp.json();
-        // Merge all detail fields back into the test object
         const preserve = new Set(['testType', '_agentsLoaded', '_fetchStatus', '_fetchError', 'type']);
         for (const k of Object.keys(detail)) {
           if (preserve.has(k)) continue;
@@ -1212,23 +1256,14 @@
         }
         t._agentsLoaded = true;
         return detail;
-      } else {
-        t._fetchStatus = resp.status;
       }
-    } catch (e) { t._fetchError = e.message; }
+    } catch (e) { /* silent */ }
     t._agentsLoaded = true;
     return null;
   }
 
-  // Enrich all tests with agent data in background via individual detail fetches
   async function enrichTestsWithAgents() {
-    // Log unique type values so we can see what we're dealing with
-    const typeCounts = {};
-    for (const t of allTests) {
-      const ty = t.type || '(none)';
-      typeCounts[ty] = (typeCounts[ty] || 0) + 1;
-    }
-    log(`Enriching ${allTests.length} tests — types: ${Object.entries(typeCounts).map(([k,v]) => k+'='+v).join(', ')}`, 'tep-log-info');
+    log('Enriching tests with agent data…', 'tep-log-info');
     const BATCH = 5;
     let enriched = 0;
     let debugged = false;
@@ -1240,7 +1275,6 @@
         if (!canEnrich(t)) { t._agentsLoaded = true; return; }
         const detail = await fetchTestDetail(t);
 
-        // Debug first successful detail
         if (detail && !debugged) {
           debugged = true;
           const agentKeys = Object.keys(detail).filter(k => /agent/i.test(k));
@@ -1250,11 +1284,15 @@
             log(`    ${ak}: ${JSON.stringify(detail[ak]).substring(0, 250)}`, 'tep-log-info');
           }
         }
+        // Debug: log server-related fields for A2S/network tests
+        if (detail && (t.testType === 'A2s' || (t.type || '').toLowerCase() === 'agent-to-server' || (t.type || '').toLowerCase() === 'network')) {
+          const srvKeys = Object.keys(detail).filter(k => /server|target|host|port|proto|freq/i.test(k));
+          log(`  A2S detail [${t.name}]: ${srvKeys.map(k => k+'='+JSON.stringify(detail[k])).join(', ')}`, 'tep-log-info');
+        }
 
         const count = getTestAgentIds(t).length;
         if (count > 0) enriched++;
 
-        // Update card in DOM
         const tid = String(t.testId || t.id || '');
         const card = testListEl.querySelector(`.tep-test-card[data-test-id="${tid}"]`);
         if (card) {
@@ -1267,17 +1305,6 @@
       }));
     }
 
-    // Log failed types
-    const failedTypes = {};
-    for (const t of allTests) {
-      if (getTestAgentIds(t).length === 0 && (t._fetchStatus || t._fetchError)) {
-        const key = `${(t.type||'?').toLowerCase()} → ${t._fetchStatus || t._fetchError}`;
-        failedTypes[key] = (failedTypes[key] || 0) + 1;
-      }
-    }
-    if (Object.keys(failedTypes).length) {
-      log(`Failed fetches: ${Object.entries(failedTypes).map(([k,v]) => k+' (×'+v+')').join(', ')}`, 'tep-log-err');
-    }
     log(`Agent enrichment complete: ${enriched} of ${allTests.length} test(s) have agents`, 'tep-log-ok');
     renderTests();
   }
@@ -1298,7 +1325,6 @@
     if (t.testTarget) return t.testTarget;
     if (t.serverName) return t.serverName;
     if (t.destination) return t.destination;
-    // Some TE responses nest the URL inside a config object
     if (t.config) {
       if (t.config.url && typeof t.config.url === 'object') return t.config.url.url || '';
       if (typeof t.config.url === 'string') return t.config.url;
@@ -1348,14 +1374,8 @@
             }
           }
           if (allTests.length) {
-            // Normalize all tests
             allTests = allTests.map(normalizeTest);
             log(`Loaded ${allTests.length} test(s) from ${ep}`, 'tep-log-ok');
-            const sample = allTests[0];
-            log(`Sample test keys: ${Object.keys(sample).slice(0, 20).join(', ')}`, 'tep-log-info');
-            log(`  type=${sample.type}, testType=${sample.testType}, testId=${sample.testId}, agentSetId=${sample.agentSetId}`, 'tep-log-info');
-            const freqKeys = Object.keys(sample).filter(k => /freq|interval|period/i.test(k));
-            log(`  Freq/interval keys: ${freqKeys.map(k => k+'='+sample[k]).join(', ') || 'NONE'}`, 'tep-log-info');
             found = true;
             break;
           } else {
@@ -1374,7 +1394,6 @@
       testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
     } else {
       renderTests();
-      // Fetch individual test details in background to get agent counts
       enrichTestsWithAgents();
     }
   }
@@ -1589,11 +1608,11 @@
         editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
         return;
       }
-      // Show assigned agents first, then Enterprise before Cloud
       const sorted = [...filtered].sort((a, b) => {
         const aIn = editAgentIds.has(String(a.agentId)) ? 0 : 1;
         const bIn = editAgentIds.has(String(b.agentId)) ? 0 : 1;
         if (aIn !== bIn) return aIn - bIn;
+        // Enterprise before Cloud
         const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
         const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
         if (aEnt !== bEnt) return aEnt - bEnt;
@@ -1635,11 +1654,12 @@
       const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
       const newEnabled = parseInt(form.querySelector('.tep-edit-enabled').value, 10);
 
-      // Build updated body — strip internal keys
+      // Build updated body — start from enriched test, strip internal keys
       const updated = { ...t };
       Object.keys(updated).forEach(k => { if (k.startsWith('_')) delete updated[k]; });
       updated.name = newName;
       updated.flagEnabled = newEnabled;
+      updated.flagIgnoreWarnings = 0;
 
       // Set target
       if (updated.url && typeof updated.url === 'object') updated.url.url = newTarget;
@@ -1703,15 +1723,16 @@
         else if (/dns/i.test(tt)) updated.freqDns = newInterval;
         else updated.freqHttp = newInterval;
       }
-      updated.flagIgnoreWarnings = 0;
 
       // Set agents
       if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
       updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
 
+      // Debug: log freq fields being sent
+      const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
+      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval input: ${newInterval}`, 'tep-log-info');
+
       try {
-        const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-        log(`Saving test "${newName}" — freq fields: ${JSON.stringify(freqKeys.reduce((o,k) => (o[k]=updated[k],o), {}))}`, 'tep-log-info');
         const resp = await ajax(testApiUrl(t, { forWrite: true }), {
           method: 'POST',
           body: JSON.stringify(updated)
@@ -2032,7 +2053,7 @@
       flagIcmp: proto === 'ICMP' ? 1 : 0,
       flagOverrideAgentProxy: 0,
       flagVerifyCertHostname: 1,
-      freqPage: interval,
+      freqHttp: interval,
       freqBrowserbot: Math.max(interval, 120),
       freqHttp: interval,
       httpTimeLimit: 10,
@@ -2124,6 +2145,27 @@
       };
       body = typeInfo.buildBody(testName, target, interval, vAgentIds, aid, protoOpts);
 
+      // For network tests, try to fetch an existing one first to discover field format
+      if (currentType === 'agent-to-server') {
+        const netTest = allTests.find(tt => (tt.type || '').toLowerCase() === 'network');
+        if (netTest) {
+          try {
+            const dUrl = testApiUrl(netTest);
+            log(`DEBUG: fetching existing network test: ${dUrl}`, 'tep-log-info');
+            const dr = await ajax(dUrl);
+            if (dr.ok) {
+              const dd = await dr.json();
+              const srvKeys = Object.keys(dd).filter(k => /server|target|host|port|proto|freq|url|addr/i.test(k));
+              log(`DEBUG A2S fields: ${srvKeys.map(k => k+'='+JSON.stringify(dd[k])).join(', ')}`, 'tep-log-info');
+            } else {
+              log(`DEBUG: fetch failed ${dr.status}`, 'tep-log-err');
+            }
+          } catch(e) { log(`DEBUG fetch err: ${e.message}`, 'tep-log-err'); }
+        } else {
+          log('DEBUG: no existing network test found to inspect', 'tep-log-info');
+        }
+      }
+
       log(`Creating ${currentType} test: "${testName}"…`, 'tep-log-info');
       log(`DEBUG POST /ajax/tests/${typeInfo.apiPath} body: ${JSON.stringify({server: body.server, serverName: body.serverName, port: body.port, protocol: body.protocol, testType: body.testType, freqA2s: body.freqA2s, name: body.name})}`, 'tep-log-info');
 
@@ -2187,12 +2229,10 @@
   // Create panel listeners
   $('#tep-close').addEventListener('click', () => {
     stopPersistentIntercept();
-    const constrainEl = document.getElementById('tep-constrain-style');
-    if (constrainEl) constrainEl.remove();
-    const darkEl = document.getElementById('tep-te-dark-mode');
-    if (darkEl) darkEl.remove();
-    resizeHandle.remove();
-    root.remove();
+    root.style.display = 'none';
+    resizeHandle.style.display = 'none';
+    constrainStyles.update('');
+    toggleBtn.textContent = '\u2699\ufe0f';
   });
   $('#tep-load-agents').addEventListener('click', loadAgents);
   $('#tep-create').addEventListener('click', createTests);
@@ -2205,7 +2245,7 @@
   filterInput.addEventListener('input', () => renderAgents(filterInput.value));
 
   // Dark mode toggle for TE page
-  let darkStyleEl = null;
+  let darkStyles = null;
   const darkToggle = $('#tep-dark-toggle');
   const TE_DARK_CSS = `
     html { filter: invert(0.9) hue-rotate(180deg); }
@@ -2217,21 +2257,19 @@
     }
   `;
   function toggleDarkMode() {
-    if (darkStyleEl) {
-      darkStyleEl.remove();
-      darkStyleEl = null;
+    if (darkStyles) {
+      darkStyles.remove();
+      darkStyles = null;
       darkToggle.classList.remove('active');
       localStorage.removeItem('tep-dark-mode');
     } else {
-      darkStyleEl = document.createElement('style');
-      darkStyleEl.id = 'tep-te-dark-mode';
-      darkStyleEl.textContent = TE_DARK_CSS;
-      document.head.appendChild(darkStyleEl);
+      darkStyles = tepInjectCSS(TE_DARK_CSS);
       darkToggle.classList.add('active');
       localStorage.setItem('tep-dark-mode', '1');
     }
   }
   darkToggle.addEventListener('click', toggleDarkMode);
+  // Restore dark mode if it was on
   if (localStorage.getItem('tep-dark-mode') === '1') toggleDarkMode();
 
   // Manage panel listeners

@@ -1,6 +1,17 @@
 (function () {
   'use strict';
-  if (document.getElementById('te-panel-root')) return;
+  // If panel already exists, toggle visibility instead of creating a new one
+  const existingRoot = document.getElementById('te-panel-root');
+  const existingToggle = document.getElementById('tep-toggle-btn');
+  if (existingRoot && existingToggle) {
+    const isHidden = existingRoot.style.display === 'none';
+    existingRoot.style.display = isHidden ? '' : 'none';
+    const handle = document.getElementById('tep-resize-handle');
+    if (handle) handle.style.display = isHidden ? '' : 'none';
+    existingToggle.textContent = isHidden ? '✖' : '⚙️';
+    return;
+  }
+  if (existingRoot) return;
 
   // ---------------------------------------------------------------------------
   // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
@@ -330,6 +341,30 @@
 
   const root = document.createElement('div');
   root.id = 'te-panel-root';
+
+  // Floating toggle button — persists even when panel is hidden
+  const toggleBtn = document.createElement('div');
+  toggleBtn.id = 'tep-toggle-btn';
+  toggleBtn.textContent = '\u2716';
+  toggleBtn.title = 'Toggle TE Optics panel';
+  toggleBtn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483647;width:44px;height:44px;' +
+    'border-radius:50%;background:#3b82f6;color:#fff;font-size:20px;display:flex;align-items:center;' +
+    'justify-content:center;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:transform .15s,background .15s;' +
+    'user-select:none;';
+  toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.transform = 'scale(1.1)'; });
+  toggleBtn.addEventListener('mouseleave', () => { toggleBtn.style.transform = ''; });
+  toggleBtn.addEventListener('click', () => {
+    const isHidden = root.style.display === 'none';
+    root.style.display = isHidden ? '' : 'none';
+    resizeHandle.style.display = isHidden ? '' : 'none';
+    toggleBtn.textContent = isHidden ? '\u2716' : '\u2699\ufe0f';
+    if (isHidden) {
+      applyWidth(panelWidth);
+    } else {
+      constrainStyles.update('');
+    }
+  });
+  document.body.appendChild(toggleBtn);
 
   const mainStyles = tepInjectCSS(STYLES);
 
@@ -1974,11 +2009,10 @@
   // Create panel listeners
   $('#tep-close').addEventListener('click', () => {
     stopPersistentIntercept();
-    mainStyles.remove();
-    constrainStyles.remove();
-    if (darkStyles) darkStyles.remove();
-    resizeHandle.remove();
-    root.remove();
+    root.style.display = 'none';
+    resizeHandle.style.display = 'none';
+    constrainStyles.update('');
+    toggleBtn.textContent = '\u2699\ufe0f';
   });
   $('#tep-load-agents').addEventListener('click', loadAgents);
   $('#tep-create').addEventListener('click', createTests);
