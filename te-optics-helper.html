@@ -2,204 +2,52 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TE Optics</title>
+  <title>TE Optics Helper</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      padding: 3rem 1rem;
+      background: #0f172a; color: #e2e8f0;
+      min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem;
     }
-    .container { max-width: 720px; width: 100%; }
-    h1 {
-      font-size: 2rem;
-      font-weight: 700;
-      color: #f8fafc;
-      margin-bottom: 0.5rem;
-    }
-    .subtitle {
-      color: #94a3b8;
-      font-size: 1.05rem;
-      margin-bottom: 2.5rem;
-      line-height: 1.6;
-    }
-    .step {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 1.5rem;
-      margin-bottom: 1.25rem;
-    }
-    .step-number {
-      display: inline-block;
-      background: #3b82f6;
-      color: #fff;
-      font-weight: 700;
-      font-size: 0.85rem;
-      width: 28px;
-      height: 28px;
-      line-height: 28px;
-      text-align: center;
-      border-radius: 50%;
-      margin-right: 0.75rem;
-    }
-    .step h2 {
-      display: inline;
-      font-size: 1.1rem;
-      color: #f1f5f9;
-    }
-    .step p, .step ul {
-      margin-top: 0.75rem;
-      color: #94a3b8;
-      line-height: 1.6;
-    }
-    .step ul { padding-left: 1.25rem; }
-    .step li { margin-bottom: 0.3rem; }
-    .bookmarklet-link {
-      display: inline-block;
-      margin-top: 1rem;
-      padding: 0.7rem 1.5rem;
+    .container { max-width: 560px; width: 100%; text-align: center; }
+    h1 { font-size: 1.5rem; color: #f8fafc; margin-bottom: 0.5rem; }
+    .desc { color: #94a3b8; font-size: 0.95rem; margin-bottom: 2rem; line-height: 1.6; }
+    .btn {
+      display: inline-block; padding: 0.8rem 2rem;
       background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: #fff;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 0.95rem;
-      border-radius: 8px;
-      cursor: grab;
+      color: #fff; font-weight: 700; font-size: 1rem;
+      border: none; border-radius: 10px; cursor: pointer;
       transition: transform 0.15s, box-shadow 0.15s;
     }
-    .bookmarklet-link:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(59,130,246,0.35); }
+    .status { margin-top: 1rem; font-size: 0.9rem; color: #4ade80; min-height: 1.5em; }
+    .steps {
+      margin-top: 2rem; background: #1e293b; border: 1px solid #334155;
+      border-radius: 10px; padding: 1.25rem; text-align: left;
+      color: #94a3b8; font-size: 0.88rem; line-height: 1.8;
     }
-    .copy-btn {
-      display: inline-block;
-      margin-top: 1rem;
-      padding: 0.65rem 1.3rem;
-      background: #334155;
-      color: #e2e8f0;
-      border: 1px solid #475569;
-      font-weight: 600;
-      font-size: 0.9rem;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .copy-btn:hover { background: #475569; }
-    .hint {
-      display: block;
-      margin-top: 0.6rem;
-      font-size: 0.82rem;
-      color: #64748b;
-    }
-    code {
-      background: #0f172a;
-      padding: 0.15em 0.4em;
-      border-radius: 4px;
-      font-size: 0.9em;
-      color: #93c5fd;
-    }
-    .or-divider {
-      text-align: center;
-      color: #64748b;
-      font-size: 0.85rem;
-      margin: 1rem 0 0.5rem;
-    }
-    .note {
-      background: #172554;
-      border: 1px solid #1e40af;
-      border-radius: 10px;
-      padding: 1rem 1.25rem;
-      margin-top: 2rem;
-      color: #93c5fd;
-      font-size: 0.9rem;
-      line-height: 1.6;
-    }
+    .steps ol { padding-left: 1.25rem; }
+    .steps strong { color: #e2e8f0; }
+    code { background: #0f172a; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; color: #93c5fd; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>TE Optics</h1>
-    <p class="subtitle">
-      Bulk-create ThousandEyes tests using your existing browser session.
-      No API tokens needed &mdash; this tool piggybacks on the session you already
-      have open in <code>app.thousandeyes.com</code>.
-    </p>
-
-    <div class="step">
-      <span class="step-number">1</span>
-      <h2>Log into ThousandEyes</h2>
-      <p>
-        Open <a href="https://app.thousandeyes.com" target="_blank" style="color:#60a5fa;">app.thousandeyes.com</a>
-        in your browser and make sure you&rsquo;re signed in.
-      </p>
-    </div>
-
-    <div class="step">
-      <span class="step-number">2</span>
-      <h2>Launch the panel</h2>
-      <p>Choose one of these methods:</p>
-
-      <p style="margin-top:1rem;"><strong style="color:#e2e8f0;">Option A &mdash; Bookmarklet</strong> <span style="font-size:0.8rem;color:#f59e0b;">(Chrome/Edge)</span><br>
-        Drag this button to your bookmarks bar, then click it while on <code>app.thousandeyes.com</code>:</p>
-      <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(0);">
-        TE Optics
-      </a>
-      <span class="hint">
-        Drag &amp; drop onto your bookmarks toolbar. If hidden,
-        press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.
-      </span>
-
-      <div class="or-divider">&mdash; or &mdash;</div>
-
-      <p><strong style="color:#e2e8f0;">Option B &mdash; Helper file</strong> <span style="font-size:0.8rem;color:#4ade80;">(Firefox &amp; all browsers)</span><br>
-        Save <a href="https://raw.githubusercontent.com/lucidium2000/TE-Optics/main/te-optics-helper.html"
-        target="_blank" style="color:#60a5fa;" download="te-optics-helper.html">te-optics-helper.html</a>
-        to your Documents folder, then open it when you need to inject the script.</p>
-      <ol style="margin:0.75rem 0 0.5rem 1.25rem;color:#94a3b8;line-height:1.8;font-size:0.9rem;">
-        <li>Save the file to <code>~/Documents</code> (Mac) or <code>Documents</code> (Windows)</li>
-        <li>Open <code>te-optics-helper.html</code> in your browser</li>
-        <li>Click <strong>Copy Script</strong></li>
-        <li>Switch to <code>app.thousandeyes.com</code>, press <code>F12</code> &rarr; Console, paste &amp; Enter</li>
+    <h1>TE Optics Helper</h1>
+    <p class="desc">Click the button below to copy the TE Optics script, then paste it into the ThousandEyes console.</p>
+    <button class="btn" id="copy-btn">Copy Script to Clipboard</button>
+    <div class="status" id="status"></div>
+    <div class="steps">
+      <ol>
+        <li>Click <strong>Copy Script to Clipboard</strong> above</li>
+        <li>Switch to <code>app.thousandeyes.com</code></li>
+        <li>Press <code>F12</code> to open DevTools &rarr; <strong>Console</strong> tab</li>
+        <li>Paste (<code>Ctrl+V</code> / <code>Cmd+V</code>) and press <strong>Enter</strong></li>
       </ol>
-      <span class="hint">
-        Works offline. No extensions or installs required.
-      </span>
-    </div>
-
-    <div class="step">
-      <span class="step-number">3</span>
-      <h2>Create tests</h2>
-      <p>
-        The floating panel will auto-detect your session, load available agents,
-        and let you create tests. Supported types:
-      </p>
-      <ul>
-        <li><strong style="color:#e2e8f0;">HTTP Server</strong> &mdash; monitor web endpoints</li>
-        <li><strong style="color:#e2e8f0;">Agent-to-Server</strong> &mdash; network connectivity</li>
-        <li><strong style="color:#e2e8f0;">Page Load</strong> &mdash; full page render timing</li>
-        <li><strong style="color:#e2e8f0;">DNS Server</strong> &mdash; DNS resolution against specific servers</li>
-        <li><strong style="color:#e2e8f0;">DNS Trace</strong> &mdash; delegation path analysis</li>
-      </ul>
-      <p>Enter multiple targets (one per line) to bulk-create tests.</p>
-    </div>
-
-    <div class="note">
-      <strong>How it works:</strong> The script runs directly inside the
-      <code>app.thousandeyes.com</code> page and automatically detects your
-      active session. It tries cookie auth first, then searches browser storage
-      for tokens, and finally intercepts live TE app requests to capture the
-      auth header &mdash; no separate server or manual token entry required.
     </div>
   </div>
-
-  <!-- panel.js source embedded here so everything works from file:// -->
-  <script type="text/plain" id="panel-source">(function () {
+  <script id="panel-source" type="text/plain">(function () {
   'use strict';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
@@ -2306,18 +2154,37 @@
   initAuth();
 })();
 </script>
-
   <script>
-    // Read embedded panel.js source (no fetch needed)
-    const panelSource = document.getElementById('panel-source').textContent;
-
-    // Inline bookmarklet (Chrome/Edge only — too large for Firefox)
-    const bmInline = 'javascript:void(' + encodeURIComponent(
-      '(function(){var s=document.createElement("script");s.textContent=' +
-      JSON.stringify(panelSource) + ';document.body.appendChild(s)})()'
-    ) + ')';
-    document.getElementById('bookmarklet-inline').href = bmInline;
-
+    var script = document.getElementById('panel-source').textContent;
+    function copyText(text) {
+      if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(function() { return fallback(text); });
+      }
+      return fallback(text);
+    }
+    function fallback(text) {
+      return new Promise(function(resolve, reject) {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.cssText = 'position:fixed;opacity:0;left:-9999px;';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        try { var ok = document.execCommand('copy'); ta.remove(); ok ? resolve() : reject(); }
+        catch(e) { ta.remove(); reject(e); }
+      });
+    }
+    document.getElementById('copy-btn').addEventListener('click', function() {
+      var btn = this, st = document.getElementById('status');
+      copyText(script).then(function() {
+        btn.textContent = 'Copied!';
+        st.textContent = 'Now switch to app.thousandeyes.com and paste into the console.';
+        st.style.color = '#4ade80';
+        setTimeout(function() { btn.textContent = 'Copy Script to Clipboard'; }, 3000);
+      }).catch(function() {
+        btn.textContent = 'Copy failed';
+        st.innerHTML = 'Manual copy: Press F12 on this page, paste this in console:<br><code>copy(document.getElementById("panel-source").textContent)</code>';
+        st.style.color = '#f59e0b';
+        setTimeout(function() { btn.textContent = 'Copy Script to Clipboard'; }, 4000);
+      });
+    });
   </script>
 </body>
 </html>
