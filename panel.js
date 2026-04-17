@@ -665,6 +665,48 @@
       border-color: #3b82f6;
     }
     .tep-textarea { resize: vertical; min-height: 70px; font-family: monospace; }
+    .tep-targets-wrap {
+      display: flex;
+      gap: 4px;
+      align-items: stretch;
+    }
+    .tep-targets-wrap .tep-textarea {
+      flex: 1;
+      min-width: 0;
+      width: auto !important;
+    }
+    .tep-targets-gutter {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      padding-top: 10px;
+      padding-bottom: 10px;
+      user-select: none;
+    }
+    .tep-targets-gutter-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    button.tep-target-clone-line {
+      border: none;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1;
+      width: 22px;
+      height: 22px;
+      margin: 0;
+      padding: 0;
+      border-radius: 4px;
+    }
+    button.tep-target-clone-line:hover {
+      color: #38bdf8;
+      background: #1e3a5f;
+    }
     .tep-input { height: 38px; }
     .tep-select { appearance: auto; height: 38px; line-height: 18px; }
 
@@ -688,12 +730,50 @@
     .tep-agent-status.unknown { background: #64748b; }
 
     /* Filter */
+    .tep-agent-filter-wrap {
+      position: relative;
+      margin-bottom: 6px;
+    }
+    .tep-agent-filter-wrap--compact {
+      margin-bottom: 4px;
+      margin-top: 4px;
+    }
+    .tep-agent-filter-wrap .tep-agent-filter,
+    .tep-agent-filter-wrap .tep-edit-agent-filter {
+      width: 100%;
+      margin-bottom: 0;
+      padding-right: 30px;
+      box-sizing: border-box;
+    }
     .tep-agent-filter {
-      width: 100%; padding: 6px 8px; background: #0f172a;
+      padding: 6px 8px; background: #0f172a;
       border: 1px solid #334155; border-radius: 4px; color: #e2e8f0;
-      font-size: 12px; margin-bottom: 6px; outline: none;
+      font-size: 12px; outline: none;
     }
     .tep-agent-filter:focus { border-color: #3b82f6; }
+    .tep-agent-filter-clear {
+      position: absolute;
+      right: 5px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 22px;
+      height: 22px;
+      border: none;
+      border-radius: 4px;
+      background: #334155;
+      color: #94a3b8;
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .tep-agent-filter-clear:hover {
+      color: #e2e8f0;
+      background: #475569;
+    }
 
     /* Buttons */
     .tep-btn {
@@ -945,8 +1025,8 @@
     .tep-edit-agents-box label:hover { background: #334155; }
     .tep-edit-agents-box input { accent-color: #3b82f6; }
     .tep-edit-agent-filter {
-      width: 100%; padding: 4px 6px; background: #0f172a; border: 1px solid #334155;
-      border-radius: 4px; color: #e2e8f0; font-size: 11px; outline: none; margin-bottom: 4px;
+      padding: 4px 6px; background: #0f172a; border: 1px solid #334155;
+      border-radius: 4px; color: #e2e8f0; font-size: 11px; outline: none;
     }
     .tep-edit-agent-filter:focus { border-color: #3b82f6; }
 
@@ -1093,7 +1173,10 @@
         <input class="tep-input" id="tep-testname" value="HTTP Test - {target}" placeholder="My test name">
 
         <label class="tep-label">Targets (one per line)</label>
-        <textarea class="tep-textarea" id="tep-targets" placeholder="https://example.com&#10;https://another.com"></textarea>
+        <div class="tep-targets-wrap">
+          <textarea class="tep-textarea" id="tep-targets" placeholder="https://example.com&#10;https://another.com"></textarea>
+          <div class="tep-targets-gutter" id="tep-targets-gutter" aria-hidden="true"></div>
+        </div>
 
         <div id="tep-a2s-fields" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:8px 0;">
           <div>
@@ -1131,7 +1214,10 @@
           Agents
           <button class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-load-agents" style="float:right;">Reload Agents</button>
         </div>
-        <input class="tep-agent-filter" id="tep-agent-filter" placeholder="Filter agents&hellip;">
+        <div class="tep-agent-filter-wrap">
+          <input class="tep-agent-filter" id="tep-agent-filter" placeholder="Filter agents&hellip;">
+          <button type="button" class="tep-agent-filter-clear" id="tep-agent-filter-clear" title="Clear filter" aria-label="Clear filter">&times;</button>
+        </div>
         <div class="tep-agents-box" id="tep-agents-box">
           <span class="tep-log-info">Agents will load after auth&hellip;</span>
         </div>
@@ -1388,6 +1474,25 @@
     const body = root.querySelector('.tep-body');
     body.insertBefore(el, body.firstChild);
     return () => el.remove();
+  }
+
+  /** Show × in filter wrap when text present; clear runs onClear (e.g. re-render agent list). */
+  function wireAgentFilterClear(wrap, input, onClear) {
+    if (!wrap || !input) return;
+    const btn = wrap.querySelector('.tep-agent-filter-clear');
+    if (!btn) return;
+    function sync() {
+      btn.style.display = input.value.trim() ? 'flex' : 'none';
+    }
+    input.addEventListener('input', sync);
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      input.value = '';
+      sync();
+      input.focus();
+      if (typeof onClear === 'function') onClear();
+    });
+    sync();
   }
 
   // ---------------------------------------------------------------------------
@@ -3048,7 +3153,7 @@
    * @param {HTMLElement|null} boxEl
    * @param {string} filter
    * @param {Set} selectionSet agentId membership
-   * @param {{ emptyText?: string, noAgentsText?: string }} opts
+   * @param {{ emptyText?: string, noAgentsText?: string, focusSection?: 'selected'|'enterprise'|'cloud' }} opts
    */
   function renderAgentPickerSection(boxEl, filter, selectionSet, opts) {
     const options = opts || {};
@@ -3071,19 +3176,74 @@
       return;
     }
 
-    const enterprise = filtered.filter((a) => a.agentType === 'Enterprise');
-    const cloud = filtered.filter((a) => a.agentType !== 'Enterprise');
+    const selectedAgents = filtered.filter((a) => restoreAgentSelectionSetHas(selectionSet, a.agentId));
+    const enterprise = filtered.filter(
+      (a) => a.agentType === 'Enterprise' && !restoreAgentSelectionSetHas(selectionSet, a.agentId)
+    );
+    const cloud = filtered.filter(
+      (a) => a.agentType !== 'Enterprise' && !restoreAgentSelectionSetHas(selectionSet, a.agentId)
+    );
+
+    function sortEnterpriseAgents(list) {
+      return [...list].sort((a, b) => {
+        if (a.status !== b.status) {
+          if (a.status === 'online') return -1;
+          if (b.status === 'online') return 1;
+          if (a.status === 'offline') return 1;
+          if (b.status === 'offline') return -1;
+        }
+        return (a.agentName || '').localeCompare(b.agentName || '');
+      });
+    }
+    function sortSelectedAgents(list) {
+      return [...list].sort((a, b) => {
+        const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
+        const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
+        if (aEnt !== bEnt) return aEnt - bEnt;
+        if (a.status !== b.status) {
+          if (a.status === 'online') return -1;
+          if (b.status === 'online') return 1;
+          if (a.status === 'offline') return 1;
+          if (b.status === 'offline') return -1;
+        }
+        return (a.agentName || '').localeCompare(b.agentName || '');
+      });
+    }
+    function sortCloudAgents(list) {
+      return [...list].sort((a, b) => (a.agentName || '').localeCompare(b.agentName || ''));
+    }
+
+    const selectedSorted = sortSelectedAgents(selectedAgents);
+    const enterpriseSorted = sortEnterpriseAgents(enterprise);
+    const cloudSorted = sortCloudAgents(cloud);
+
+    function effectiveAgentSectionFocus(cat) {
+      if (!cat) return null;
+      if (cat === 'selected' && selectedSorted.length) return 'selected';
+      if (cat === 'enterprise' && enterpriseSorted.length) return 'enterprise';
+      if (cat === 'cloud' && cloudSorted.length) return 'cloud';
+      if (selectedSorted.length) return 'selected';
+      if (enterpriseSorted.length) return 'enterprise';
+      if (cloudSorted.length) return 'cloud';
+      return null;
+    }
+    const eff = effectiveAgentSectionFocus(options.focusSection);
 
     boxEl.innerHTML = '';
 
-    const renderSection = (title, list, defaultOpen) => {
+    const renderSection = (sectionKey, title, list, fallbackOpen) => {
+      if (!list.length) return;
       const section = document.createElement('div');
+      section.className = 'tep-agent-section';
+      section.dataset.tepSection = sectionKey;
       section.style.marginBottom = '6px';
       const header = document.createElement('div');
       header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
-      header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${defaultOpen ? '▼' : '▶'}</span>`;
+      const shouldOpen = eff ? eff === sectionKey : fallbackOpen;
+      header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
       const body = document.createElement('div');
-      body.style.display = defaultOpen ? '' : 'none';
+      body.className = 'tep-agent-section-body';
+      body.style.display = shouldOpen ? '' : 'none';
 
       header.addEventListener('click', () => {
         const open = body.style.display !== 'none';
@@ -3108,6 +3268,10 @@
         cb.addEventListener('change', () => {
           if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
           else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
+          renderAgentPickerSection(boxEl, filter, selectionSet, {
+            ...options,
+            focusSection: sectionKey
+          });
         });
         body.appendChild(item);
       });
@@ -3118,8 +3282,32 @@
     };
 
     const hasFilter = !!q;
-    if (enterprise.length) renderSection('🏢 Enterprise Agents', enterprise, true);
-    if (cloud.length) renderSection('☁️ Cloud Agents', cloud, hasFilter || false);
+    if (selectedSorted.length) renderSection('selected', '✓ Selected', selectedSorted, true);
+    if (enterpriseSorted.length) renderSection('enterprise', '🏢 Enterprise Agents', enterpriseSorted, !selectedSorted.length);
+    if (cloudSorted.length) renderSection('cloud', '☁️ Cloud Agents', cloudSorted, hasFilter || false);
+
+    if (eff && boxEl.querySelector('.tep-agent-section')) {
+      requestAnimationFrame(() => {
+        const sec = boxEl.querySelector(`.tep-agent-section[data-tep-section="${eff}"]`);
+        if (!sec) return;
+        try {
+          sec.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+        } catch (_) {
+          sec.scrollIntoView(false);
+        }
+        const body = sec.querySelector('.tep-agent-section-body');
+        const next = body && body.querySelector('input[type="checkbox"]:not(:checked)');
+        const anyCb = body && body.querySelector('input[type="checkbox"]');
+        const toFocus = next || anyCb;
+        if (toFocus) {
+          try {
+            toFocus.focus({ preventScroll: true });
+          } catch (_) {
+            toFocus.focus();
+          }
+        }
+      });
+    }
   }
 
   function renderAgents(filter) {
@@ -3662,7 +3850,10 @@
       `; })() : ''}
       <div style="margin-top:8px;">
         <label style="font-size:11px;color:#94a3b8;font-weight:600;">Agents (${currentAgentIds.size} assigned)</label>
-        <input class="tep-edit-agent-filter" placeholder="Filter agents…">
+        <div class="tep-agent-filter-wrap tep-agent-filter-wrap--compact">
+          <input class="tep-edit-agent-filter" placeholder="Filter agents…">
+          <button type="button" class="tep-agent-filter-clear" title="Clear filter" aria-label="Clear filter">&times;</button>
+        </div>
         <div class="tep-edit-agents-box"></div>
       </div>
       <div class="tep-edit-actions">
@@ -3675,7 +3866,7 @@
     const editAgentsBox = form.querySelector('.tep-edit-agents-box');
     const editFilterInput = form.querySelector('.tep-edit-agent-filter');
 
-    function renderEditAgents(filter) {
+    function renderEditAgents(filter, focusSection) {
       const q = (filter || '').toLowerCase();
       const filtered = q
         ? agents.filter(a => (a.agentName || '').toLowerCase().includes(q) || (a.agentType || '').toLowerCase().includes(q))
@@ -3685,34 +3876,134 @@
         editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
         return;
       }
-      const sorted = [...filtered].sort((a, b) => {
-        const aIn = editAgentIds.has(String(a.agentId)) ? 0 : 1;
-        const bIn = editAgentIds.has(String(b.agentId)) ? 0 : 1;
-        if (aIn !== bIn) return aIn - bIn;
-        // Enterprise before Cloud
-        const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
-        const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
-        if (aEnt !== bEnt) return aEnt - bEnt;
-        return (a.agentName || '').localeCompare(b.agentName || '');
-      });
-      for (const agent of sorted) {
-        const aid = String(agent.agentId);
-        const lbl = document.createElement('label');
-        const checked = editAgentIds.has(aid) ? 'checked' : '';
-        const statusDot = agent.agentType === 'Enterprise'
-          ? `<span class="tep-agent-status ${agent.status}" style="width:6px;height:6px;"></span>` : '';
-        const locTxt = agent.location ? ` <span style="color:#64748b;font-size:10px;">${agent.location}</span>` : '';
-        lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:#64748b;font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
-        const cb = lbl.querySelector('input');
-        cb.addEventListener('change', () => {
-          if (cb.checked) editAgentIds.add(aid); else editAgentIds.delete(aid);
+
+      const selectedList = filtered.filter((a) => restoreAgentSelectionSetHas(editAgentIds, a.agentId));
+      const enterpriseRest = filtered.filter(
+        (a) => a.agentType === 'Enterprise' && !restoreAgentSelectionSetHas(editAgentIds, a.agentId)
+      );
+      const cloudRest = filtered.filter(
+        (a) => a.agentType !== 'Enterprise' && !restoreAgentSelectionSetHas(editAgentIds, a.agentId)
+      );
+
+      function sortEnt(list) {
+        return [...list].sort((a, b) => {
+          if (a.status !== b.status) {
+            if (a.status === 'online') return -1;
+            if (b.status === 'online') return 1;
+            if (a.status === 'offline') return 1;
+            if (b.status === 'offline') return -1;
+          }
+          return (a.agentName || '').localeCompare(b.agentName || '');
         });
-        editAgentsBox.appendChild(lbl);
+      }
+      function sortSel(list) {
+        return [...list].sort((a, b) => {
+          const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
+          const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
+          if (aEnt !== bEnt) return aEnt - bEnt;
+          if (a.status !== b.status) {
+            if (a.status === 'online') return -1;
+            if (b.status === 'online') return 1;
+            if (a.status === 'offline') return 1;
+            if (b.status === 'offline') return -1;
+          }
+          return (a.agentName || '').localeCompare(b.agentName || '');
+        });
+      }
+      function sortNm(list) {
+        return [...list].sort((a, b) => (a.agentName || '').localeCompare(b.agentName || ''));
+      }
+
+      const selectedSorted = sortSel(selectedList);
+      const entSorted = sortEnt(enterpriseRest);
+      const cloudSorted = sortNm(cloudRest);
+
+      function effectiveEditFocus(cat) {
+        if (!cat) return null;
+        if (cat === 'selected' && selectedSorted.length) return 'selected';
+        if (cat === 'enterprise' && entSorted.length) return 'enterprise';
+        if (cat === 'cloud' && cloudSorted.length) return 'cloud';
+        if (selectedSorted.length) return 'selected';
+        if (entSorted.length) return 'enterprise';
+        if (cloudSorted.length) return 'cloud';
+        return null;
+      }
+      const effEdit = effectiveEditFocus(focusSection);
+
+      const renderSection = (sectionKey, title, list, fallbackOpen) => {
+        if (!list.length) return;
+        const section = document.createElement('div');
+        section.className = 'tep-agent-section';
+        section.dataset.tepSection = sectionKey;
+        section.style.marginBottom = '6px';
+        const header = document.createElement('div');
+        header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#e2e8f0;';
+        const shouldOpen = effEdit ? effEdit === sectionKey : fallbackOpen;
+        header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
+        const body = document.createElement('div');
+        body.className = 'tep-agent-section-body';
+        body.style.display = shouldOpen ? '' : 'none';
+        header.addEventListener('click', () => {
+          const open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : '';
+          header.querySelector('.tep-section-arrow').textContent = open ? '▶' : '▼';
+        });
+        for (const agent of list) {
+          const aid = String(agent.agentId);
+          const lbl = document.createElement('label');
+          const checked = restoreAgentSelectionSetHas(editAgentIds, agent.agentId) ? 'checked' : '';
+          const statusDot = agent.agentType === 'Enterprise'
+            ? `<span class="tep-agent-status ${agent.status}" style="width:6px;height:6px;"></span>` : '';
+          const locTxt = agent.location ? ` <span style="color:#64748b;font-size:10px;">${agent.location}</span>` : '';
+          lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:#64748b;font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
+          const cb = lbl.querySelector('input');
+          cb.addEventListener('change', () => {
+            if (cb.checked) editAgentIds.add(aid);
+            else editAgentIds.delete(aid);
+            renderEditAgents(editFilterInput.value, sectionKey);
+          });
+          body.appendChild(lbl);
+        }
+        section.appendChild(header);
+        section.appendChild(body);
+        editAgentsBox.appendChild(section);
+      };
+
+      const hasFilter = !!q;
+      if (selectedSorted.length) renderSection('selected', '✓ Selected', selectedSorted, true);
+      if (entSorted.length) renderSection('enterprise', '🏢 Enterprise Agents', entSorted, !selectedSorted.length);
+      if (cloudSorted.length) renderSection('cloud', '☁️ Cloud Agents', cloudSorted, hasFilter || false);
+
+      if (effEdit && editAgentsBox.querySelector('.tep-agent-section')) {
+        requestAnimationFrame(() => {
+          const sec = editAgentsBox.querySelector(`.tep-agent-section[data-tep-section="${effEdit}"]`);
+          if (!sec) return;
+          try {
+            sec.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+          } catch (_) {
+            sec.scrollIntoView(false);
+          }
+          const body = sec.querySelector('.tep-agent-section-body');
+          const next = body && body.querySelector('input[type="checkbox"]:not(:checked)');
+          const anyCb = body && body.querySelector('input[type="checkbox"]');
+          const toFocus = next || anyCb;
+          if (toFocus) {
+            try {
+              toFocus.focus({ preventScroll: true });
+            } catch (_) {
+              toFocus.focus();
+            }
+          }
+        });
       }
     }
 
     renderEditAgents();
-    editFilterInput.addEventListener('input', () => renderEditAgents(editFilterInput.value));
+    editFilterInput.addEventListener('input', () => renderEditAgents(editFilterInput.value, null));
+    const editFilterWrap = editFilterInput && editFilterInput.closest('.tep-agent-filter-wrap');
+    if (editFilterWrap && editFilterInput) {
+      wireAgentFilterClear(editFilterWrap, editFilterInput, () => renderEditAgents(editFilterInput.value, null));
+    }
 
     // Protocol toggle for edit form
     const editProtoSel = form.querySelector('.tep-edit-protocol');
@@ -3971,6 +4262,54 @@
     loadTests();
   }
 
+  function textareaLineHeightPx(ta) {
+    const st = getComputedStyle(ta);
+    const n = parseFloat(st.lineHeight);
+    if (Number.isFinite(n) && n > 0) return n;
+    const fs = parseFloat(st.fontSize) || 13;
+    return Math.round(fs * 1.45);
+  }
+
+  /** Per-line + buttons beside targets textarea (non-empty lines only). */
+  function syncTargetsCloneGutter() {
+    const ta = root.querySelector('#tep-targets');
+    const gutter = root.querySelector('#tep-targets-gutter');
+    if (!ta || !gutter) return;
+    const lh = textareaLineHeightPx(ta);
+    const lines = ta.value.split('\n');
+    ta.rows = Math.min(28, Math.max(5, lines.length + 2));
+    gutter.innerHTML = '';
+    lines.forEach((line, i) => {
+      const row = document.createElement('div');
+      row.className = 'tep-targets-gutter-row';
+      row.style.height = lh + 'px';
+      if (line.trim()) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tep-target-clone-line';
+        btn.textContent = '+';
+        btn.title = 'Clone this line below';
+        btn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const parts = ta.value.split('\n');
+          const dup = i < parts.length ? parts[i] : '';
+          parts.splice(i + 1, 0, dup);
+          ta.value = parts.join('\n');
+          syncTargetsCloneGutter();
+          ta.focus();
+          const P = ta.value.split('\n');
+          let pos = 0;
+          for (let k = 0; k < i + 1 && k < P.length; k++) pos += P[k].length + 1;
+          if (pos > ta.value.length) pos = ta.value.length;
+          try { ta.setSelectionRange(pos, pos); } catch (_) { /* ignore */ }
+        });
+        row.appendChild(btn);
+      }
+      gutter.appendChild(row);
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Tabs (create test type tabs)
   // ---------------------------------------------------------------------------
@@ -4001,6 +4340,7 @@
         targetsInput.placeholder = 'https://example.com\nhttps://another.com';
         break;
     }
+    syncTargetsCloneGutter();
   });
 
   // A2S protocol toggle — show/hide TCP options when ICMP is selected
@@ -4171,6 +4511,30 @@
   // ---------------------------------------------------------------------------
   // Create tests via TE internal AJAX API
   // ---------------------------------------------------------------------------
+  function resetCreateTestsForm() {
+    const ta = root.querySelector('#tep-targets');
+    if (ta) ta.value = '';
+    syncTargetsCloneGutter();
+    selectedAgentIds.clear();
+    renderAgents(filterInput.value);
+    const nameInput = $('#tep-testname');
+    if (nameInput) {
+      switch (currentType) {
+        case 'http-server':
+          nameInput.value = 'HTTP Test - {target}';
+          break;
+        case 'agent-to-server':
+          nameInput.value = 'A2S Test - {target}';
+          break;
+        case 'page-load':
+          nameInput.value = 'Page Load - {target}';
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
   async function createTests() {
     const nameTemplate = $('#tep-testname').value.trim();
     const targets = $('#tep-targets').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
@@ -4185,7 +4549,10 @@
     createBtn.disabled = true;
     const dismissProcessing = toastProcessing(`Creating ${targets.length} test(s)…`);
     const typeInfo = TE_TYPE_MAP[currentType];
-    if (!typeInfo) { log(`Unknown test type: ${currentType}`, 'tep-log-err'); createBtn.disabled = false; return; }
+    if (!typeInfo) { log(`Unknown test type: ${currentType}`, 'tep-log-err'); createBtn.disabled = false; dismissProcessing(); return; }
+
+    let createOk = 0;
+    let createFail = 0;
 
     for (const target of targets) {
       const testName = nameTemplate.replace(/\{target\}/g, target);
@@ -4233,16 +4600,19 @@
         const respText = await resp.text().catch(() => '');
 
         if (resp.ok || resp.status === 201) {
+          createOk++;
           let data = {};
           try { data = JSON.parse(respText); } catch {}
           const testId = data.testId || data.id || data.test?.testId || '?';
           log(`  ✓ Created "${testName}" (id: ${testId})`, 'tep-log-ok');
           toast(`Created "${testName}" (id: ${testId})`, 'ok');
         } else {
+          createFail++;
           log(`  ✗ ${resp.status}: ${respText.substring(0, 300)}`, 'tep-log-err');
           toast(`Failed to create "${testName}": ${resp.status}`, 'err');
         }
       } catch (e) {
+        createFail++;
         log(`  ✗ Error: ${e.message}`, 'tep-log-err');
         toast(`Error creating "${testName}"`, 'err');
       }
@@ -4251,6 +4621,10 @@
     createBtn.disabled = false;
     dismissProcessing();
     log('Done.', 'tep-log-info');
+    if (createOk === targets.length && targets.length > 0) {
+      resetCreateTestsForm();
+      log('Create form cleared for the next batch.', 'tep-log-info');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -4331,6 +4705,19 @@
   });
   $('#tep-clear-log').addEventListener('click', () => { logEl.innerHTML = ''; });
   filterInput.addEventListener('input', () => renderAgents(filterInput.value));
+  const agentFilterWrap = filterInput && filterInput.closest('.tep-agent-filter-wrap');
+  if (agentFilterWrap && filterInput) {
+    wireAgentFilterClear(agentFilterWrap, filterInput, () => renderAgents(filterInput.value));
+  }
+
+  const targetsTa = root.querySelector('#tep-targets');
+  if (targetsTa) {
+    targetsTa.addEventListener('input', () => syncTargetsCloneGutter());
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => syncTargetsCloneGutter()).observe(targetsTa);
+    }
+    syncTargetsCloneGutter();
+  }
 
   // Dark mode toggle for TE page
   let darkStyles = null;
