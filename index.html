@@ -3627,7 +3627,9 @@
   const TYPE_NORMALIZE = {
     'http-server': 'Http', 'Http': 'Http', 'HTTP': 'Http', 'http_server': 'Http',
     'agent-to-server': 'A2s', 'A2s': 'A2s', 'agent_to_server': 'A2s',
+    'Network': 'A2s', 'network': 'A2s',
     'page-load': 'Page', 'Page': 'Page', 'page_load': 'Page',
+    'BrowserBot': 'Page', 'browserbot': 'Page',
     'dns-server': 'DnsServer', 'DnsServer': 'DnsServer', 'dns_server': 'DnsServer',
     'dns-trace': 'DnsTrace', 'DnsTrace': 'DnsTrace', 'dns_trace': 'DnsTrace',
     'voice': 'Voip', 'Voip': 'Voip', 'Voice': 'Voip',
@@ -3638,14 +3640,23 @@
   };
 
   function normalizeTest(t) {
-    if (!t.testType && t.type) {
-      t.testType = TYPE_NORMALIZE[t.type] || t.type;
-    } else if (t.testType && !TYPE_NORMALIZE[t.testType]) {
-      t.testType = TYPE_NORMALIZE[t.testType] || t.testType;
+    const numMap = {1:'Http', 2:'Page', 3:'A2s', 5:'DnsServer', 6:'DnsTrace', 7:'Voip', 8:'WebTransaction', 12:'Ftp', 14:'Dnssec', 30:'Bgp'};
+    if (!t.testType && t.type != null && t.type !== '') {
+      if (typeof t.type === 'number') {
+        t.testType = numMap[t.type] || ('Type' + t.type);
+      } else {
+        const key = String(t.type);
+        t.testType = TYPE_NORMALIZE[key] || TYPE_NORMALIZE[key.toLowerCase()] || t.type;
+      }
     }
-    if (!t.testType && typeof t.type === 'number') {
-      const numMap = {1:'Http', 2:'Page', 3:'A2s', 5:'DnsServer', 6:'DnsTrace', 7:'Voip', 8:'WebTransaction', 12:'Ftp', 14:'Dnssec', 30:'Bgp'};
-      t.testType = numMap[t.type] || ('Type' + t.type);
+    if (t.testType != null && t.testType !== '') {
+      if (typeof t.testType === 'number') {
+        if (numMap[t.testType]) t.testType = numMap[t.testType];
+      } else if (typeof t.testType === 'string') {
+        const key = String(t.testType);
+        const mapped = TYPE_NORMALIZE[key] || TYPE_NORMALIZE[key.toLowerCase()];
+        if (mapped) t.testType = mapped;
+      }
     }
     return t;
   }
