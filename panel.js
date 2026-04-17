@@ -1,3 +1,22 @@
+/*
+ * TE Optics — browser bookmarklet / panel for ThousandEyes (app.thousandeyes.com).
+ *
+ * Copyright (c) Christopher Hunt. All rights reserved.
+ * Source & updates: https://github.com/lucidium2000/TE-Optics
+ *
+ * THIRD-PARTY MARKS / FAIR USE: “ThousandEyes”, Cisco product names, and related
+ * marks are trademarks of Cisco Systems, Inc. This project is independent community
+ * software; it is not sponsored, endorsed, or affiliated with Cisco or ThousandEyes.
+ * References to those marks are for factual identification (nominative fair use).
+ *
+ * NO WARRANTY / NO SUPPORT: THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF
+ * ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+ * EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY. You use this tool at your own risk, under your organization’s
+ * policies and Cisco/ThousandEyes terms of service. This is not a supported product;
+ * GitHub issues may be opened without any commitment to response time.
+ */
 (function () {
   'use strict';
   // If panel already exists, toggle visibility instead of creating a new one
@@ -14,6 +33,540 @@
   if (existingRoot) return;
 
   // ---------------------------------------------------------------------------
+  // Dashboard route (/dashboard) — capture + helpers (no ajax() yet)
+  // ---------------------------------------------------------------------------
+  function isDashboardToolsPage() {
+    try {
+      const p = window.location.pathname || '';
+      return p === '/dashboard' || p.startsWith('/dashboard/');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  const TEP_DASH_CAPTURE = { entries: [], max: 24 };
+  /** @type {{ path: string, status: number, ct: string, snippet: string, t: number }[]} */
+  const TEP_DASH_PROBE_HISTORY = [];
+  /** @type {{ path: string, status: number, keys: string, t: number }[]} */
+  const TEP_DASH_AJAX_SNIFF = [];
+  /** Full JSON bodies from sniff that look like dashboards (URL may not say "dashboard"). */
+  const TEP_DASH_SNIFF_BODIES = [];
+  const TEP_DASH_PROBE_HISTORY_MAX = 40;
+  const TEP_DASH_SNIFF_MAX = 80;
+  const TEP_DASH_SNIFF_BODY_MAX = 16;
+  const TEP_DASH_SNIFF_MIN_SCORE = 12;
+  /** HTTP 200 on sniff-tracked paths where body did not parse as JSON (HTML, script, empty, etc.) */
+  const TEP_DASH_NONJSON_200 = [];
+  const TEP_DASH_NONJSON_MAX = 28;
+  /** When set to current aid key, built-in GET probes all failed — skip re-fetching on every Refresh. */
+  let dashProbeCacheFailAid = null;
+  /** Avoid repeating the same "Sniff recorded N non-JSON…" panel line on every Refresh when N unchanged. */
+  let dashNonJsonHintLastLoggedCount = -1;
+
+  function dashConsole(level, msg, detail) {
+    const fn = (console[level] || console.log).bind(console);
+    try {
+      if (detail !== undefined) fn('[TE Optics]', msg, detail);
+      else fn('[TE Optics]', msg);
+    } catch (_) { /* */ }
+  }
+
+  function pushProbeHistory(path, status, ct, snippet) {
+    TEP_DASH_PROBE_HISTORY.unshift({
+      path,
+      status,
+      ct: ct || '',
+      snippet: (snippet || '').slice(0, 500),
+      t: Date.now()
+    });
+    if (TEP_DASH_PROBE_HISTORY.length > TEP_DASH_PROBE_HISTORY_MAX) {
+      TEP_DASH_PROBE_HISTORY.length = TEP_DASH_PROBE_HISTORY_MAX;
+    }
+  }
+
+  function pushAjaxSniff(path, status, keysLabel) {
+    TEP_DASH_AJAX_SNIFF.unshift({ path, status, keys: keysLabel, t: Date.now() });
+    if (TEP_DASH_AJAX_SNIFF.length > TEP_DASH_SNIFF_MAX) TEP_DASH_AJAX_SNIFF.length = TEP_DASH_SNIFF_MAX;
+  }
+
+  function pathOnlyFromUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      if (url.startsWith('http')) return new URL(url).pathname + new URL(url).search;
+    } catch (_) { /* */ }
+    return url.split('#')[0];
+  }
+
+  /** TE sometimes returns JSON with text/html or missing Content-Type — parse only obvious JSON. */
+  function tryParseJsonText(text) {
+    try {
+      const t = (text || '').replace(/^\uFEFF/, '').trim();
+      if (!t || (t[0] !== '{' && t[0] !== '[')) return null;
+      return JSON.parse(t);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isHtmlLikeResponse(text) {
+    const t = (text || '').trim();
+    return t.startsWith('<!') || /^<\s*html[\s>]/i.test(t);
+  }
+
+  function classifyNonJsonAjaxBody(text) {
+    const t = (text || '').trim();
+    if (!t.length) return 'empty';
+    if (isHtmlLikeResponse(t)) return 'html';
+    if (t[0] === '{' || t[0] === '[') return 'looks-like-json-parse-failed';
+    return 'non-json-text';
+  }
+
+  function recordNonJsonAjax200(path, ct, bodyText, via) {
+    const kind = classifyNonJsonAjaxBody(bodyText);
+    const len = (bodyText || '').length;
+    let head = '';
+    if (kind === 'html') {
+      head = (bodyText || '').replace(/\s+/g, ' ').slice(0, 100);
+    } else if (kind === 'empty') {
+      head = '(zero-length body)';
+    } else {
+      head = (bodyText || '').replace(/\s+/g, ' ').slice(0, 160);
+    }
+    TEP_DASH_NONJSON_200.unshift({
+      path,
+      ct: ct || '',
+      len,
+      kind,
+      via,
+      head,
+      t: Date.now()
+    });
+    if (TEP_DASH_NONJSON_200.length > TEP_DASH_NONJSON_MAX) {
+      TEP_DASH_NONJSON_200.length = TEP_DASH_NONJSON_MAX;
+    }
+  }
+
+  /** One-line description for log (avoid dumping full XHTML 404 pages). */
+  function summarizeProbeFailureSnippet(snippet, status) {
+    const s = (snippet || '').trim();
+    if (!s) return '(empty body)';
+    if (isHtmlLikeResponse(s)) {
+      return `HTTP ${status} HTML page (not a TE JSON API — built-in guess URL)`;
+    }
+    return s.slice(0, 160) + (s.length > 160 ? '…' : '');
+  }
+
+  function shouldCaptureDashboardUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const lower = url.toLowerCase();
+    if (!lower.includes('thousandeyes.com') && !lower.startsWith('/')) return false;
+    let path = lower;
+    try {
+      if (lower.startsWith('http')) path = new URL(url).pathname.toLowerCase();
+      else path = lower.split('?')[0].split('#')[0];
+    } catch (_) { /* keep path */ }
+    if (path.includes('/namespace/dash-api')) return true;
+    if (!path.includes('/ajax/')) return false;
+    return path.includes('dashboard');
+  }
+
+  /**
+   * Fetch/XHR hook logs dashboard-ish URLs. 404s are often expected (wrong probe guess, id not in account);
+   * 400 usually means TE rejected the request body (restore/update validation).
+   */
+  function logDashboardHookNonOk(via, pathKey, status, ct, bodySlice) {
+    const detail = {
+      path: pathKey,
+      status,
+      ct: ct || '',
+      body: (bodySlice || '').slice(0, 400)
+    };
+    if (status === 404) {
+      detail.why = 'Nothing at this URL for your session — common for guessed /ajax/dashboard/* probes, wrong dashboard id for this aid, or a GET shape TE does not use (try the other tab Network request that returns 200 JSON).';
+      dashConsole('info', `dashboard-ish URL ${via} → 404`, detail);
+      return;
+    }
+    if (status === 400) {
+      detail.why = 'Server refused the request — for POST /namespace/dash-api/dashboard, read `body` for TE\'s message (invalid widget JSON, id in body on create, duplicate name, etc.). GET with only ?dashboardId= can also 400 if TE expects a different method or path.';
+      dashConsole('warn', `dashboard-ish URL ${via} → 400`, detail);
+      return;
+    }
+    detail.why = 'Non-success response on a dashboard-related URL.';
+    dashConsole('warn', `dashboard-ish URL ${via} non-OK`, detail);
+  }
+
+  /** Same-origin paths where sniff logs JSON / non-JSON-200 like DevTools (not only /ajax/). */
+  function isSniffableDashboardNetworkPath(pathKey) {
+    const p = (pathKey || '').toLowerCase();
+    return p.includes('/ajax/') || p.includes('/namespace/dash-api');
+  }
+
+  function scoreDashboardPayload(obj, depth) {
+    if (depth == null) depth = 0;
+    if (depth > 2) return -1;
+    if (!obj || typeof obj !== 'object') return -1;
+    if (Array.isArray(obj)) return obj.length ? 4 : -1;
+    let s = 0;
+    if (Array.isArray(obj.widgets)) s += 60 + Math.min(obj.widgets.length * 2, 40);
+    if (obj.template && typeof obj.template === 'object' && Array.isArray(obj.template.widgets)) {
+      s += 60 + Math.min(obj.template.widgets.length * 2, 40);
+    }
+    if (obj.dashboard && typeof obj.dashboard === 'object') s += 45;
+    if (typeof obj.title === 'string' && obj.title.length) s += 8;
+    if (typeof obj.dashboardTitle === 'string') s += 8;
+    if (obj.dashboardId != null || obj.id != null) s += 12;
+    if (Array.isArray(obj.dashboards)) s += 25;
+    if (typeof obj.layout === 'object' && obj.layout) s += 15;
+    if (Array.isArray(obj.items) && obj.items.length && (obj.layout || obj.grid || obj.gridLayout)) s += 28;
+    if (obj.gridLayout && typeof obj.gridLayout === 'object') s += 22;
+    if (Array.isArray(obj.panels) && obj.panels.length) s += 20;
+    if (Array.isArray(obj.tiles) && obj.tiles.length) s += 18;
+    for (const wrap of ['data', 'payload', 'result']) {
+      const inner = obj[wrap];
+      if (inner && typeof inner === 'object') {
+        const innerScore = scoreDashboardPayload(inner, depth + 1);
+        if (innerScore > s) s = innerScore;
+      }
+    }
+    return s;
+  }
+
+  /**
+   * POST /namespace/dash-api/poll often returns { status: 'NOCHANGE', dashboard: null } — valid JSON but not a backup.
+   * Full dashboard definitions usually come from another request (sniff Network for large JSON with widgets/layout).
+   */
+  function isNamespacePollMissingDashboardDoc(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    if (data.dashboard != null && typeof data.dashboard === 'object') return false;
+    return scoreDashboardPayload(data) < TEP_DASH_SNIFF_MIN_SCORE;
+  }
+
+  function maybeRecordSniffDashboardBody(path, data, via) {
+    const score = scoreDashboardPayload(data);
+    if (score < TEP_DASH_SNIFF_MIN_SCORE) return;
+    TEP_DASH_SNIFF_BODIES.unshift({
+      path,
+      data,
+      score,
+      t: Date.now(),
+      via
+    });
+    if (TEP_DASH_SNIFF_BODIES.length > TEP_DASH_SNIFF_BODY_MAX) {
+      TEP_DASH_SNIFF_BODIES.length = TEP_DASH_SNIFF_BODY_MAX;
+    }
+    dashConsole('info', 'sniff stored dashboard-like JSON', { path, score, via, keys: topLevelKeysLabel(data) });
+  }
+
+  function topLevelKeysLabel(data) {
+    try {
+      if (data == null) return String(data);
+      if (Array.isArray(data)) return `Array(len=${data.length})`;
+      if (typeof data === 'object') return '{' + Object.keys(data).slice(0, 20).join(', ') + (Object.keys(data).length > 20 ? ', …' : '') + '}';
+      return String(data).slice(0, 80);
+    } catch (_) {
+      return '?';
+    }
+  }
+
+  function recordDashboardSnapshot(url, data) {
+    const score = scoreDashboardPayload(data);
+    if (score < 0) return;
+    TEP_DASH_CAPTURE.entries.unshift({ url, data, score, t: Date.now() });
+    TEP_DASH_CAPTURE.entries = TEP_DASH_CAPTURE.entries.slice(0, TEP_DASH_CAPTURE.max);
+    dashConsole('info', 'dashboard capture stored', {
+      path: pathOnlyFromUrl(url),
+      score,
+      keys: topLevelKeysLabel(data)
+    });
+  }
+
+  /**
+   * Best payload from URL-keyword captures OR sniffed high-scoring JSON (any /ajax path).
+   * When focusDashboardId is set (from the page URL), only entries that match that id are used
+   * so switching dashboards does not resurrect a stale capture from another id.
+   */
+  function pickBestDashboardLikePayload(focusDashboardId) {
+    let best = null;
+    for (const e of TEP_DASH_CAPTURE.entries) {
+      if (focusDashboardId && !snapshotMatchesFocusDashboardId(e.url, e.data, focusDashboardId)) continue;
+      let data = e.data;
+      let score = e.score;
+      if (focusDashboardId) {
+        const narrowed = selectDashboardForFocusFromAggregate(e.data, focusDashboardId);
+        if (narrowed) {
+          data = narrowed;
+          score = scoreDashboardPayload(narrowed);
+        }
+      }
+      const cand = { path: pathOnlyFromUrl(e.url), data, score, source: 'capture (URL has "dashboard")' };
+      if (!best || cand.score > best.score) best = cand;
+    }
+    for (const e of TEP_DASH_SNIFF_BODIES) {
+      if (focusDashboardId && !snapshotMatchesFocusDashboardId(e.path, e.data, focusDashboardId)) continue;
+      let data = e.data;
+      let score = e.score;
+      if (focusDashboardId) {
+        const narrowed = selectDashboardForFocusFromAggregate(e.data, focusDashboardId);
+        if (narrowed) {
+          data = narrowed;
+          score = scoreDashboardPayload(narrowed);
+        }
+      }
+      const cand = { path: e.path, data, score, source: `sniff (${e.via})` };
+      if (!best || cand.score > best.score) best = cand;
+    }
+    return best;
+  }
+
+  /** TE dashboard ids are often 24-char hex ObjectIds in ?dashboardId= (not only numeric). */
+  function looksLikeTeDashboardId(s) {
+    if (!s || typeof s !== 'string') return false;
+    const t = s.trim();
+    if (/^\d+$/.test(t)) return true;
+    if (/^[a-f0-9]{24}$/i.test(t)) return true;
+    if (/^[a-z0-9-]{8,64}$/i.test(t)) return true;
+    return false;
+  }
+
+  function extractDashboardIdFromLocation() {
+    try {
+      const q = new URLSearchParams(window.location.search || '');
+      for (const key of ['dashboardId', 'dashboard', 'did', 'id']) {
+        const v = q.get(key);
+        if (v && looksLikeTeDashboardId(v)) return v.trim();
+      }
+      const m = (window.location.pathname || '').match(/\/dashboards?\/([a-z0-9-]{8,64})/i);
+      if (m && looksLikeTeDashboardId(m[1])) return m[1];
+      const hash = window.location.hash || '';
+      const m2 = hash.match(/(?:dashboard|boards)\/([a-z0-9-]{8,64})/i);
+      if (m2 && looksLikeTeDashboardId(m2[1])) return m2[1];
+    } catch (_) { /* */ }
+    return null;
+  }
+
+  /** Parse dashboard id from a captured request path or full URL (query or /dashboards/:id segment). */
+  function extractDashboardIdFromRequestPath(pathOrUrl) {
+    if (!pathOrUrl || typeof pathOrUrl !== 'string') return null;
+    try {
+      const u = pathOrUrl.includes('//')
+        ? new URL(pathOrUrl)
+        : new URL(pathOrUrl.startsWith('/') ? `http://local.invalid${pathOrUrl}` : `http://local.invalid/${pathOrUrl}`);
+      for (const key of ['dashboardId', 'dashboard', 'did', 'id']) {
+        const v = u.searchParams.get(key);
+        if (v && looksLikeTeDashboardId(v)) return v.trim();
+      }
+    } catch (_) { /* */ }
+    const pathOnly = (pathOrUrl.split('?')[0] || '').split('#')[0];
+    const nsSeg = pathOnly.match(/\/namespace\/dash-api\/dashboard\/([^/?#]+)/i);
+    if (nsSeg) {
+      const seg = decodeURIComponent(nsSeg[1]);
+      if (looksLikeTeDashboardId(seg)) return seg.trim();
+    }
+    const m = pathOnly.match(/\/dashboards?\/([a-z0-9-]{8,64})/i);
+    if (m && looksLikeTeDashboardId(m[1])) return m[1];
+    return null;
+  }
+
+  function getPayloadDashboardId(data) {
+    if (data == null) return null;
+    let v = unwrapIfSingleElementArray(data);
+    if (Array.isArray(v)) {
+      const picked = pickDashboardFromArray(v);
+      if (picked) return getPayloadDashboardId(picked);
+      return null;
+    }
+    if (!v || typeof v !== 'object') return null;
+    const read = (o) => {
+      if (!o || typeof o !== 'object') return null;
+      for (const k of ['dashboardId', 'dashboard_id', 'id', '_id', 'mongoId']) {
+        if (o[k] != null) {
+          const s = String(o[k]).trim();
+          if (s) return s;
+        }
+      }
+      return null;
+    };
+    let id = read(v);
+    if (id) return id;
+    if (v.dashboard && typeof v.dashboard === 'object') {
+      id = read(v.dashboard);
+      if (id) return id;
+    }
+    if (v.data != null && typeof v.data === 'object') return getPayloadDashboardId(v.data);
+    if (v.result != null && typeof v.result === 'object') return getPayloadDashboardId(v.result);
+    return null;
+  }
+
+  function dashboardEntryMatchesFocus(entry, focusId) {
+    if (!entry || typeof entry !== 'object' || !focusId) return false;
+    const id = String(focusId);
+    const pid = getPayloadDashboardId(entry);
+    if (pid && String(pid) === id) return true;
+    for (const k of ['connectionName', 'connectionId', 'slug']) {
+      if (entry[k] != null && String(entry[k]).trim() === id) return true;
+    }
+    if (entry.dashboard && typeof entry.dashboard === 'object') {
+      const inner = getPayloadDashboardId(entry.dashboard);
+      if (inner && String(inner) === id) return true;
+    }
+    return false;
+  }
+
+  /**
+   * TE often returns a list or wrapper (all dashboards) from GET /namespace/dash-api/dashboard.
+   * Pick the one row/document that matches the dashboard id in the URL (id fields, connectionName, etc.).
+   */
+  function selectDashboardForFocusFromAggregate(data, focusId) {
+    if (!focusId || data == null) return null;
+    let v = unwrapIfSingleElementArray(data);
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        const el = v[i];
+        if (el && typeof el === 'object' && dashboardEntryMatchesFocus(el, focusId)) return el;
+      }
+      return null;
+    }
+    if (typeof v === 'object' && v !== null) {
+      if (v.dashboard && typeof v.dashboard === 'object' && !Array.isArray(v.dashboard)) {
+        if (dashboardEntryMatchesFocus(v.dashboard, focusId)) return v.dashboard;
+        const one = selectDashboardForFocusFromAggregate(v.dashboard, focusId);
+        if (one) return one;
+      }
+      for (const key of ['dashboards', 'items', 'results', 'content', 'records', 'connections', 'data']) {
+        const inner = v[key];
+        if (Array.isArray(inner)) {
+          for (let j = 0; j < inner.length; j++) {
+            const el = inner[j];
+            if (el && typeof el === 'object' && dashboardEntryMatchesFocus(el, focusId)) return el;
+          }
+        } else if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+          const sub = selectDashboardForFocusFromAggregate(inner, focusId);
+          if (sub) return sub;
+        }
+      }
+      if (dashboardEntryMatchesFocus(v, focusId)) return v;
+    }
+    return null;
+  }
+
+  function snapshotMatchesFocusDashboardId(entryUrlOrPath, payload, focusId) {
+    if (!focusId) return true;
+    const p = pathOnlyFromUrl(entryUrlOrPath || '') || (entryUrlOrPath || '');
+    const fromReq = extractDashboardIdFromRequestPath(p) || extractDashboardIdFromRequestPath(entryUrlOrPath || '');
+    if (fromReq && String(fromReq) === String(focusId)) return true;
+    const fromBody = getPayloadDashboardId(payload);
+    if (fromBody && String(fromBody) === String(focusId)) return true;
+    if (selectDashboardForFocusFromAggregate(payload, focusId)) return true;
+    return false;
+  }
+
+  function installDashboardNetworkCapture() {
+    if (!isDashboardToolsPage()) return;
+    if (window.__TEP_OPTICS_DASH_CAPTURE__) return;
+    window.__TEP_OPTICS_DASH_CAPTURE__ = true;
+
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function (...args) {
+      const res = await origFetch(...args);
+      try {
+        let reqUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
+        if (args[0] instanceof Request) reqUrl = args[0].url;
+        const pathKey = pathOnlyFromUrl(reqUrl || '');
+        const sniffOn = window.__TEP_OPTICS_SNIFF_AJAX__ !== false;
+
+        if (reqUrl && shouldCaptureDashboardUrl(reqUrl)) {
+          const clone = res.clone();
+          const ct = (clone.headers && clone.headers.get && clone.headers.get('content-type')) || '';
+          const bodyText = await clone.text();
+          const parsed = tryParseJsonText(bodyText);
+          if (clone.ok && parsed != null) {
+            recordDashboardSnapshot(reqUrl, parsed);
+          } else if (clone.ok) {
+            dashConsole('info', 'dashboard-ish URL OK but body not JSON', {
+              path: pathKey,
+              ct,
+              preview: bodyText.slice(0, 120)
+            });
+          } else {
+            logDashboardHookNonOk('fetch', pathKey, clone.status, ct, bodyText);
+          }
+        } else if (sniffOn && isSniffableDashboardNetworkPath(pathKey)) {
+          const clone = res.clone();
+          if (clone.ok) {
+            const bodyText = await clone.text();
+            const data = tryParseJsonText(bodyText);
+            if (data != null) {
+              pushAjaxSniff(pathKey, res.status, topLevelKeysLabel(data));
+              maybeRecordSniffDashboardBody(pathKey, data, 'fetch');
+              dashConsole('info', 'ajax JSON (fetch)', { path: pathKey, status: res.status, keys: topLevelKeysLabel(data) });
+            } else {
+              const ct2 = (clone.headers && clone.headers.get && clone.headers.get('content-type')) || '';
+              recordNonJsonAjax200(pathKey, ct2, bodyText, 'fetch');
+            }
+          }
+        }
+      } catch (e) {
+        dashConsole('warn', 'fetch hook parse error', e && e.message ? e.message : String(e));
+      }
+      return res;
+    };
+
+    const XHROpen = XMLHttpRequest.prototype.open;
+    const XHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      try { this.__tep_req_url = typeof url === 'string' ? url : String(url); } catch (_) { this.__tep_req_url = ''; }
+      return XHROpen.call(this, method, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      this.addEventListener('load', function () {
+        try {
+          const reqUrl = this.__tep_req_url || '';
+          const pathKey = pathOnlyFromUrl(reqUrl);
+          const sniffOn = window.__TEP_OPTICS_SNIFF_AJAX__ !== false;
+          const ct = this.getResponseHeader('content-type') || '';
+          const st = this.status;
+          if (shouldCaptureDashboardUrl(reqUrl)) {
+            const raw = String(this.responseText || '');
+            const parsed = tryParseJsonText(raw);
+            if (st >= 200 && st < 300 && parsed != null) {
+              recordDashboardSnapshot(reqUrl, parsed);
+            } else if (st >= 200 && st < 300) {
+              dashConsole('info', 'XHR dashboard-ish OK but body not JSON', {
+                path: pathKey,
+                ct,
+                preview: raw.slice(0, 120)
+              });
+            } else {
+              logDashboardHookNonOk('xhr', pathKey, st, ct, raw);
+            }
+            return;
+          }
+          if (sniffOn && isSniffableDashboardNetworkPath(pathKey) && st >= 200 && st < 300) {
+            const raw = String(this.responseText || '');
+            const data = tryParseJsonText(raw);
+            if (data != null) {
+              pushAjaxSniff(pathKey, st, topLevelKeysLabel(data));
+              maybeRecordSniffDashboardBody(pathKey, data, 'xhr');
+              dashConsole('info', 'ajax JSON (XHR)', { path: pathKey, status: st, keys: topLevelKeysLabel(data) });
+            } else {
+              recordNonJsonAjax200(pathKey, ct, raw, 'xhr');
+            }
+          }
+        } catch (e) {
+          dashConsole('warn', 'XHR hook error', e && e.message ? e.message : String(e));
+        }
+      });
+      return XHRSend.call(this, body);
+    };
+    dashConsole('info', 'TE Optics: dashboard hooks active — open DevTools Console and filter for "[TE Optics]"', {
+      sniffAllAjaxJson: window.__TEP_OPTICS_SNIFF_AJAX__ !== false,
+      hint: 'Use "Copy troubleshooting report" in the panel after loading a backup to capture probe + sniff history.'
+    });
+  }
+
+  installDashboardNetworkCapture();
+
+  // ---------------------------------------------------------------------------
   // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
   // ---------------------------------------------------------------------------
   let csrfToken = null;
@@ -25,6 +578,11 @@
   let agents = [];
   let accountGroups = [];
   let selectedAgentIds = new Set();
+  /** Latest rows from “Dashboard cleanup” list fetch ({ id, title, modifiedMs }). */
+  let dashCleanupCatalog = [];
+  let dashCleanupListEverLoaded = false;
+  /** When true, higher `modifiedMs` appears first; when false, oldest first. */
+  let dashCleanupSortNewestFirst = true;
 
   // ---------------------------------------------------------------------------
   // Styles (scoped via #te-panel-root)
@@ -32,7 +590,7 @@
   const STYLES = `
     #te-panel-root {
       position: fixed; top: 0; right: 0; z-index: 2147483647;
-      width: var(--tep-width, 480px); height: 100vh;
+      width: var(--tep-width, 576px); height: 100vh;
       background: #0f172a; color: #e2e8f0;
       border-left: 1px solid #334155;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -150,14 +708,129 @@
     .tep-btn-primary:disabled { background: #1e40af; opacity: 0.5; cursor: not-allowed; }
     .tep-btn-secondary { background: #334155; color: #e2e8f0; }
     .tep-btn-secondary:hover { background: #475569; }
+    .tep-btn-danger { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+    .tep-btn-danger:hover { background: #7f1d1d; color: #fecaca; }
     .tep-btn-sm { padding: 5px 10px; font-size: 12px; }
-
+    .tep-dash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+    .tep-dash-intro { font-size: 12px; color: #94a3b8; line-height: 1.55; margin: 0 0 14px; }
+    .tep-dash-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 12px 14px 14px;
+      margin-bottom: 12px;
+    }
+    .tep-dash-section-title { font-size: 13px; font-weight: 700; color: #f1f5f9; margin: 0 0 6px; }
+    .tep-dash-hint { font-size: 11px; color: #64748b; line-height: 1.45; margin: 0 0 10px; }
+    .tep-dash-meta {
+      font-size: 11px; color: #94a3b8; margin-bottom: 10px; line-height: 1.5;
+      padding: 8px 10px; background: #0f172a; border-radius: 6px; border: 1px solid #1e293b;
+    }
+    .tep-dash-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-top: 8px; }
+    .tep-dash-row .tep-btn-primary { flex: 1 1 160px; }
+    .tep-dash-json { min-height: 200px; font-size: 11px; }
+    .tep-dash-json-details {
+      margin-top: 8px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; overflow: hidden;
+    }
+    .tep-dash-json-details > summary {
+      list-style: none; cursor: pointer; padding: 10px 12px; font-size: 12px; user-select: none;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; color: #cbd5e1;
+    }
+    .tep-dash-json-details > summary::-webkit-details-marker { display: none; }
+    .tep-dash-json-details[open] > summary { border-bottom: 1px solid #334155; color: #f1f5f9; }
+    .tep-dash-json-details > summary .tep-dash-json-sum { flex: 1; min-width: 0; font-weight: 600; line-height: 1.45; word-break: break-word; }
+    .tep-dash-json-details > summary .tep-dash-json-chev { flex-shrink: 0; font-size: 10px; color: #64748b; margin-top: 3px; transition: transform .15s; }
+    .tep-dash-json-details[open] > summary .tep-dash-json-chev { transform: rotate(90deg); }
+    .tep-dash-json-sum-ok { color: #86efac !important; }
+    .tep-dash-json-sum-err { color: #f87171 !important; }
+    .tep-dash-json-sum-empty { color: #94a3b8 !important; font-weight: 500 !important; }
+    .tep-dash-json-details-body { padding: 10px 12px 12px; }
+    .tep-dash-restore-bar { margin-top: 12px; padding-top: 12px; border-top: 1px solid #334155; }
+    .tep-dash-details {
+      margin-top: 4px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; overflow: hidden;
+    }
+    .tep-dash-details > summary {
+      list-style: none; cursor: pointer; padding: 10px 12px; font-size: 12px; font-weight: 600;
+      color: #94a3b8; user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .tep-dash-details > summary::-webkit-details-marker { display: none; }
+    .tep-dash-details > summary .tep-dash-chevron { font-size: 10px; color: #64748b; transition: transform .15s; }
+    .tep-dash-details[open] > summary .tep-dash-chevron { transform: rotate(90deg); }
+    .tep-dash-details[open] > summary { border-bottom: 1px solid #334155; color: #e2e8f0; }
+    .tep-dash-details-inner { padding: 12px 14px 14px; font-size: 11px; color: #94a3b8; line-height: 1.5; }
+    .tep-dash-details-inner code { font-size: 10px; }
+    .tep-dash-restore-card .tep-label { margin-top: 10px; }
+    .tep-dash-restore-card .tep-label:first-of-type { margin-top: 0; }
+    .tep-dash-restore-agents-wrap {
+      margin-top: 10px; padding: 10px; background: #0f172a; border-radius: 8px; border: 1px solid #334155;
+    }
+    .tep-dash-cleanup {
+      margin-top: 22px;
+      padding-top: 20px;
+      border-top: 2px solid #475569;
+    }
+    .tep-dash-cleanup-meta { font-size: 11px; color: #94a3b8; margin: 0 0 8px; line-height: 1.45; }
+    .tep-dash-cleanup-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .tep-dash-cleanup-list {
+      max-height: 240px; overflow-y: auto; margin-top: 8px; border: 1px solid #334155; border-radius: 8px;
+      background: #0f172a;
+    }
+    .tep-dash-cleanup-row { padding: 8px 10px; border-bottom: 1px solid #1e293b; font-size: 12px; }
+    .tep-dash-cleanup-row:last-child { border-bottom: none; }
+    .tep-dash-cleanup-row label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; width: 100%; }
+    .tep-dash-cleanup-row .tep-dash-cleanup-cb { margin-top: 2px; flex-shrink: 0; accent-color: #3b82f6; }
+    .tep-dash-cleanup-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .tep-dash-cleanup-name { font-weight: 600; color: #e2e8f0; word-break: break-word; }
+    .tep-dash-cleanup-id { font-size: 10px; color: #64748b; word-break: break-all; }
+    .tep-dash-tab-panel { display: none; }
+    .tep-dash-tab-panel.active { display: block; }
     .tep-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+    .tep-attribution {
+      margin-top: 12px;
+      padding: 8px 10px;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      background: #0f172a;
+      font-size: 10px;
+      line-height: 1.45;
+      color: #94a3b8;
+    }
+    .tep-attribution a {
+      color: #93c5fd;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .tep-attribution a:hover { color: #bfdbfe; }
 
     /* Results log */
     .tep-log-wrap {
       margin-top: 14px;
     }
+    .tep-log-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 0;
+    }
+    .tep-log-toolbar .tep-log-toggle {
+      flex: 1;
+      min-width: 0;
+      width: auto;
+    }
+    .tep-log-copy {
+      flex-shrink: 0;
+      background: #334155;
+      border: 1px solid #475569;
+      color: #e2e8f0;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .tep-log-copy:hover { background: #475569; color: #f8fafc; }
     .tep-log-toggle {
       background: #1e293b; border: 1px solid #334155; border-radius: 6px;
       color: #94a3b8; font-size: 11px; font-weight: 600; padding: 5px 10px;
@@ -404,11 +1077,8 @@
     </div>
     <div class="tep-status" id="tep-status">Detecting session&hellip;</div>
 
-    <!-- Top-level view switcher -->
-    <div class="tep-view-tabs">
-      <div class="tep-view-tab active" data-view="create">Create Tests</div>
-      <div class="tep-view-tab" data-view="manage">Manage Tests</div>
-    </div>
+    <!-- Top-level view switcher (filled by renderViewTabsInitial) -->
+    <div class="tep-view-tabs" id="tep-view-tabs"></div>
 
     <div class="tep-body" id="tep-body">
       <!-- ============== CREATE PANEL ============== -->
@@ -481,8 +1151,6 @@
             <option value="Http">HTTP Server</option>
             <option value="A2s">Agent→Server</option>
             <option value="Page">Page Load</option>
-            <option value="DnsServer">DNS Server</option>
-            <option value="DnsTrace">DNS Trace</option>
           </select>
           <input id="tep-manage-search" placeholder="Search tests&hellip;">
           <select id="tep-manage-sort" style="width:auto;">
@@ -533,15 +1201,147 @@
         </div>
       </div>
 
+      <!-- ============== DASHBOARD TOOLS (/dashboard only) ============== -->
+      <div class="tep-view-panel" id="tep-panel-dashboard">
+        <div id="tep-dash-panel-backup" class="tep-dash-tab-panel active">
+          <div class="tep-dash-card">
+            <div class="tep-dash-meta" id="tep-dash-meta">Nothing loaded yet — use Refresh import.</div>
+            <label class="tep-label">Dashboard JSON (backup)</label>
+            <details class="tep-dash-json-details" id="tep-dash-json-details">
+              <summary>
+                <span class="tep-dash-json-sum tep-dash-json-sum-empty" id="tep-dash-json-summary">No JSON yet — expand to edit</span>
+                <span class="tep-dash-json-chev" aria-hidden="true">&#9654;</span>
+              </summary>
+              <div class="tep-dash-json-details-body">
+                <textarea class="tep-textarea tep-dash-json" id="tep-dash-json" spellcheck="false" placeholder="{ }"></textarea>
+              </div>
+            </details>
+            <div class="tep-dash-row">
+              <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-refresh">Refresh import</button>
+            </div>
+            <div class="tep-dash-actions">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-download">Save as file…</button>
+            </div>
+
+            <div class="tep-dash-cleanup" id="tep-dash-cleanup">
+              <div class="tep-dash-section-title">Dashboard cleanup</div>
+              <p class="tep-dash-cleanup-meta" id="tep-dash-cleanup-meta">Not loaded yet.</p>
+              <div class="tep-dash-cleanup-toolbar">
+                <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-cleanup-refresh">Load dashboards in account group</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-sort" title="Toggle list order">Sort: newest first</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-select-none">Select none</button>
+                <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-cleanup-delete">Delete selected…</button>
+              </div>
+              <div class="tep-dash-cleanup-list" id="tep-dash-cleanup-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tep-dash-panel-restore" class="tep-dash-tab-panel">
+          <div class="tep-dash-card tep-dash-restore-card">
+            <div class="tep-dash-meta" id="tep-dash-restore-meta">No restore payload yet — use Open import file…</div>
+
+            <label class="tep-label">Dashboard JSON to restore</label>
+            <details class="tep-dash-json-details" id="tep-dash-restore-json-details">
+              <summary>
+                <span class="tep-dash-json-sum tep-dash-json-sum-empty" id="tep-dash-restore-json-summary">No JSON yet — expand to paste or use Open import file…</span>
+                <span class="tep-dash-json-chev" aria-hidden="true">&#9654;</span>
+              </summary>
+              <div class="tep-dash-json-details-body">
+                <textarea class="tep-textarea tep-dash-json" id="tep-dash-restore-json" spellcheck="false" placeholder="{ }"></textarea>
+              </div>
+            </details>
+
+            <div class="tep-dash-actions" style="margin-top:10px;">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-restore-import-file-btn">Open import file…</button>
+              <input type="file" id="tep-dash-restore-import-file" accept="application/json,.json" style="display:none;">
+            </div>
+
+            <label class="tep-label" for="tep-dash-restore-title">New dashboard title (optional)</label>
+            <input type="text" class="tep-input" id="tep-dash-restore-title" placeholder="Leave blank to keep the title from the imported JSON" autocomplete="off">
+
+            <label class="tep-label" for="tep-dash-restore-agent-mode">Agents &amp; widget filters on restore</label>
+            <select class="tep-select" id="tep-dash-restore-agent-mode" style="width:100%;">
+              <option value="keep" selected>Keep original (from backup)</option>
+              <option value="strip">Remove all widget filters (and clear virtual-agent fields)</option>
+            </select>
+
+            <div id="tep-dash-restore-agents-wrap" class="tep-dash-restore-agents-wrap" style="display:none;">
+              <p class="tep-dash-hint" id="tep-dash-restore-agent-note" style="margin:0 0 6px;">Every <code>filters</code> object in the dashboard JSON is deleted, and virtual-agent id fields (vAgentIds, agentSet, etc.) are cleared.</p>
+            </div>
+
+            <div class="tep-dash-row" style="margin-top:14px;">
+              <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-restore" style="flex:1;">Restore to ThousandEyes…</button>
+            </div>
+          </div>
+        </div>
+
+        <details class="tep-dash-details">
+          <summary>Advanced — diagnostics <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
+          <div class="tep-dash-details-inner tep-dash-advanced-inner">
+            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#94a3b8;cursor:pointer;line-height:1.45;margin-bottom:10px;">
+              <input type="checkbox" id="tep-dash-sniff-ajax" checked style="margin-top:3px;flex-shrink:0;">
+              <span>Log dashboard-related <code>/ajax/</code> and <code>/namespace/dash-api</code> JSON to the browser console (filter <code>[TE Optics]</code>).</span>
+            </label>
+            <div class="tep-dash-actions" style="margin-top:0;">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-copy-debug">Copy diagnostics report</button>
+            </div>
+            <p style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">
+              Console flags: <code>window.__TEP_OPTICS_PROBE_SPECULATIVE__ = true</code> then Retry Auth;
+              <code>window.__TEP_OPTICS_FORCE_DASH_PROBE__ = true</code> then reload backup;
+              <code>window.__TEP_OPTICS_VERBOSE_DASH_PROBES__ = true</code> for probe lines in the log.
+            </p>
+          </div>
+        </details>
+      </div>
+
+      <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
+        <strong style="color:#cbd5e1;">TE Optics</strong> — by
+        <a href="https://github.com/lucidium2000/TE-Optics" target="_blank" rel="noopener noreferrer">Christopher Hunt</a>
+        · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
+      </div>
+
       <!-- Log (shared) -->
       <div class="tep-log-wrap">
-        <button class="tep-log-toggle" id="tep-log-toggle"><span class="tep-log-arrow">&#9654;</span> Log</button>
+        <div class="tep-log-toolbar">
+          <button type="button" class="tep-log-toggle" id="tep-log-toggle"><span class="tep-log-arrow">&#9654;</span> Log</button>
+          <button type="button" class="tep-log-copy" id="tep-log-copy" title="Copy entire log to clipboard">Copy log</button>
+        </div>
         <div class="tep-log" id="tep-log"></div>
       </div>
     </div>
   `);
 
   document.body.appendChild(root);
+
+  // ---------------------------------------------------------------------------
+  // View tabs + panels (tests vs /dashboard)
+  // ---------------------------------------------------------------------------
+  function renderViewTabsInitial() {
+    const tabs = root.querySelector('#tep-view-tabs');
+    const h2 = root.querySelector('.tep-header h2');
+    const pDash = root.querySelector('#tep-panel-dashboard');
+    const pCreate = root.querySelector('#tep-panel-create');
+    const pManage = root.querySelector('#tep-panel-manage');
+    if (!tabs || !pDash || !pCreate || !pManage) return;
+
+    if (isDashboardToolsPage()) {
+      if (h2) h2.textContent = 'TE Optics';
+      tabs.innerHTML =
+        '<div class="tep-view-tab active" data-view="dashboard" data-dash-tab="backup">Backup</div>' +
+        '<div class="tep-view-tab" data-view="dashboard" data-dash-tab="restore">Restore</div>';
+      pCreate.classList.remove('active');
+      pManage.classList.remove('active');
+      pDash.classList.add('active');
+    } else {
+      tabs.innerHTML = '<div class="tep-view-tab active" data-view="create">Create Tests</div>' +
+        '<div class="tep-view-tab" data-view="manage">Manage Tests</div>';
+      pDash.classList.remove('active');
+      pCreate.classList.add('active');
+    }
+  }
+
+  renderViewTabsInitial();
 
   // ---------------------------------------------------------------------------
   // Refs
@@ -616,15 +1416,1329 @@
     return /thousandeyes\.com$/i.test(window.location.hostname);
   }
 
+  function readBrowserCookie(name) {
+    try {
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + esc + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1].trim()) : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /** Headers the SPA sends for /namespace/dash-api/* (dashboard GET, poll POST, …); cookies alone are often not enough. */
+  function buildDashNamespaceHeaders() {
+    const h = {
+      'Accept': 'application/json, text/plain, */*',
+      'x-dash-client-id': 'app'
+    };
+    if (teInitData && teInitData._currentAid != null && teInitData._currentAid !== '') {
+      h['x-thousandeyes-aid'] = String(teInitData._currentAid);
+    }
+    const uid = readBrowserCookie('teUid');
+    if (uid) h['x-thousandeyes-uid'] = uid;
+    const hero = readBrowserCookie('teHeroUserId');
+    if (hero) h['x-thousandeyes-heroid'] = hero;
+    if (teInitData && typeof teInitData === 'object') {
+      const pick = (a, b, c) => teInitData[a] ?? teInitData[b] ?? teInitData[c];
+      const orgId = pick('orgId', '_orgId', 'organizationId');
+      if (orgId != null && String(orgId) !== '') h['x-thousandeyes-orgid'] = String(orgId);
+      const orgName = pick('orgName', '_orgName', 'organizationName');
+      if (typeof orgName === 'string' && orgName) h['x-thousandeyes-orgname'] = orgName;
+      const acctName = pick('accountName', 'accountGroupName', 'currentAccountName');
+      if (typeof acctName === 'string' && acctName) h['x-thousandeyes-accountname'] = acctName;
+      const acctType = teInitData.accountType;
+      if (typeof acctType === 'string' && acctType) h['x-thousandeyes-accounttype'] = acctType;
+      const ver = pick('version', 'appVersion', 'teVersion');
+      if (typeof ver === 'string' && ver) h['x-thousandeyes-version'] = ver;
+    }
+    return h;
+  }
+
+  function dashPollJsonBody(dashboardId) {
+    return JSON.stringify({
+      dashboardId,
+      dashboardModifiedDate: new Date().toISOString().replace('Z', '+00:00'),
+      statuses: []
+    });
+  }
+
   // Internal AJAX caller — same-origin, cookies sent automatically
   function ajax(path, options = {}) {
+    const pathStr = path == null ? '' : String(path);
+    const isDashNs = pathStr.includes('/namespace/dash-api');
     const headers = {
       'Accept': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      ...(isDashNs ? buildDashNamespaceHeaders() : {}),
       ...(options.headers || {})
     };
     if (options.body) headers['Content-Type'] = 'application/json';
     if (csrfToken) headers[csrfToken.headerName] = csrfToken.value;
     return fetch(path, { ...options, headers, credentials: 'include' });
+  }
+
+  function withAidQuery(path, aid) {
+    if (aid == null || aid === '') return path;
+    return path.includes('?') ? `${path}&aid=${encodeURIComponent(aid)}` : `${path}?aid=${encodeURIComponent(aid)}`;
+  }
+
+  function buildDashboardProbeUrls(aid) {
+    const id = extractDashboardIdFromLocation();
+    const paths = [];
+    const q = (p) => withAidQuery(p, aid);
+    if (id) {
+      paths.push(q(`/ajax/dashboards/${id}`));
+      paths.push(q(`/ajax/dashboard/${id}`));
+      paths.push(q(`/ajax/user/dashboards/${id}`));
+      paths.push(q(`/ajax/settings/dashboards/${id}`));
+      paths.push(q(`/ajax/settings/user/dashboards/${id}`));
+      paths.push(q(`/ajax/dashboards/info/${id}`));
+      paths.push(q(`/ajax/dashboards/edit/${id}`));
+    }
+    if (!id) {
+      paths.push(q('/ajax/dashboards'));
+      paths.push(q('/ajax/user/dashboards'));
+      paths.push(q('/ajax/settings/dashboards'));
+      paths.push(q('/ajax/dashboard/current'));
+      paths.push(q('/ajax/dashboards/current'));
+      paths.push(q('/ajax/user/dashboard/current'));
+    }
+    if (window.__TEP_OPTICS_PROBE_SPECULATIVE__ === true && !id) {
+      paths.push(q('/ajax/visualization/dashboards'));
+      paths.push(q('/ajax/reporting/dashboards'));
+      paths.push(q('/ajax/home/dashboard'));
+      paths.push(q('/ajax/ui/dashboard'));
+    }
+    return paths;
+  }
+
+  /** GET /namespace/dash-api/dashboard — TE returns the full dashboard JSON (same headers as poll). */
+  async function probeNamespaceDashDashboardGet(aid, dashboardId, verbose) {
+    const q = (p) => withAidQuery(p, aid);
+    const candidates = [];
+    if (dashboardId) {
+      candidates.push(q(`/namespace/dash-api/dashboard/${encodeURIComponent(dashboardId)}`));
+      candidates.push(q(`/namespace/dash-api/dashboard?dashboardId=${encodeURIComponent(dashboardId)}`));
+    } else {
+      candidates.push(q('/namespace/dash-api/dashboard'));
+    }
+    for (const path of candidates) {
+      try {
+        const resp = await ajax(path, { method: 'GET' });
+        const ct = (resp.headers && resp.headers.get && resp.headers.get('content-type')) || '';
+        const raw = await resp.text();
+        const data = tryParseJsonText(raw);
+        if (resp.ok && data != null) {
+          let useData = unwrapIfSingleElementArray(data);
+          if (dashboardId) {
+            const narrowed = selectDashboardForFocusFromAggregate(useData, dashboardId);
+            if (narrowed != null) {
+              useData = narrowed;
+            } else if (Array.isArray(useData)) {
+              pushProbeHistory(path + ' [GET dash-api/dashboard]', resp.status, ct, 'JSON array/list — no row matching URL dashboard id');
+              if (verbose) log(`GET ${path} → aggregate array, no matching id ${dashboardId}`, 'tep-log-info');
+              dashConsole('info', 'dash-api/dashboard GET skipped — list with no id match', { path, dashboardId });
+              continue;
+            }
+          }
+          if (Array.isArray(useData)) {
+            pushProbeHistory(path + ' [GET dash-api/dashboard]', resp.status, ct, 'JSON array (need one object) — try next URL');
+            if (verbose) log(`GET ${path} → root is multi-element array, skipping`, 'tep-log-info');
+            continue;
+          }
+          if (dashboardId) {
+            const pid = getPayloadDashboardId(useData);
+            if (pid != null && String(pid) !== String(dashboardId)) {
+              pushProbeHistory(path + ' [GET dash-api/dashboard]', resp.status, ct, 'OK JSON but id mismatch vs URL dashboardId — skipped');
+              if (verbose) log(`GET ${path} → body id ${pid} !== URL ${dashboardId}`, 'tep-log-info');
+              dashConsole('warn', 'dash-api/dashboard GET skipped — id mismatch', { path, pid, dashboardId });
+              continue;
+            }
+          }
+          const sc = scoreDashboardPayload(useData);
+          dashProbeCacheFailAid = null;
+          pushProbeHistory(path + ' [GET dash-api/dashboard]', resp.status, ct, '(OK JSON)');
+          log(`Dashboard definition GET OK: ${path} (heuristic score ${sc})`, 'tep-log-ok');
+          dashConsole('info', 'dash-api/dashboard GET OK', { path, score: sc, keys: topLevelKeysLabel(useData) });
+          return { url: path, data: useData, method: 'GET' };
+        }
+        if (resp.ok) {
+          pushProbeHistory(path + ' [GET dash-api/dashboard]', resp.status, ct, '200 non-JSON: ' + raw.slice(0, 220));
+        } else {
+          let snippet = '';
+          try {
+            snippet = (await resp.clone().text()).slice(0, 500);
+          } catch (_) {
+            snippet = '(unreadable body)';
+          }
+          pushProbeHistory(path + ' [GET dash-api/dashboard]', resp.status, ct, snippet.slice(0, 500));
+          if (verbose) log(`GET ${path} → HTTP ${resp.status}`, 'tep-log-info');
+        }
+      } catch (e) {
+        pushProbeHistory(path + ' [GET dash-api/dashboard]', -1, '', e.message || String(e));
+        if (verbose) log(`GET ${path} → ${e.message}`, 'tep-log-info');
+        dashConsole('error', 'dash-api/dashboard GET exception', { path, error: e.message });
+      }
+    }
+    return null;
+  }
+
+  async function probeNamespaceDashPoll(dashboardId, verbose) {
+    const path = '/namespace/dash-api/poll';
+    const body = dashPollJsonBody(dashboardId);
+    try {
+      const resp = await ajax(path, { method: 'POST', body });
+      const ct = (resp.headers && resp.headers.get && resp.headers.get('content-type')) || '';
+      const raw = await resp.text();
+      const data = tryParseJsonText(raw);
+      if (resp.ok && data != null) {
+        if (isNamespacePollMissingDashboardDoc(data)) {
+          pushProbeHistory(path + ' [POST poll]', resp.status, ct, 'JSON but no backup payload (e.g. NOCHANGE / dashboard null)');
+          log('Dashboard poll: OK JSON but no full dashboard document (typical NOCHANGE). Poll is for deltas — for backup, copy the Network request whose JSON contains widgets/layout.', 'tep-log-info');
+          dashConsole('info', 'poll JSON has no dashboard backup payload', { status: data.status, keys: topLevelKeysLabel(data) });
+          return null;
+        }
+        if (dashboardId) {
+          const pid = getPayloadDashboardId(data);
+          if (pid != null && String(pid) !== String(dashboardId)) {
+            pushProbeHistory(path + ' [POST poll]', resp.status, ct, 'OK JSON but id mismatch vs URL dashboardId — skipped');
+            dashConsole('warn', 'dashboard poll POST skipped — id mismatch', { pid, dashboardId });
+            return null;
+          }
+        }
+        dashProbeCacheFailAid = null;
+        pushProbeHistory(path + ' [POST poll]', resp.status, ct, '(OK JSON with dashboard-ish body)');
+        log(`Dashboard poll POST OK: ${path} (dashboard payload)`, 'tep-log-ok');
+        dashConsole('info', 'dashboard poll POST OK', { path, status: resp.status, keys: topLevelKeysLabel(data) });
+        return { url: path, data, method: 'POST' };
+      }
+      if (resp.ok) {
+        pushProbeHistory(path + ' [POST poll]', resp.status, ct, '200 non-JSON: ' + raw.slice(0, 220));
+        if (verbose) log(`Dashboard poll POST → 200 not JSON (${ct}) ${raw.slice(0, 100)}`, 'tep-log-info');
+        dashConsole('info', 'dashboard poll POST 200 non-JSON', { path, ct, preview: raw.slice(0, 120) });
+      } else {
+        let snippet = '';
+        try {
+          snippet = (await resp.clone().text()).slice(0, 500);
+        } catch (_) {
+          snippet = '(unreadable body)';
+        }
+        pushProbeHistory(path + ' [POST poll]', resp.status, ct, snippet.slice(0, 500));
+        const oneLine = summarizeProbeFailureSnippet(snippet, resp.status);
+        if (verbose) log(`Dashboard poll POST → ${oneLine}`, 'tep-log-info');
+        dashConsole('warn', 'dashboard poll POST non-OK', { path, status: resp.status, summary: oneLine });
+      }
+    } catch (e) {
+      pushProbeHistory(path + ' [POST poll]', -1, '', e.message || String(e));
+      if (verbose) log(`Dashboard poll POST → error: ${e.message}`, 'tep-log-info');
+      dashConsole('error', 'dashboard poll POST exception', { path, error: e.message });
+    }
+    return null;
+  }
+
+  async function fetchDashboardFromProbes() {
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const key = aid || '_noaid';
+    const verbose = window.__TEP_OPTICS_VERBOSE_DASH_PROBES__ === true;
+
+    if (window.__TEP_OPTICS_FORCE_DASH_PROBE__ === true) {
+      window.__TEP_OPTICS_FORCE_DASH_PROBE__ = false;
+      dashProbeCacheFailAid = null;
+    }
+    if (dashProbeCacheFailAid != null && dashProbeCacheFailAid !== key) {
+      dashProbeCacheFailAid = null;
+    }
+
+    const dashId = extractDashboardIdFromLocation();
+    const docHit = await probeNamespaceDashDashboardGet(aid, dashId, verbose);
+    if (docHit) return docHit;
+    if (dashId) {
+      const pollHit = await probeNamespaceDashPoll(dashId, verbose);
+      if (pollHit) return pollHit;
+    }
+
+    if (dashProbeCacheFailAid === key) {
+      dashConsole('info', 'dashboard probes skipped (cached — all built-in GET URLs already failed for this aid)', { aid: key });
+      return null;
+    }
+
+    const urls = buildDashboardProbeUrls(aid);
+    dashConsole('info', 'dashboard probes starting', {
+      aid: aid || '(none)',
+      paths: urls.length,
+      parsedId: dashId
+    });
+    for (const path of urls) {
+      try {
+        const resp = await ajax(path, { method: 'GET' });
+        const ct = (resp.headers && resp.headers.get && resp.headers.get('content-type')) || '';
+        if (resp.ok) {
+          const raw = await resp.text();
+          const data = tryParseJsonText(raw);
+          if (data != null) {
+            if (dashId) {
+              const pid = getPayloadDashboardId(data);
+              if (pid != null && String(pid) !== String(dashId)) {
+                pushProbeHistory(path, resp.status, ct, '(JSON id mismatch vs URL dashboardId — skipped)');
+                if (verbose) log(`Dashboard probe skip (wrong id): ${path} body id ${pid} vs URL ${dashId}`, 'tep-log-info');
+                dashConsole('info', 'dashboard probe skipped — JSON id does not match URL', { path, pid, dashId });
+                continue;
+              }
+            }
+            dashProbeCacheFailAid = null;
+            pushProbeHistory(path, resp.status, ct, '(OK JSON)');
+            log(`Dashboard probe OK: ${path} → ${topLevelKeysLabel(data)}`, 'tep-log-ok');
+            dashConsole('info', 'dashboard probe OK', { path, status: resp.status, keys: topLevelKeysLabel(data) });
+            return { url: path, data, method: 'GET' };
+          }
+          pushProbeHistory(path, resp.status, ct, '200 non-JSON: ' + raw.slice(0, 220));
+          if (verbose) {
+            log(`Dashboard probe ${path} → 200 but body not JSON (${ct || 'no CT'}) ${raw.slice(0, 100)}`, 'tep-log-info');
+          }
+          dashConsole('info', 'dashboard probe 200 non-JSON body', { path, ct, preview: raw.slice(0, 120) });
+          continue;
+        }
+        let snippet = '';
+        try {
+          snippet = (await resp.clone().text()).slice(0, 500);
+        } catch (_) {
+          snippet = '(unreadable body)';
+        }
+        const historySnippet = isHtmlLikeResponse(snippet)
+          ? snippet.slice(0, 100).replace(/\s+/g, ' ') + '…'
+          : snippet.slice(0, 500);
+        pushProbeHistory(path, resp.status, ct, historySnippet);
+        const oneLine = summarizeProbeFailureSnippet(snippet, resp.status);
+        if (verbose) {
+          log(`Dashboard probe ${path} → ${oneLine}`, 'tep-log-info');
+        }
+        dashConsole('warn', 'dashboard probe non-OK', { path, status: resp.status, ct, summary: oneLine });
+      } catch (e) {
+        pushProbeHistory(path, -1, '', e.message || String(e));
+        if (verbose) {
+          log(`Dashboard probe ${path} → error: ${e.message}`, 'tep-log-info');
+        }
+        dashConsole('error', 'dashboard probe exception', { path, error: e.message });
+      }
+    }
+    dashProbeCacheFailAid = key;
+    dashConsole('warn', 'dashboard probes exhausted — no 200 JSON', { tried: urls.length });
+    log(`Built-in dashboard probes (${urls.length} GET URLs, aid=${key}${dashId ? '; dash GET + poll tried before list' : ''}): no JSON snapshot. Prefer URL with ?dashboardId= on /dashboard. Copy troubleshooting report or paste a Network URL under “Load from a copied request URL”. (Repeats skip HTTP — set window.__TEP_OPTICS_FORCE_DASH_PROBE__=true to probe again.)`, 'tep-log-info');
+    return null;
+  }
+
+  async function mergeBestDashboardJson() {
+    const focusId = extractDashboardIdFromLocation();
+    const captured = pickBestDashboardLikePayload(focusId);
+    const probed = await fetchDashboardFromProbes();
+    let best = null;
+    let bestScore = -1;
+    let source = '';
+    if (captured && captured.score > bestScore) {
+      best = captured.data;
+      bestScore = captured.score;
+      source = captured.source + ' @ ' + captured.path;
+    }
+    if (probed) {
+      let ps = scoreDashboardPayload(probed.data);
+      if ((probed.url || '').includes('dash-api/poll') && isNamespacePollMissingDashboardDoc(probed.data)) ps = -1;
+      if (ps > bestScore) {
+        best = probed.data;
+        bestScore = ps;
+        source = (probed.method || 'GET') + ' ' + probed.url;
+      }
+    }
+    if (focusId && best != null) {
+      const sliced = selectDashboardForFocusFromAggregate(best, focusId);
+      if (sliced != null) {
+        best = sliced;
+        bestScore = scoreDashboardPayload(sliced);
+        source = (source || 'merged') + ' · row for URL dashboard id';
+      }
+    }
+    dashConsole('info', 'mergeBestDashboardJson', {
+      focusDashboardId: focusId || '(none)',
+      bestScore,
+      source: source || '(none)',
+      hadCapture: !!captured,
+      hadProbe: !!probed,
+      captureScore: captured ? captured.score : null,
+      sniffBodies: TEP_DASH_SNIFF_BODIES.length,
+      nonJson200Ajax: TEP_DASH_NONJSON_200.length,
+      probeScore: probed ? scoreDashboardPayload(probed.data) : null
+    });
+    return { json: best, source, score: bestScore };
+  }
+
+  function buildDashboardDebugReport() {
+    const lines = [];
+    lines.push('=== TE Optics dashboard troubleshooting report ===');
+    lines.push('Note: Dashboard data may arrive as non-JSON /ajax/ or /namespace/dash-api (HTML fragment, script, empty), or outside fetch/XHR (WebSocket, shared worker, iframe). This report lists what the page hook saw.');
+    lines.push('generatedAt: ' + new Date().toISOString());
+    lines.push('href: ' + (typeof location !== 'undefined' ? location.href : ''));
+    lines.push('pathname: ' + (typeof location !== 'undefined' ? location.pathname : ''));
+    lines.push('search: ' + (typeof location !== 'undefined' ? location.search : ''));
+    lines.push('hash: ' + (typeof location !== 'undefined' ? location.hash : ''));
+    lines.push('extractedDashboardId: ' + String(extractDashboardIdFromLocation()));
+    try {
+      const m = typeof document !== 'undefined' && document.cookie && document.cookie.match(/(?:^|;\s*)teAccount=([^;]*)/);
+      lines.push('teAccountCookie: ' + (m ? decodeURIComponent(m[1]) : '(none)'));
+    } catch (_) {
+      lines.push('teAccountCookie: (error reading cookie)');
+    }
+    lines.push('teInitData._currentAid: ' + (teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '(unset)'));
+    if (teInitData && typeof teInitData === 'object') {
+      lines.push('teInitData keys (excl. _currentAid): ' + Object.keys(teInitData).filter(k => k !== '_currentAid').slice(0, 60).join(', '));
+    }
+    lines.push('csrfHeader: ' + (csrfToken ? csrfToken.headerName + ' set' : '(none)'));
+    lines.push('sniffAllAjaxJson: ' + String(window.__TEP_OPTICS_SNIFF_AJAX__ !== false));
+    lines.push('probeSpeculativeUrls: ' + String(window.__TEP_OPTICS_PROBE_SPECULATIVE__ === true));
+    lines.push('dashProbeCacheFailAid: ' + (dashProbeCacheFailAid != null ? String(dashProbeCacheFailAid) : '(none — probes not cached or success cleared cache)'));
+    lines.push('');
+    lines.push('--- Built-in probes: GET /namespace/dash-api/dashboard/{id} + ?dashboardId= + GET /ajax guesses + POST poll (most recent first) ---');
+    for (const row of TEP_DASH_PROBE_HISTORY) {
+      lines.push(JSON.stringify(row));
+    }
+    lines.push('');
+    lines.push('--- Captures (dashboard under /ajax/, or any /namespace/dash-api) ---');
+    for (const e of TEP_DASH_CAPTURE.entries) {
+      lines.push(JSON.stringify({
+        url: e.url,
+        score: e.score,
+        t: e.t,
+        keys: topLevelKeysLabel(e.data)
+      }));
+    }
+    lines.push('');
+    lines.push('--- Sniffed successful JSON: /ajax/ or /namespace/dash-api (fetch + XHR) ---');
+    for (const s of TEP_DASH_AJAX_SNIFF) {
+      lines.push(JSON.stringify(s));
+    }
+    lines.push('');
+    lines.push('--- HTTP 200 responses (same sniff paths) that were NOT JSON (Content-Type + body hint) ---');
+    if (!TEP_DASH_NONJSON_200.length) {
+      lines.push('(none recorded — enable console JSON sniff in Troubleshooting, use the dashboard, then Refresh import again)');
+    } else {
+      for (const n of TEP_DASH_NONJSON_200) {
+        lines.push(JSON.stringify(n));
+      }
+    }
+    lines.push('');
+    lines.push('--- Sniffed bodies scored as dashboard-like (score>=' + TEP_DASH_SNIFF_MIN_SCORE + ', JSON not included) ---');
+    for (const b of TEP_DASH_SNIFF_BODIES) {
+      lines.push(JSON.stringify({
+        path: b.path,
+        score: b.score,
+        via: b.via,
+        keys: topLevelKeysLabel(b.data),
+        t: b.t
+      }));
+    }
+    lines.push('');
+    lines.push('--- Resource timing: recent same-origin /ajax/ or /namespace/dash-api URLs (path only) ---');
+    try {
+      const entries = performance.getEntriesByType('resource');
+      const ajaxish = [];
+      for (const e of entries) {
+        if (!e.name || typeof e.name !== 'string') continue;
+        if (!e.name.includes('/ajax/') && !e.name.toLowerCase().includes('/namespace/dash-api')) continue;
+        try {
+          const u = new URL(e.name, window.location.origin);
+          if (u.hostname.replace(/^www\./, '') !== window.location.hostname.replace(/^www\./, '')) continue;
+          ajaxish.push(u.pathname);
+        } catch (_) {
+          ajaxish.push(e.name.split('?')[0].slice(0, 120));
+        }
+      }
+      const uniq = [...new Set(ajaxish)];
+      uniq.slice(-50).forEach(p => lines.push(p));
+    } catch (e) {
+      lines.push('(unavailable: ' + (e.message || e) + ')');
+    }
+    lines.push('');
+    lines.push('--- What to send back ---');
+    lines.push('1) This full report text, OR');
+    lines.push('2) DevTools Console: all lines containing [TE Optics] after Refresh import, OR');
+    lines.push('3) Network tab: one successful JSON request that loads your dashboard widgets — copy Request URL (path + query).');
+    return lines.join('\n');
+  }
+
+  async function refreshDashboardEditor() {
+    const meta = root.querySelector('#tep-dash-meta');
+    const ta = root.querySelector('#tep-dash-json');
+    if (!meta || !ta) return;
+    meta.textContent = 'Refreshing import…';
+    dashConsole('info', 'Refresh import clicked');
+    const { json, source, score } = await mergeBestDashboardJson();
+    if (json != null) {
+      ta.value = JSON.stringify(json, null, 2);
+      meta.textContent = `Backup loaded · source ${source} (score ${score}) · ${new Date().toISOString()}`;
+      setStatus('Dashboard JSON ready', 'ok');
+    } else {
+      meta.textContent = 'Could not load a backup yet — interact with the dashboard in this tab, then try again. If it stays empty, open Advanced → copy diagnostics report.';
+      setStatus('No dashboard JSON found yet', 'err');
+      const nn = TEP_DASH_NONJSON_200.length;
+      if (nn > 0 && nn !== dashNonJsonHintLastLoggedCount) {
+        dashNonJsonHintLastLoggedCount = nn;
+        log(`Sniff recorded ${nn} HTTP 200 response(s) on tracked paths (/ajax/ or /namespace/dash-api) whose bodies were not JSON — see Copy troubleshooting report, section "200 non-JSON".`, 'tep-log-info');
+      }
+    }
+    refreshDashboardJsonSummary('backup');
+  }
+
+  /** Safe file stem from dashboard title/name (ASCII-first; falls back to "dashboard"). */
+  function slugifyDashboardBackupStem(rawTitle, maxLen) {
+    const max = maxLen == null ? 72 : maxLen;
+    if (rawTitle == null) return '';
+    let s = String(rawTitle).trim();
+    if (!s) return '';
+    s = s.replace(/[\\/<>|":*?]+/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    if (s.length > max) s = s.slice(0, max).replace(/-+$/g, '');
+    let slug = s.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    if (!slug) slug = 'dashboard';
+    return slug;
+  }
+
+  function suggestDashboardBackupFileNames() {
+    const d = new Date().toISOString().slice(0, 10);
+    const ta = root.querySelector('#tep-dash-json');
+    let stem = '';
+    if (ta && ta.value.trim()) {
+      try {
+        const norm = normalizeDashRestoreRoot(JSON.parse(ta.value.trim()));
+        if (norm && typeof norm === 'object') {
+          const rawTitle = norm.title != null ? String(norm.title) : (norm.name != null ? String(norm.name) : '');
+          stem = slugifyDashboardBackupStem(rawTitle, 72);
+        }
+      } catch (_) { /* ignore */ }
+    }
+    if (!stem) stem = 'dashboard';
+    const list = [stem + '-' + d + '.json', stem + '-' + d + '-copy.json', 'te-dashboard-backup-' + d + '.json'];
+    return list;
+  }
+
+  function downloadDashboardBackup() {
+    const ta = root.querySelector('#tep-dash-json');
+    if (!ta || !ta.value.trim()) {
+      toast('Nothing to save — load a backup into the box first', 'err');
+      return;
+    }
+    const suggestions = suggestDashboardBackupFileNames();
+    const defaultName = suggestions[0];
+    const msg = 'File name (.json). Suggested names:\n' + suggestions.map((s) => '  · ' + s).join('\n');
+    const entered = window.prompt(msg, defaultName);
+    if (entered === null) return;
+    let name = String(entered).trim();
+    if (!name) return;
+    name = name.replace(/[\\/<>|":*?]+/g, '-').replace(/\.\.+/g, '.');
+    if (!/\.json$/i.test(name)) name += name.endsWith('.') ? 'json' : '.json';
+    const blob = new Blob([ta.value], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toast('Download started', 'ok');
+  }
+
+  function dashboardCatalogDisplayTitle(entry) {
+    if (!entry || typeof entry !== 'object') return '(untitled)';
+    const d = entry.dashboard && typeof entry.dashboard === 'object' ? entry.dashboard : null;
+    const t = entry.title ?? entry.name ?? entry.dashboardTitle ?? entry.label
+      ?? (d && (d.title ?? d.name));
+    const s = t != null ? String(t).trim() : '';
+    return s || '(untitled)';
+  }
+
+  /** Best-effort modified/created time in ms for dashboard list rows (unknown → 0). */
+  function getDashboardRowSortTimeMs(el) {
+    if (!el || typeof el !== 'object' || Array.isArray(el)) return 0;
+    const keys = [
+      'modifiedDate', 'modifiedTime', 'lastModified', 'updatedAt', 'updatedDate',
+      'createdDate', 'createdAt', 'dashboardModifiedDate', 'dateModified', 'lastUpdated',
+      'changeDate', 'timestamp'
+    ];
+    for (const k of keys) {
+      const v = el[k];
+      if (v == null) continue;
+      if (typeof v === 'number' && !Number.isNaN(v)) {
+        if (v > 1e12) return v;
+        if (v > 1e9 && v < 1e12) return v * 1000;
+      }
+      const parsed = Date.parse(String(v).trim());
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    const d = el.dashboard && typeof el.dashboard === 'object' ? el.dashboard : null;
+    if (d) {
+      const inner = getDashboardRowSortTimeMs(d);
+      if (inner) return inner;
+    }
+    return 0;
+  }
+
+  /**
+   * Collect dashboard rows from list or aggregate JSON (namespace dash-api, /ajax/dashboards, etc.).
+   * Skips obvious in-widget panel objects (widgets array without full dashboard shape).
+   */
+  function extractDashboardCatalogRows(data) {
+    const map = new Map();
+    function addRow(el) {
+      if (!el || typeof el !== 'object' || Array.isArray(el)) return;
+      const id = getPayloadDashboardId(el);
+      if (!id || !String(id).trim()) return;
+      const sid = String(id).trim();
+      const full = looksLikeTeDashboardShape(el);
+      const explicitListId = el.dashboardId != null || el.dashboard_id != null;
+      const named = (typeof el.title === 'string' && el.title.trim())
+        || (typeof el.name === 'string' && el.name.trim())
+        || (typeof el.dashboardTitle === 'string' && el.dashboardTitle.trim());
+      if (!full && !explicitListId && !named) return;
+      if (!full && Array.isArray(el.widgets) && el.widgets.length && !el.template) return;
+      const title = dashboardCatalogDisplayTitle(el);
+      const modifiedMs = getDashboardRowSortTimeMs(el);
+      if (!map.has(sid)) {
+        map.set(sid, { title, modifiedMs });
+      } else {
+        const p = map.get(sid);
+        map.set(sid, {
+          title: p.title === '(untitled)' && title !== '(untitled)' ? title : p.title,
+          modifiedMs: Math.max(p.modifiedMs || 0, modifiedMs || 0)
+        });
+      }
+    }
+    function visit(node, depth) {
+      if (depth > 14 || node == null) return;
+      if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i++) visit(node[i], depth + 1);
+        return;
+      }
+      if (typeof node !== 'object') return;
+      addRow(node);
+      for (const k of Object.keys(node)) visit(node[k], depth + 1);
+    }
+    visit(data, 0);
+    return [...map.entries()].map(([id, v]) => ({ id, title: v.title, modifiedMs: v.modifiedMs || 0 }));
+  }
+
+  async function fetchDashboardCatalogForCleanup() {
+    await ensureCurrentAidForDashboard();
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const urls = [
+      withAidQuery('/namespace/dash-api/dashboard', aid),
+      withAidQuery('/ajax/dashboards', aid),
+      withAidQuery('/ajax/user/dashboards', aid),
+      withAidQuery('/ajax/settings/dashboards', aid)
+    ];
+    const merged = new Map();
+    for (const url of urls) {
+      try {
+        const resp = await ajax(url, { method: 'GET' });
+        const text = await resp.text();
+        const data = tryParseJsonText(text);
+        if (!resp.ok || data == null) {
+          log(`Dashboard cleanup list: ${url} → HTTP ${resp.status}` + (data == null && text ? ` (${classifyNonJsonAjaxBody(text).slice(0, 80)})` : ''), 'tep-log-info');
+          continue;
+        }
+        const rows = extractDashboardCatalogRows(data);
+        for (const r of rows) {
+          if (!r.id) continue;
+          const ms = typeof r.modifiedMs === 'number' ? r.modifiedMs : 0;
+          if (!merged.has(r.id)) {
+            merged.set(r.id, { title: r.title, modifiedMs: ms });
+          } else {
+            const p = merged.get(r.id);
+            merged.set(r.id, {
+              title: p.title === '(untitled)' && r.title !== '(untitled)' ? r.title : p.title,
+              modifiedMs: Math.max(p.modifiedMs || 0, ms)
+            });
+          }
+        }
+        if (rows.length) log(`Dashboard cleanup list: ${url} → ${rows.length} row(s)`, 'tep-log-ok');
+      } catch (e) {
+        log(`Dashboard cleanup list: ${url} → ${e.message}`, 'tep-log-err');
+      }
+    }
+    return [...merged.entries()].map(([id, v]) => ({ id, title: v.title, modifiedMs: v.modifiedMs || 0 }));
+  }
+
+  async function tryDeleteDashboardById(dashboardId) {
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const idEnc = encodeURIComponent(dashboardId);
+    const attempts = [
+      ['DELETE', withAidQuery(`/namespace/dash-api/dashboard/${idEnc}`, aid)],
+      ['DELETE', withAidQuery(`/namespace/dash-api/dashboard?dashboardId=${idEnc}`, aid)],
+      ['DELETE', withAidQuery(`/ajax/dashboards/${idEnc}`, aid)],
+      ['DELETE', withAidQuery(`/ajax/dashboard/${idEnc}`, aid)]
+    ];
+    for (const [method, url] of attempts) {
+      try {
+        const resp = await ajax(url, { method });
+        const text = await resp.text();
+        if (resp.ok) return { ok: true, method, url, status: resp.status, body: text.slice(0, 200) };
+        log(`Dashboard delete ${method} ${url} → ${resp.status} ${text.slice(0, 180)}`, 'tep-log-info');
+      } catch (e) {
+        log(`Dashboard delete → ${e.message}`, 'tep-log-err');
+      }
+    }
+    return { ok: false };
+  }
+
+  function setDashCleanupUiBusy(busy) {
+    const ids = ['tep-dash-cleanup-refresh', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-delete', 'tep-dash-cleanup-select-none'];
+    for (const id of ids) {
+      const el = root.querySelector('#' + id);
+      if (el) el.disabled = !!busy;
+    }
+    root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => { cb.disabled = !!busy; });
+  }
+
+  function updateDashCleanupSortButton() {
+    const btn = root.querySelector('#tep-dash-cleanup-sort');
+    if (!btn) return;
+    btn.textContent = dashCleanupSortNewestFirst ? 'Sort: newest first' : 'Sort: oldest first';
+  }
+
+  function applyDashCleanupSortOrder() {
+    dashCleanupCatalog.sort((a, b) => {
+      const ta = typeof a.modifiedMs === 'number' ? a.modifiedMs : 0;
+      const tb = typeof b.modifiedMs === 'number' ? b.modifiedMs : 0;
+      if (ta !== tb) return dashCleanupSortNewestFirst ? (tb - ta) : (ta - tb);
+      return String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' });
+    });
+  }
+
+  function toggleDashCleanupSortOrder() {
+    const checked = new Set(
+      [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')].map((b) => b.dataset.dashCleanupId).filter(Boolean)
+    );
+    dashCleanupSortNewestFirst = !dashCleanupSortNewestFirst;
+    updateDashCleanupSortButton();
+    applyDashCleanupSortOrder();
+    renderDashCleanupList();
+    for (const cb of root.querySelectorAll('.tep-dash-cleanup-cb')) {
+      const id = cb.dataset.dashCleanupId;
+      if (id && checked.has(id)) cb.checked = true;
+    }
+  }
+
+  function renderDashCleanupList() {
+    const host = root.querySelector('#tep-dash-cleanup-list');
+    if (!host) return;
+    host.textContent = '';
+    if (!dashCleanupListEverLoaded) {
+      const span = document.createElement('span');
+      span.className = 'tep-log-info';
+      span.style.display = 'block';
+      span.style.padding = '10px 12px';
+      span.textContent = 'Use “Load dashboards in account group” to fetch names and ids for this account group.';
+      host.appendChild(span);
+      return;
+    }
+    if (!dashCleanupCatalog.length) {
+      const span = document.createElement('span');
+      span.className = 'tep-log-info';
+      span.style.display = 'block';
+      span.style.padding = '10px 12px';
+      span.textContent = 'No dashboards in the merged list — try again after using the Dashboards UI in TE, or check the log for HTTP errors.';
+      host.appendChild(span);
+      return;
+    }
+    for (const row of dashCleanupCatalog) {
+      const wrap = document.createElement('div');
+      wrap.className = 'tep-dash-cleanup-row';
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'tep-dash-cleanup-cb';
+      cb.dataset.dashCleanupId = row.id;
+      const textCol = document.createElement('div');
+      textCol.className = 'tep-dash-cleanup-titles';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'tep-dash-cleanup-name';
+      nameEl.textContent = row.title;
+      const idEl = document.createElement('span');
+      idEl.className = 'tep-dash-cleanup-id';
+      idEl.textContent = row.id;
+      textCol.appendChild(nameEl);
+      textCol.appendChild(idEl);
+      label.appendChild(cb);
+      label.appendChild(textCol);
+      wrap.appendChild(label);
+      host.appendChild(wrap);
+    }
+  }
+
+  function syncDashCleanupMeta() {
+    const meta = root.querySelector('#tep-dash-cleanup-meta');
+    if (!meta) return;
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '(unknown)';
+    if (!dashCleanupListEverLoaded) {
+      meta.textContent = 'Not loaded yet · account group aid is sent as ?aid= when known.';
+      return;
+    }
+    meta.textContent = `${dashCleanupCatalog.length} dashboard(s) in list · aid=${aid}`;
+  }
+
+  async function refreshDashboardCleanupList() {
+    const meta = root.querySelector('#tep-dash-cleanup-meta');
+    if (!teInitData) {
+      toast('Session not ready — use Retry Auth', 'err');
+      return;
+    }
+    setDashCleanupUiBusy(true);
+    if (meta) meta.textContent = 'Loading dashboard list…';
+    try {
+      dashCleanupCatalog = await fetchDashboardCatalogForCleanup();
+      dashCleanupListEverLoaded = true;
+      applyDashCleanupSortOrder();
+      syncDashCleanupMeta();
+      updateDashCleanupSortButton();
+      renderDashCleanupList();
+      if (dashCleanupCatalog.length) toast(`Loaded ${dashCleanupCatalog.length} dashboard(s)`, 'ok');
+      else toast('No dashboards found — check log', 'err');
+    } catch (e) {
+      dashCleanupListEverLoaded = true;
+      if (meta) meta.textContent = 'Load failed — see log.';
+      log('Dashboard cleanup list: ' + e.message, 'tep-log-err');
+      toast('Failed to load dashboard list', 'err');
+    } finally {
+      setDashCleanupUiBusy(false);
+    }
+  }
+
+  async function bulkDeleteSelectedDashboards() {
+    const boxes = [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')];
+    const selectedIds = boxes.map((b) => b.dataset.dashCleanupId).filter(Boolean);
+    if (!selectedIds.length) {
+      toast('Check one or more dashboards to delete', 'err');
+      return;
+    }
+    const lines = selectedIds.map((id) => {
+      const row = dashCleanupCatalog.find((r) => r.id === id);
+      return ' · ' + (row ? row.title + ' — ' + id : id);
+    });
+    const preview = lines.length > 18 ? lines.slice(0, 18).join('\n') + '\n · … and ' + (lines.length - 18) + ' more' : lines.join('\n');
+    const msg = 'Permanently delete ' + selectedIds.length + ' dashboard(s) from ThousandEyes? This cannot be undone.\n\n' + preview;
+    if (!window.confirm(msg)) return;
+    setDashCleanupUiBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (const id of selectedIds) {
+      const r = await tryDeleteDashboardById(id);
+      if (r.ok) {
+        ok++;
+        log(`Dashboard deleted: ${id}`, 'tep-log-ok');
+        dashCleanupCatalog = dashCleanupCatalog.filter((row) => row.id !== id);
+      } else {
+        fail++;
+        log(`Dashboard delete failed: ${id}`, 'tep-log-err');
+      }
+    }
+    setDashCleanupUiBusy(false);
+    syncDashCleanupMeta();
+    renderDashCleanupList();
+    toast(`Delete finished: ${ok} removed, ${fail} failed`, fail ? 'err' : 'ok');
+  }
+
+  function cloneJsonDeep(obj) {
+    try {
+      return JSON.parse(JSON.stringify(obj));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** TE ViewDashboard is one object; unwrap [[[{...}]]] or [{...}] to an object. */
+  function unwrapIfSingleElementArray(data) {
+    let v = data;
+    while (Array.isArray(v) && v.length === 1 && v[0] != null && typeof v[0] === 'object') {
+      v = v[0];
+    }
+    return v;
+  }
+
+  function looksLikeTeDashboardShape(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+    if (o.template != null && typeof o.template === 'object') return true;
+    if (Array.isArray(o.widgets)) return true;
+    if (typeof o.title === 'string' && (o.template != null || o.defaultTimespan != null)) return true;
+    return false;
+  }
+
+  function pickDashboardFromArray(arr) {
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const hit = arr.find((x) => looksLikeTeDashboardShape(x));
+    if (hit) return hit;
+    const first = arr[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) return first;
+    return null;
+  }
+
+  /** Turn pasted/saved backup into one dashboard object for POST ViewDashboard. */
+  function normalizeDashRestoreRoot(raw, depth) {
+    if (depth == null) depth = 0;
+    if (depth > 10) return null;
+    let v = cloneJsonDeep(raw);
+    if (v == null) return null;
+    v = unwrapIfSingleElementArray(v);
+    if (Array.isArray(v)) {
+      const picked = pickDashboardFromArray(v);
+      if (!picked) return null;
+      return normalizeDashRestoreRoot(picked, depth + 1);
+    }
+    if (typeof v !== 'object') return null;
+    if (v.data != null) {
+      const d = v.data;
+      if (Array.isArray(d)) {
+        const picked = pickDashboardFromArray(d);
+        if (picked) return normalizeDashRestoreRoot(picked, depth + 1);
+      } else if (typeof d === 'object' && !Array.isArray(d)) {
+        return normalizeDashRestoreRoot(d, depth + 1);
+      }
+    }
+    if (v.result != null && typeof v.result === 'object') {
+      return normalizeDashRestoreRoot(v.result, depth + 1);
+    }
+    for (const key of ['dashboard', 'payload', 'view', 'model']) {
+      const inner = v[key];
+      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+        return normalizeDashRestoreRoot(inner, depth + 1);
+      }
+    }
+    for (const key of ['dashboards', 'items', 'results', 'content', 'records']) {
+      const arr = v[key];
+      if (Array.isArray(arr) && arr.length) {
+        const picked = pickDashboardFromArray(arr);
+        if (picked) return normalizeDashRestoreRoot(picked, depth + 1);
+      }
+    }
+    return v;
+  }
+
+  /**
+   * TE dashboards often store layout under `template.widgets` (not root `widgets`).
+   * Returns the top-level widget array for walking.
+   */
+  function getDashboardWidgetsRootArray(dash) {
+    if (!dash || typeof dash !== 'object' || Array.isArray(dash)) return [];
+    if (Array.isArray(dash.widgets)) return dash.widgets;
+    if (dash.template && typeof dash.template === 'object' && Array.isArray(dash.template.widgets)) {
+      return dash.template.widgets;
+    }
+    return [];
+  }
+
+  /** Subtitle for a leaf panel (metric code, config title, type, etc.). */
+  function inferLeafPanelDetailLabel(node) {
+    if (!node || typeof node !== 'object') return '';
+    const cfg = node.config;
+    if (cfg && typeof cfg === 'object') {
+      if (typeof cfg.metric === 'string' && cfg.metric.trim()) return cfg.metric.trim();
+      if (cfg.title != null && String(cfg.title).trim()) return String(cfg.title).trim();
+      if (cfg.name != null && String(cfg.name).trim()) return String(cfg.name).trim();
+    }
+    const vc = node.viewConfig;
+    if (vc && typeof vc === 'object' && vc.title != null && String(vc.title).trim()) {
+      return String(vc.title).trim();
+    }
+    if (node.meta && typeof node.meta === 'object') {
+      const d = node.meta.description != null && String(node.meta.description).trim();
+      if (d) return d.length > 96 ? d.slice(0, 96) + '…' : d;
+    }
+    return String(node.type || node.widgetType || '').trim();
+  }
+
+  /**
+   * Leaf panels with a display label: ancestor `meta.title` (section) + leaf detail (e.g. NAS metric).
+   * Matches TE exports where tiles have no `title` but sit under a titled group row.
+   */
+  function flattenDashboardPanelEntries(dash) {
+    const out = [];
+    function walk(node, sectionTitle) {
+      if (!node || typeof node !== 'object') return;
+      let nextSection = sectionTitle && String(sectionTitle).trim() ? String(sectionTitle).trim() : '';
+      const meta = node.meta;
+      if (meta && typeof meta === 'object') {
+        const mt = meta.title != null && String(meta.title).trim();
+        if (mt) nextSection = String(meta.title).trim();
+      }
+      if (!nextSection && node.title != null && String(node.title).trim()) {
+        nextSection = String(node.title).trim();
+      }
+      if (!nextSection && node.name != null && String(node.name).trim()) {
+        nextSection = String(node.name).trim();
+      }
+      const nested = Array.isArray(node.widgets) ? node.widgets : null;
+      if (nested && nested.length) {
+        for (let i = 0; i < nested.length; i++) walk(nested[i], nextSection);
+        return;
+      }
+      const detail = inferLeafPanelDetailLabel(node);
+      let displayName = '';
+      if (nextSection && detail) displayName = nextSection + ' · ' + detail;
+      else displayName = nextSection || detail;
+      if (!displayName) {
+        const typ = String(node.type || 'panel').trim();
+        const tid = node.widgetId != null ? String(node.widgetId) : '';
+        displayName = typ + (tid ? ' · id ' + tid : '');
+      }
+      out.push({ node, displayName });
+    }
+    const roots = getDashboardWidgetsRootArray(dash);
+    for (let i = 0; i < roots.length; i++) walk(roots[i], '');
+    return out;
+  }
+
+  /**
+   * Leaf widget nodes only (deepest panels). Parent rows with nested `widgets[]` are skipped;
+   * children are visited depth-first — matches TE “numbers” groups with inner tiles.
+   */
+  function flattenDashboardWidgetsForRestore(dash) {
+    return flattenDashboardPanelEntries(dash).map((e) => e.node);
+  }
+
+  /** Update collapsed summary line for backup or restore JSON (valid / invalid / empty). */
+  function refreshDashboardJsonSummary(which) {
+    const isBackup = which === 'backup';
+    const ta = root.querySelector(isBackup ? '#tep-dash-json' : '#tep-dash-restore-json');
+    const sumEl = root.querySelector(isBackup ? '#tep-dash-json-summary' : '#tep-dash-restore-json-summary');
+    if (!ta || !sumEl) return;
+    const raw = ta.value;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      sumEl.textContent = isBackup
+        ? 'No JSON yet — expand to edit'
+        : 'No JSON yet — expand to paste or use Open import file…';
+      sumEl.className = 'tep-dash-json-sum tep-dash-json-sum-empty';
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e) {
+      const msg = (e && e.message) ? String(e.message) : 'parse error';
+      sumEl.textContent = 'Invalid JSON — expand to fix · ' + msg.slice(0, 96);
+      sumEl.className = 'tep-dash-json-sum tep-dash-json-sum-err';
+      return;
+    }
+    let bytes = raw.length;
+    try {
+      bytes = new Blob([raw]).size;
+    } catch (_) { /* */ }
+    const sizeLabel = bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KB' : bytes + ' B';
+    let sub = '';
+    try {
+      const norm = normalizeDashRestoreRoot(parsed);
+      if (norm && typeof norm === 'object' && !Array.isArray(norm)) {
+        const t = norm.title != null ? String(norm.title) : (norm.name != null ? String(norm.name) : '');
+        const panelCount = flattenDashboardWidgetsForRestore(norm).length;
+        const topRows = getDashboardWidgetsRootArray(norm).length;
+        const id = norm.dashboardId ?? norm.dashboard_id ?? norm.id;
+        const bits = [];
+        if (t) bits.push('title: "' + t.replace(/"/g, '\'').slice(0, 56) + (t.length > 56 ? '…' : '') + '"');
+        if (panelCount) bits.push(panelCount + ' panel' + (panelCount === 1 ? '' : 's'));
+        else if (topRows) bits.push(topRows + ' top-level row' + (topRows === 1 ? '' : 's'));
+        if (id != null && String(id) !== '') bits.push('id ' + String(id).slice(0, 16));
+        sub = bits.length ? bits.join(' · ') : 'dashboard-shaped object';
+      } else if (Array.isArray(parsed)) {
+        sub = 'JSON array[' + parsed.length + '] (restore expects one dashboard object)';
+      } else if (parsed != null && typeof parsed === 'object') {
+        const keys = Object.keys(parsed);
+        sub = 'object — keys: ' + keys.slice(0, 10).join(', ') + (keys.length > 10 ? '…' : '') + ' (not a recognized dashboard root)';
+      } else {
+        sub = 'JSON ' + typeof parsed;
+      }
+    } catch (_) {
+      sub = (parsed != null && typeof parsed === 'object') ? topLevelKeysLabel(parsed) : String(typeof parsed);
+    }
+    sumEl.textContent = 'Valid JSON · ' + sizeLabel + ' · ' + sub;
+    sumEl.className = 'tep-dash-json-sum tep-dash-json-sum-ok';
+  }
+
+  /**
+   * TE POST /namespace/dash-api/dashboard returns 400 "Dashboard already has an id." if the JSON body
+   * still carries root id fields — the dashboard id for updates must be only in ?dashboardId=.
+   */
+  function stripRootIdsForDashNamespacePost(obj) {
+    const o = cloneJsonDeep(obj);
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    delete o.dashboardId;
+    delete o.dashboard_id;
+    delete o.id;
+    delete o._id;
+    delete o.mongoId;
+    return o;
+  }
+
+  function buildDashRestorePayloadCandidates(normObj) {
+    const out = [];
+    const pushUniq = (obj) => {
+      if (obj == null) return;
+      const s = JSON.stringify(obj);
+      if (s && out.indexOf(s) < 0) out.push(s);
+    };
+    if (!normObj || typeof normObj !== 'object' || Array.isArray(normObj)) return out;
+    pushUniq(stripRootIdsForDashNamespacePost(normObj));
+    if (normObj.dashboard && typeof normObj.dashboard === 'object' && normObj.template == null && normObj.title == null) {
+      pushUniq(stripRootIdsForDashNamespacePost(normObj.dashboard));
+    }
+    return out;
+  }
+
+  const DASH_RESTORE_NAME_CONFLICT_MAX = 24;
+
+  function isLikelyDuplicateDashNameError(status, text) {
+    if (status !== 400 && status !== 409 && status !== 422) return false;
+    const j = tryParseJsonText(text || '');
+    const parts = [];
+    if (j && typeof j === 'object') {
+      if (j.message != null) parts.push(String(j.message));
+      if (j.error != null) parts.push(String(j.error));
+      if (j.detail != null) parts.push(String(j.detail));
+    }
+    parts.push(String(text || '').slice(0, 900));
+    const s = parts.join(' ').toLowerCase();
+    if (/already\s+exists?|already\s+exist|duplicate|unique|name\s+taken|conflict|same\s+(name|title)/i.test(s)) return true;
+    if (s.includes('name') && (s.includes('exist') || s.includes('taken') || s.includes('use'))) return true;
+    if (s.includes('title') && (s.includes('exist') || s.includes('taken') || s.includes('duplicate'))) return true;
+    return false;
+  }
+
+  function bumpDashboardTitleField(obj) {
+    const c = cloneJsonDeep(obj);
+    if (!c || typeof c !== 'object' || Array.isArray(c)) return obj;
+    const field = typeof c.title === 'string' ? 'title' : (typeof c.name === 'string' ? 'name' : null);
+    if (!field) {
+      c.title = 'Dashboard (2)';
+      return c;
+    }
+    const t = String(c[field]);
+    const m = t.match(/^(.+?)\s*\((\d+)\)\s*$/);
+    if (m) {
+      const n = parseInt(m[2], 10);
+      c[field] = `${m[1].trim()} (${Number.isFinite(n) ? n + 1 : 2})`;
+    } else {
+      c[field] = `${t} (2)`;
+    }
+    return c;
+  }
+
+  function normalizeDashboardVAgentIdList(ids) {
+    return (ids || []).map((x) => (typeof x === 'number' ? x : (Number.isFinite(Number(x)) ? Number(x) : x)));
+  }
+
+  /** Checkbox Set may not match portal `agents[].agentId` if one side is string vs number. */
+  function restoreAgentSelectionSetHas(set, agentId) {
+    if (!set || agentId == null) return false;
+    if (set.has(agentId)) return true;
+    const s = String(agentId);
+    if (set.has(s)) return true;
+    const n = Number(agentId);
+    if (Number.isFinite(n) && set.has(n)) return true;
+    return false;
+  }
+
+  function addAgentIdToSelectionSet(set, agentId) {
+    if (!set || agentId == null) return;
+    set.add(agentId);
+    set.add(String(agentId));
+    const n = Number(agentId);
+    if (Number.isFinite(n)) set.add(n);
+  }
+
+  function removeAgentIdFromSelectionSet(set, agentId) {
+    if (!set || agentId == null) return;
+    set.delete(agentId);
+    set.delete(String(agentId));
+    const n = Number(agentId);
+    if (Number.isFinite(n)) set.delete(n);
+  }
+
+  /** Rewrite vAgentIds / agentSet / agentIds under obj (recursive). ids=[] clears; non-empty replaces every matching array. */
+  function rewriteAllVAgentLikeArrays(obj, ids, depth) {
+    if (depth == null) depth = 0;
+    if (depth > 28 || obj == null || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      for (let i = 0; i < obj.length; i++) rewriteAllVAgentLikeArrays(obj[i], ids, depth + 1);
+      return;
+    }
+    const has = Array.isArray(ids) && ids.length > 0;
+    const list = () => normalizeDashboardVAgentIdList(ids);
+    if (Array.isArray(obj.vAgentIds)) obj.vAgentIds = has ? list() : [];
+    if (Array.isArray(obj.agentIds)) obj.agentIds = has ? list() : [];
+    if (Array.isArray(obj.physicalAgentIds)) obj.physicalAgentIds = [];
+    if (obj.agentSet && typeof obj.agentSet === 'object') {
+      if (Array.isArray(obj.agentSet.vAgentIds)) obj.agentSet.vAgentIds = has ? list() : [];
+      if (Array.isArray(obj.agentSet.agentIds)) obj.agentSet.agentIds = has ? list() : [];
+      if (Array.isArray(obj.agentSet.agents)) obj.agentSet.agents = [];
+    }
+    if (Array.isArray(obj.agents) && obj.agents.length && typeof obj.agents[0] === 'object') obj.agents = [];
+    for (const k of Object.keys(obj)) rewriteAllVAgentLikeArrays(obj[k], ids, depth + 1);
+  }
+
+  /** Walk the full dashboard JSON and delete every own `filters` property (widget map or array form). */
+  function stripAllWidgetFiltersFromDashboardJson(obj, depth) {
+    if (depth == null) depth = 0;
+    if (depth > 42 || obj === null || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      for (let i = 0; i < obj.length; i++) stripAllWidgetFiltersFromDashboardJson(obj[i], depth + 1);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(obj, 'filters')) delete obj.filters;
+    for (const k of Object.keys(obj)) stripAllWidgetFiltersFromDashboardJson(obj[k], depth + 1);
+  }
+
+  function applyDashRestoreTitle(dash, titleTrim) {
+    if (!dash || typeof dash !== 'object' || !titleTrim) return;
+    if (typeof dash.title === 'string') dash.title = titleTrim;
+    else if (typeof dash.name === 'string') dash.name = titleTrim;
+    else dash.title = titleTrim;
+  }
+
+  function applyDashRestoreAgentOptions(dash, opts) {
+    const mode = opts && opts.mode ? opts.mode : 'keep';
+    if (!dash || typeof dash !== 'object' || mode === 'keep') return;
+    if (mode === 'strip') {
+      rewriteAllVAgentLikeArrays(dash, [], 0);
+      stripAllWidgetFiltersFromDashboardJson(dash, 0);
+    }
+  }
+
+  function syncDashRestoreAgentUi() {
+    const modeEl = root.querySelector('#tep-dash-restore-agent-mode');
+    const wrap = root.querySelector('#tep-dash-restore-agents-wrap');
+    const note = root.querySelector('#tep-dash-restore-agent-note');
+    if (!modeEl || !wrap) return;
+    const mode = modeEl.value;
+    const show = mode === 'strip';
+    wrap.style.display = show ? '' : 'none';
+    if (note && mode === 'strip') {
+      note.textContent = 'All widget `filters` keys are removed from the JSON, and virtual-agent fields are cleared.';
+    }
+  }
+
+  async function restoreDashboardFromEditor() {
+    const ta = root.querySelector('#tep-dash-restore-json');
+    if (!ta || !ta.value.trim()) {
+      toast('Import or paste dashboard JSON on the Restore tab first', 'err');
+      return;
+    }
+    const titleEl = root.querySelector('#tep-dash-restore-title');
+    const titleTrim = titleEl && titleEl.value ? titleEl.value.trim() : '';
+    const modeEl = root.querySelector('#tep-dash-restore-agent-mode');
+    const mode = (modeEl && modeEl.value) || 'keep';
+    let body;
+    try {
+      body = JSON.parse(ta.value);
+    } catch (e) {
+      toast('Invalid JSON: ' + e.message, 'err');
+      return;
+    }
+    const normRaw = normalizeDashRestoreRoot(body);
+    if (!normRaw) {
+      const hint = Array.isArray(body)
+        ? `root is Array(len=${body.length})`
+        : (body && typeof body === 'object' ? `root keys: ${Object.keys(body).slice(0, 12).join(', ')}` : String(typeof body));
+      toast('Could not find one dashboard object in JSON (nested arrays / wrappers). See log for shape hint.', 'err');
+      log('Restore: normalizeDashRestoreRoot failed — ' + hint + '. Paste GET /namespace/dash-api/dashboard body or unwrap to { title, template, … }.', 'tep-log-err');
+      return;
+    }
+    let confirmMsg = 'Restore this backup to ThousandEyes? ';
+    if (titleTrim) confirmMsg += `Title: “${titleTrim}”. `;
+    if (mode === 'strip') confirmMsg += 'All widget filters removed and virtual-agent fields cleared in the JSON. ';
+    else confirmMsg += 'Agents and filters: left as in the backup. ';
+    confirmMsg += 'Continue?';
+    if (!confirm(confirmMsg)) return;
+    const norm = cloneJsonDeep(normRaw);
+    if (titleTrim) applyDashRestoreTitle(norm, titleTrim);
+    applyDashRestoreAgentOptions(norm, { mode });
+    log(`Restore: applying options — mode=${mode}` + (titleTrim ? `, title override` : ''), 'tep-log-info');
+
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const fromBody = norm.dashboardId ?? norm.dashboard_id ?? norm.id;
+    const id = fromBody != null && String(fromBody) !== '' ? String(fromBody) : null;
+    const locId = extractDashboardIdFromLocation();
+
+    const payloadCandidates = buildDashRestorePayloadCandidates(norm);
+    if (!payloadCandidates.length) {
+      toast('Could not build restore payload', 'err');
+      return;
+    }
+
+    const namespaceAttempts = [];
+    if (id) {
+      namespaceAttempts.push(['POST', withAidQuery(`/namespace/dash-api/dashboard/${encodeURIComponent(id)}`, aid)]);
+      namespaceAttempts.push(['POST', withAidQuery(`/namespace/dash-api/dashboard?dashboardId=${encodeURIComponent(id)}`, aid)]);
+    }
+    if (locId && locId !== id) {
+      namespaceAttempts.push(['POST', withAidQuery(`/namespace/dash-api/dashboard/${encodeURIComponent(locId)}`, aid)]);
+      namespaceAttempts.push(['POST', withAidQuery(`/namespace/dash-api/dashboard?dashboardId=${encodeURIComponent(locId)}`, aid)]);
+    }
+    namespaceAttempts.push(['POST', withAidQuery('/namespace/dash-api/dashboard', aid)]);
+
+    for (const [method, url] of namespaceAttempts) {
+      for (const initialPayload of payloadCandidates) {
+        let obj;
+        try {
+          obj = JSON.parse(initialPayload);
+        } catch (_) {
+          log('Restore: skipped invalid payload candidate', 'tep-log-err');
+          continue;
+        }
+        for (let bump = 0; bump <= DASH_RESTORE_NAME_CONFLICT_MAX; bump++) {
+          try {
+            const payload = JSON.stringify(obj);
+            const resp = await ajax(url, { method, body: payload });
+            const text = await resp.text();
+            if (resp.ok) {
+              toast('Restore request accepted', 'ok');
+              const label = obj.title != null ? obj.title : (obj.name != null ? obj.name : '');
+              log(`Restore OK ${method} ${url}` + (bump ? ` · final title/name: ${label}` : ''), 'tep-log-ok');
+              return;
+            }
+            if (bump < DASH_RESTORE_NAME_CONFLICT_MAX && isLikelyDuplicateDashNameError(resp.status, text)) {
+              obj = bumpDashboardTitleField(obj);
+              const nextLabel = obj.title != null ? obj.title : (obj.name != null ? obj.name : '');
+              log(`Restore: duplicate name/title (${resp.status}) → retry with "${nextLabel}"`, 'tep-log-info');
+              continue;
+            }
+            log(`Restore ${method} ${url} → ${resp.status} ${text.slice(0, 280)}`, 'tep-log-info');
+            break;
+          } catch (e) {
+            log(`Restore ${method} ${url} → ${e.message}`, 'tep-log-err');
+            break;
+          }
+        }
+      }
+    }
+
+    const ajaxId = id || locId;
+    const ajaxAttempts = [];
+    if (ajaxId) {
+      ajaxAttempts.push(['PUT', withAidQuery(`/ajax/dashboards/${ajaxId}`, aid)]);
+      ajaxAttempts.push(['POST', withAidQuery(`/ajax/dashboards/${ajaxId}`, aid)]);
+      ajaxAttempts.push(['PUT', withAidQuery(`/ajax/dashboard/${ajaxId}`, aid)]);
+      ajaxAttempts.push(['POST', withAidQuery(`/ajax/dashboard/${ajaxId}`, aid)]);
+    }
+    ajaxAttempts.push(['POST', withAidQuery('/ajax/dashboards', aid)]);
+    for (const [method, url] of ajaxAttempts) {
+      try {
+        const resp = await ajax(url, { method, body: JSON.stringify(norm) });
+        const text = await resp.text();
+        if (resp.ok) {
+          toast('Restore request accepted', 'ok');
+          log(`Restore OK ${method} ${url}`, 'tep-log-ok');
+          return;
+        }
+        log(`Restore ${method} ${url} → ${resp.status} ${text.slice(0, 280)}`, 'tep-log-info');
+      } catch (e) {
+        log(`Restore ${method} ${url} → ${e.message}`, 'tep-log-err');
+      }
+    }
+    toast('Restore failed — see log for TE responses', 'err');
   }
 
   function stopPersistentIntercept() { /* no-op now */ }
@@ -658,9 +2772,26 @@
       // Load account groups and populate dropdown
       await loadAccountGroups();
 
-      setStatus(`Authenticated — loading agents…`, 'ok');
-      log(`Session OK. Loading agents…`, 'tep-log-ok');
-      loadAgents();
+      if (isDashboardToolsPage()) {
+        await ensureCurrentAidForDashboard();
+        if (teInitData._currentAid != null && teInitData._currentAid !== '') {
+          log(`Dashboard mode: using account group aid=${teInitData._currentAid} for API calls.`, 'tep-log-ok');
+        } else {
+          log('Dashboard mode: aid still unknown — dashboard probes run without ?aid= (may 404).', 'tep-log-err');
+        }
+        setStatus('Authenticated — dashboard tools', 'ok');
+        log('Dashboard mode: session OK; loading portal agents for restore…', 'tep-log-ok');
+        try {
+          await loadAgents();
+        } catch (e) {
+          log('Dashboard mode: optional agent load failed — ' + e.message, 'tep-log-info');
+        }
+        refreshDashboardEditor();
+      } else {
+        setStatus('Authenticated — loading agents…', 'ok');
+        log('Session OK. Loading agents…', 'tep-log-ok');
+        loadAgents();
+      }
     } catch (e) {
       setStatus('Auth failed — ' + e.message, 'err');
       log('Error: ' + e.message, 'tep-log-err');
@@ -695,6 +2826,89 @@
     } catch { /* */ }
 
     log('No teAccount cookie found. Aid will be auto-detected from agents.', 'tep-log-info');
+  }
+
+  function inferAidFromTeInitData(data) {
+    if (!data || typeof data !== 'object') return null;
+    const tryVal = (v) => {
+      if (v == null) return null;
+      const s = String(v).trim();
+      if (/^\d+$/.test(s) && s !== '0') return s;
+      return null;
+    };
+    const direct = [
+      data.aid, data.accountAid, data.accountGroupId, data.accountGroupID,
+      data.activeAid, data.currentAid, data.defaultAid, data.primaryAid,
+      data.organizationAid, data.orgAid
+    ];
+    for (const v of direct) {
+      const t = tryVal(v);
+      if (t) return t;
+    }
+    if (data.user && typeof data.user === 'object') {
+      for (const v of [data.user.aid, data.user.accountAid, data.user.defaultAid, data.user.activeAid]) {
+        const t = tryVal(v);
+        if (t) return t;
+      }
+    }
+    if (data.account && typeof data.account === 'object') {
+      for (const v of [data.account.aid, data.account.id, data.account.accountGroupId]) {
+        const t = tryVal(v);
+        if (t) return t;
+      }
+    }
+    for (const k of Object.keys(data)) {
+      if (!/aid|accountgroup|orgid/i.test(k)) continue;
+      const t = tryVal(data[k]);
+      if (t) return t;
+    }
+    return null;
+  }
+
+  /**
+   * Dashboard mode skips loadAgents(), which used to infer _currentAid from virtual-agents.
+   * Without aid, many /ajax URLs return HTML 404 shells — resolve aid before dashboard probes.
+   */
+  async function ensureCurrentAidForDashboard() {
+    if (!teInitData || typeof teInitData !== 'object') return;
+    if (teInitData._currentAid != null && teInitData._currentAid !== '') return;
+
+    const fromInit = inferAidFromTeInitData(teInitData);
+    if (fromInit) {
+      teInitData._currentAid = parseInt(fromInit, 10) || fromInit;
+      log(`Account group from /ajax/settings/tests/init: ${teInitData._currentAid}`, 'tep-log-ok');
+      dashConsole('info', 'resolved aid from init JSON', { aid: teInitData._currentAid });
+      return;
+    }
+
+    log('Resolving account group via /ajax/settings/tests/virtual-agents (dashboard mode)…', 'tep-log-info');
+    try {
+      const vResp = await ajax('/ajax/settings/tests/virtual-agents');
+      if (!vResp.ok) {
+        log(`virtual-agents (aid lookup) → HTTP ${vResp.status}`, 'tep-log-info');
+        return;
+      }
+      const vData = await vResp.json();
+      const vAgents = vData.vAgents || vData.virtualAgents || (Array.isArray(vData) ? vData : []);
+      if (!vAgents.length) {
+        log('virtual-agents: empty; cannot infer aid.', 'tep-log-info');
+        return;
+      }
+      const aidCounts = {};
+      for (const a of vAgents) {
+        if (a.primaryAid != null) aidCounts[a.primaryAid] = (aidCounts[a.primaryAid] || 0) + 1;
+      }
+      const sorted = Object.entries(aidCounts).sort((a, b) => b[1] - a[1]);
+      if (sorted.length) {
+        teInitData._currentAid = parseInt(sorted[0][0], 10) || sorted[0][0];
+        log(`Account group auto-detected (virtual-agents): ${teInitData._currentAid}`, 'tep-log-ok');
+        dashConsole('info', 'resolved aid from virtual-agents', { aid: teInitData._currentAid });
+      } else {
+        log('virtual-agents: no primaryAid on agents; cannot infer aid.', 'tep-log-info');
+      }
+    } catch (e) {
+      log('ensureCurrentAidForDashboard: ' + e.message, 'tep-log-err');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -818,16 +3032,33 @@
         return (a.agentName || '').localeCompare(b.agentName || '');
       });
       renderAgents();
-      setStatus(`Authenticated — ${agents.length} agent(s) loaded`, 'ok');
+      if (isDashboardToolsPage()) {
+        setStatus(`Dashboard — ${agents.length} portal agent(s) loaded`, 'ok');
+      } else {
+        setStatus(`Authenticated — ${agents.length} agent(s) loaded`, 'ok');
+      }
     } catch (e) {
       agentsBox.innerHTML = `<span class="tep-log-err">Error: ${e.message}</span>`;
     }
   }
 
-  function renderAgents(filter) {
+  /**
+   * Shared Enterprise / Cloud grouped picker (same pattern as Create Tests).
+   * @param {HTMLElement|null} boxEl
+   * @param {string} filter
+   * @param {Set} selectionSet agentId membership
+   * @param {{ emptyText?: string, noAgentsText?: string }} opts
+   */
+  function renderAgentPickerSection(boxEl, filter, selectionSet, opts) {
+    const options = opts || {};
+    if (!boxEl) return;
     const q = (filter || '').toLowerCase();
+    if (!agents.length) {
+      boxEl.innerHTML = `<span class="tep-log-info">${options.noAgentsText || 'Agents will load after auth…'}</span>`;
+      return;
+    }
     const filtered = q
-      ? agents.filter(a =>
+      ? agents.filter((a) =>
           (a.agentName || '').toLowerCase().includes(q) ||
           (a.location || '').toLowerCase().includes(q) ||
           (a.agentType || '').toLowerCase().includes(q)
@@ -835,14 +3066,14 @@
       : agents;
 
     if (!filtered.length) {
-      agentsBox.innerHTML = '<span class="tep-log-info">No agents match filter.</span>';
+      boxEl.innerHTML = `<span class="tep-log-info">${options.emptyText || 'No agents match filter.'}</span>`;
       return;
     }
 
-    const enterprise = filtered.filter(a => a.agentType === 'Enterprise');
-    const cloud = filtered.filter(a => a.agentType !== 'Enterprise');
+    const enterprise = filtered.filter((a) => a.agentType === 'Enterprise');
+    const cloud = filtered.filter((a) => a.agentType !== 'Enterprise');
 
-    agentsBox.innerHTML = '';
+    boxEl.innerHTML = '';
 
     const renderSection = (title, list, defaultOpen) => {
       const section = document.createElement('div');
@@ -859,10 +3090,10 @@
         header.querySelector('.tep-section-arrow').textContent = open ? '▶' : '▼';
       });
 
-      list.forEach(agent => {
+      list.forEach((agent) => {
         const item = document.createElement('label');
         item.className = 'tep-agent-item';
-        const checked = selectedAgentIds.has(agent.agentId) ? 'checked' : '';
+        const checked = restoreAgentSelectionSetHas(selectionSet, agent.agentId) ? 'checked' : '';
         const statusDot = agent.agentType === 'Enterprise'
           ? `<span class="tep-agent-status ${agent.status}" title="${agent.status}"></span>`
           : '';
@@ -874,20 +3105,27 @@
         `;
         const cb = item.querySelector('input');
         cb.addEventListener('change', () => {
-          if (cb.checked) selectedAgentIds.add(agent.agentId);
-          else selectedAgentIds.delete(agent.agentId);
+          if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
+          else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
         });
         body.appendChild(item);
       });
 
       section.appendChild(header);
       section.appendChild(body);
-      agentsBox.appendChild(section);
+      boxEl.appendChild(section);
     };
 
     const hasFilter = !!q;
     if (enterprise.length) renderSection('🏢 Enterprise Agents', enterprise, true);
     if (cloud.length) renderSection('☁️ Cloud Agents', cloud, hasFilter || false);
+  }
+
+  function renderAgents(filter) {
+    renderAgentPickerSection(agentsBox, filter, selectedAgentIds, {
+      emptyText: 'No agents match filter.',
+      noAgentsText: 'Agents will load after auth…'
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -1115,8 +3353,13 @@
     return '';
   }
 
-  async function loadTests() {
-    testListEl.innerHTML = '<span class="tep-log-info">Loading tests…</span>';
+  async function loadTests(opts) {
+    const o = (opts && typeof opts === 'object') ? opts : {};
+    const quiet = !!o.quiet;
+    const skipEnrich = !!o.skipEnrich;
+    if (!quiet) {
+      testListEl.innerHTML = '<span class="tep-log-info">Loading tests…</span>';
+    }
     allTests = [];
 
     const endpoints = [
@@ -1171,10 +3414,18 @@
 
     if (!found) {
       log('Could not find test list endpoint. Check log above.', 'tep-log-err');
-      testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
+      if (!quiet) {
+        testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
+      } else {
+        toast('Could not load portal tests — see log', 'err');
+      }
     } else {
-      renderTests();
-      enrichTestsWithAgents();
+      if (!quiet) {
+        renderTests();
+        if (!skipEnrich) enrichTestsWithAgents();
+      } else {
+        log(`Loaded ${allTests.length} portal test(s) (quiet)`, 'tep-log-ok');
+      }
     }
   }
 
@@ -1859,38 +4110,10 @@
     };
   }
 
-  function buildDnsServerBody(name, target, interval, vAgentIds, aid, dnsServers) {
-    const domain = target.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
-    return {
-      ...baseBody(name, vAgentIds, aid),
-      freqDns: interval,
-      domain: domain,
-      dnsQueryClass: 'IN',
-      dnsTransportProtocol: 'UDP',
-      recursiveQueries: 1,
-      testType: 'DnsServer',
-      servers: (dnsServers || []).map(s => ({ serverName: s }))
-    };
-  }
-
-  function buildDnsTraceBody(name, target, interval, vAgentIds, aid) {
-    const domain = target.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
-    return {
-      ...baseBody(name, vAgentIds, aid),
-      freqDns: interval,
-      domain: domain,
-      dnsQueryClass: 'IN',
-      dnsTransportProtocol: 'UDP',
-      testType: 'DnsTrace'
-    };
-  }
-
   const TE_TYPE_MAP = {
     'http-server':     { apiPath: 'http-server',     buildBody: buildHttpServerBody },
     'agent-to-server': { apiPath: 'network',          buildBody: buildAgentToServerBody },
-    'page-load':       { apiPath: 'page-load',       buildBody: buildPageLoadBody },
-    'dns-server':      { apiPath: 'dns-server',      buildBody: buildDnsServerBody },
-    'dns-trace':       { apiPath: 'dns-trace',       buildBody: buildDnsTraceBody }
+    'page-load':       { apiPath: 'page-load',       buildBody: buildPageLoadBody }
   };
 
   // ---------------------------------------------------------------------------
@@ -1985,24 +4208,57 @@
   // Log toggle
   $('#tep-log-toggle').addEventListener('click', () => {
     const btn = $('#tep-log-toggle');
-    const log = $('#tep-log');
+    const logPanel = $('#tep-log');
     btn.classList.toggle('open');
-    log.classList.toggle('open');
+    logPanel.classList.toggle('open');
   });
 
-  // Top-level view tab switcher
-  root.querySelectorAll('.tep-view-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      root.querySelectorAll('.tep-view-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      root.querySelectorAll('.tep-view-panel').forEach(p => p.classList.remove('active'));
-      const panel = $(`#tep-panel-${tab.dataset.view}`);
-      if (panel) panel.classList.add('active');
-      // Auto-load tests when switching to manage tab
-      if (tab.dataset.view === 'manage' && allTests.length === 0 && teInitData) {
-        loadTests();
+  $('#tep-log-copy').addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const text = (logEl.innerText || '').trim();
+    if (!text) {
+      toast('Log is empty', 'err');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Log copied to clipboard', 'ok');
+    } catch (_) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        toast('Log copied to clipboard', 'ok');
+      } catch (e2) {
+        toast('Copy failed — open Log, select all, copy manually', 'err');
       }
-    });
+      ta.remove();
+    }
+  });
+
+  // Top-level view tab switcher (delegated — tabs differ on /dashboard)
+  root.querySelector('#tep-view-tabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.tep-view-tab');
+    if (!tab || !tab.dataset.view) return;
+    root.querySelectorAll('#tep-view-tabs .tep-view-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    root.querySelectorAll('.tep-view-panel').forEach(p => p.classList.remove('active'));
+    const panel = root.querySelector(`#tep-panel-${tab.dataset.view}`);
+    if (panel) panel.classList.add('active');
+    if (tab.dataset.view === 'dashboard' && tab.dataset.dashTab) {
+      const dashSub = tab.dataset.dashTab;
+      root.querySelectorAll('.tep-dash-tab-panel').forEach((p) => p.classList.remove('active'));
+      const subPanel = root.querySelector('#tep-dash-panel-' + dashSub);
+      if (subPanel) subPanel.classList.add('active');
+    }
+    if (tab.dataset.view === 'manage' && allTests.length === 0 && teInitData) {
+      loadTests();
+    }
   });
 
 
@@ -2081,6 +4337,90 @@
     bulkInsessionLabel.style.display = bulkProtocol.value.startsWith('TCP') ? 'flex' : 'none';
   });
   $('#tep-bulk-apply').addEventListener('click', bulkApply);
+
+  if (isDashboardToolsPage()) {
+    $('#tep-dash-refresh').addEventListener('click', () => { refreshDashboardEditor(); });
+    $('#tep-dash-download').addEventListener('click', downloadDashboardBackup);
+    const cleanupRefresh = root.querySelector('#tep-dash-cleanup-refresh');
+    if (cleanupRefresh) cleanupRefresh.addEventListener('click', () => { refreshDashboardCleanupList(); });
+    const cleanupSort = root.querySelector('#tep-dash-cleanup-sort');
+    if (cleanupSort) cleanupSort.addEventListener('click', () => { toggleDashCleanupSortOrder(); });
+    const cleanupNone = root.querySelector('#tep-dash-cleanup-select-none');
+    if (cleanupNone) {
+      cleanupNone.addEventListener('click', () => {
+        root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => { cb.checked = false; });
+      });
+    }
+    const cleanupDel = root.querySelector('#tep-dash-cleanup-delete');
+    if (cleanupDel) cleanupDel.addEventListener('click', () => { bulkDeleteSelectedDashboards(); });
+    updateDashCleanupSortButton();
+    syncDashCleanupMeta();
+    renderDashCleanupList();
+    $('#tep-dash-restore').addEventListener('click', () => { restoreDashboardFromEditor(); });
+    const modeEl = root.querySelector('#tep-dash-restore-agent-mode');
+    if (modeEl) {
+      modeEl.addEventListener('change', syncDashRestoreAgentUi);
+      syncDashRestoreAgentUi();
+    }
+    $('#tep-dash-restore-import-file-btn').addEventListener('click', () => { $('#tep-dash-restore-import-file').click(); });
+    $('#tep-dash-restore-import-file').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        $('#tep-dash-restore-json').value = r.result;
+        $('#tep-dash-restore-meta').textContent = 'Imported restore file: ' + f.name;
+        refreshDashboardJsonSummary('restore');
+      };
+      r.readAsText(f);
+      e.target.value = '';
+    });
+    const backupJsonTa = root.querySelector('#tep-dash-json');
+    if (backupJsonTa) {
+      backupJsonTa.addEventListener('input', () => { refreshDashboardJsonSummary('backup'); });
+    }
+    const restoreJsonTa = root.querySelector('#tep-dash-restore-json');
+    if (restoreJsonTa) {
+      restoreJsonTa.addEventListener('input', () => {
+        refreshDashboardJsonSummary('restore');
+      });
+    }
+
+    const sniffCb = $('#tep-dash-sniff-ajax');
+    if (sniffCb) {
+      sniffCb.checked = window.__TEP_OPTICS_SNIFF_AJAX__ !== false;
+      sniffCb.addEventListener('change', () => {
+        window.__TEP_OPTICS_SNIFF_AJAX__ = !!sniffCb.checked;
+        dashConsole('info', 'ajax JSON sniff toggled', { on: sniffCb.checked });
+        log(`Console JSON sniff (/ajax/ + /namespace/dash-api) ${sniffCb.checked ? 'ON' : 'OFF'}`, 'tep-log-info');
+      });
+    }
+    $('#tep-dash-copy-debug').addEventListener('click', async () => {
+      const text = buildDashboardDebugReport();
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Troubleshooting report copied', 'ok');
+        dashConsole('info', 'troubleshooting report copied to clipboard', { chars: text.length });
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+          toast('Diagnostics report copied', 'ok');
+        } catch (e2) {
+          toast('Copy failed — open Log and copy manually', 'err');
+        }
+        ta.remove();
+      }
+    });
+
+    refreshDashboardJsonSummary('backup');
+    refreshDashboardJsonSummary('restore');
+  }
 
   // ---------------------------------------------------------------------------
   // Horizontal resize
