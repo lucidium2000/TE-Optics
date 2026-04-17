@@ -1295,9 +1295,10 @@
         </details>
       </div>
 
+      <!-- Author: Christopher Hunt -->
       <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
-        <strong style="color:#cbd5e1;">TE Optics</strong> — by
-        <a href="https://github.com/lucidium2000/TE-Optics" target="_blank" rel="noopener noreferrer">Christopher Hunt</a>
+        <strong style="color:#cbd5e1;">TE Optics</strong>
+        — <a href="https://github.com/lucidium2000/TE-Optics" target="_blank" rel="noopener noreferrer">GitHub</a>
         · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
       </div>
 
@@ -3214,6 +3215,40 @@
     return t;
   }
 
+  function truthyIcmpFlag(v) {
+    if (v === 1 || v === true) return true;
+    if (v == null) return false;
+    const s = String(v).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes';
+  }
+
+  /**
+   * ICMP network tests: TE list/detail payloads differ — flagIcmp may be nested,
+   * protocol may stay "TCP" while port is -1, or only full GET /ajax/tests/network/{aid}/{id} has flags.
+   */
+  function isNetworkTestIcmp(t) {
+    if (!t || typeof t !== 'object') return false;
+    const p = String(t.protocol || '').toUpperCase();
+    if (p === 'ICMP') return true;
+    if (truthyIcmpFlag(t.flagIcmp)) return true;
+    const srv = t.server && typeof t.server === 'object' ? t.server : null;
+    if (srv) {
+      if (String(srv.protocol || '').toUpperCase() === 'ICMP') return true;
+      if (truthyIcmpFlag(srv.flagIcmp)) return true;
+    }
+    const cfg = t.config && typeof t.config === 'object' ? t.config : null;
+    if (cfg) {
+      if (String(cfg.protocol || '').toUpperCase() === 'ICMP') return true;
+      if (truthyIcmpFlag(cfg.flagIcmp)) return true;
+    }
+    const rawPort = srv && srv.port != null ? srv.port : t.port;
+    const pNum = parseInt(rawPort, 10);
+    if (pNum !== -1) return false;
+    const slug = `${t.testType || ''}|${t.type || ''}`.toLowerCase();
+    if (/(^|[^a-z])a2s([^a-z]|$)|network|agent-to-server|agent_to_server/.test(slug)) return true;
+    return false;
+  }
+
   function getInterval(t) {
     return t.freqHttp || t.freqA2s || t.freqPage || t.freqDns
       || t.freqVoip || t.freqBgp || t.freqFtp || t.freqSip
@@ -3541,6 +3576,13 @@
         const action = btn.dataset.action;
 
         if (action === 'edit') {
+          const dismissLoad = toastProcessing('Loading test…');
+          try {
+            await fetchTestDetail(t);
+          } catch (err) {
+            log(`Edit: detail refresh failed — ${err && err.message ? err.message : err}`, 'tep-log-info');
+          }
+          dismissLoad();
           toggleEditForm(card, t);
         } else if (action === 'clone') {
           await cloneTest(t);
@@ -3592,7 +3634,11 @@
         </select>
       </div>
       ${/A2s|Network|Http|Page/i.test(t.testType || t.type || '') ? (() => {
-        const curProto = t.protocol === 'ICMP' ? 'ICMP' : (t.probeMode === 'SYN' ? 'TCP-SYN' : 'TCP-SACK');
+        const isIcmp = isNetworkTestIcmp(t);
+        const curProto = isIcmp ? 'ICMP' : (t.probeMode === 'SYN' ? 'TCP-SYN' : 'TCP-SACK');
+        const rawPort = (typeof t.server === 'object' && t.server && t.server.port != null) ? t.server.port : t.port;
+        const pNum = parseInt(rawPort, 10);
+        const portVal = (!isIcmp && Number.isFinite(pNum) && pNum >= 1 && pNum <= 65535) ? pNum : 443;
         return `
       <div class="tep-edit-row" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">
         <div>
@@ -3603,10 +3649,10 @@
             <option value="ICMP" ${curProto === 'ICMP' ? 'selected' : ''}>ICMP</option>
           </select>
         </div>
-        <div class="tep-edit-tcp-opts" style="${t.protocol === 'ICMP' ? 'display:none;' : 'display:contents;'}">
+        <div class="tep-edit-tcp-opts" style="${isIcmp ? 'display:none;' : 'display:contents;'}">
           <div>
             <label>Port</label>
-            <input type="number" class="tep-edit-port" value="${(typeof t.server === 'object' && t.server ? t.server.port : t.port) || 443}" min="1" max="65535" style="width:80px;">
+            <input type="number" class="tep-edit-port" value="${portVal}" min="1" max="65535" style="width:80px;">
           </div>
           <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;padding-bottom:2px;">
             <input type="checkbox" class="tep-edit-insession" ${t.pathtraceInSession ? 'checked' : ''}> In-Session
@@ -3732,7 +3778,13 @@
           updated.pathtraceInSession = 0;
         }
         const portInput = form.querySelector('.tep-edit-port');
-        const newPort = portInput ? parseInt(portInput.value, 10) || 443 : 443;
+        let newPort;
+        if (proto === 'ICMP') {
+          newPort = -1;
+        } else {
+          const parsed = portInput ? parseInt(portInput.value, 10) : NaN;
+          newPort = Number.isFinite(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : 443;
+        }
         if (typeof updated.server === 'object' && updated.server) {
           updated.server.port = newPort;
         } else {
