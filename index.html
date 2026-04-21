@@ -36,6 +36,16 @@
       position: relative;
       top: -0.12em;
     }
+    .install-version {
+      font-size: 0.55em;
+      font-weight: 600;
+      color: #64748b;
+      margin-left: 0.45rem;
+      vertical-align: super;
+      position: relative;
+      top: -0.2em;
+      letter-spacing: 0.03em;
+    }
     .subtitle {
       color: #94a3b8;
       font-size: 1.05rem;
@@ -153,7 +163,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-      TE Optics
+      TE Optics<span class="install-version" aria-label="Build">2.01</span>
     </h1>
     <p class="subtitle">
       Bulk-create ThousandEyes tests using your existing browser session.
@@ -182,6 +192,11 @@
         Drag &amp; drop onto your bookmarks toolbar. If hidden,
         press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.
       </span>
+      <p style="margin-top:0.85rem;">
+        <strong style="color:#e2e8f0;">Updating?</strong>
+        Remove your old TE Optics bookmark from the bar, then drag the button above again to add a replacement.
+        Bookmarklets store a copy of the script from when the bookmark was saved, so replacing the bookmark is how you get the latest version.
+      </p>
     </div>
 
     <div class="step">
@@ -266,6 +281,7 @@
  */
 (function () {
   'use strict';
+  const TEP_VERSION = '2.01';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -1129,6 +1145,14 @@
       text-underline-offset: 2px;
     }
     .tep-attribution a:hover { color: #bfdbfe; }
+    .tep-attribution-version {
+      font-size: 10px;
+      font-weight: 600;
+      color: #64748b;
+      margin: 0 0.2rem;
+      letter-spacing: 0.02em;
+      vertical-align: middle;
+    }
 
     /* Results log */
     .tep-log-wrap {
@@ -1631,7 +1655,8 @@
       <!-- Author: Christopher Hunt -->
       <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
         <strong style="color:#cbd5e1;">TE Optics</strong>
-        — <a href="https://github.com/lucidium2000/TE-Optics" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <span class="tep-attribution-version">${TEP_VERSION}</span>
+        &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
         · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
       </div>
 

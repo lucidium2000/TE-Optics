@@ -19,6 +19,7 @@
  */
 (function () {
   'use strict';
+  const TEP_VERSION = '2.01';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -882,6 +883,14 @@
       text-underline-offset: 2px;
     }
     .tep-attribution a:hover { color: #bfdbfe; }
+    .tep-attribution-version {
+      font-size: 10px;
+      font-weight: 600;
+      color: #64748b;
+      margin: 0 0.2rem;
+      letter-spacing: 0.02em;
+      vertical-align: middle;
+    }
 
     /* Results log */
     .tep-log-wrap {
@@ -1384,7 +1393,8 @@
       <!-- Author: Christopher Hunt -->
       <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
         <strong style="color:#cbd5e1;">TE Optics</strong>
-        — <a href="https://github.com/lucidium2000/TE-Optics" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <span class="tep-attribution-version">${TEP_VERSION}</span>
+        &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
         · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
       </div>
 
