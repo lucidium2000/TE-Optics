@@ -891,8 +891,8 @@
     }
     .tep-close:hover { color: #f87171; }
 
-    /* Body */
-    .tep-body { padding: 16px; overflow-y: auto; flex: 1; }
+    /* Body — relative so toasts can overlay without shifting layout */
+    .tep-body { position: relative; padding: 16px; overflow-y: auto; flex: 1; }
 
     /* Status bar */
     .tep-status {
@@ -902,10 +902,16 @@
     .tep-status.ok { color: #4ade80; }
     .tep-status.err { color: #f87171; }
 
-    /* Toast notifications */
+    /* Toast notifications — out of flow so “Loading test…” etc. do not push content */
     .tep-toast {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      top: 10px;
+      z-index: 20;
       padding: 8px 14px; font-size: 12px; font-weight: 600;
-      border-radius: 6px; margin: 6px 16px 0; animation: tepFadeIn .2s;
+      border-radius: 6px; margin: 0; animation: tepFadeIn .2s;
+      pointer-events: none;
     }
     .tep-toast-ok { background: #064e3b; color: #4ade80; border: 1px solid #065f46; }
     .tep-toast-err { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
