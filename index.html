@@ -163,7 +163,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-      TE Optics<span class="install-version" aria-label="Build">2.03</span>
+        TE Optics<span class="install-version" aria-label="Build">2.04</span>
     </h1>
     <p class="subtitle">
       Bulk-create ThousandEyes tests using your existing browser session.
@@ -281,7 +281,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.03';
+  const TEP_VERSION = '2.04';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -1511,10 +1511,10 @@
           </select>
           <input id="tep-manage-search" placeholder="Search tests&hellip;">
           <select id="tep-manage-sort" style="width:auto;">
+            <option value="created" selected>Sort: Date Created</option>
             <option value="default">Sort: Default</option>
             <option value="name">Sort: Name</option>
             <option value="modified">Sort: Date Modified</option>
-            <option value="created">Sort: Date Created</option>
           </select>
           <button class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-manage-load">Load Tests</button>
         </div>
@@ -1719,6 +1719,50 @@
   function setStatus(text, cls) {
     statusEl.textContent = text;
     statusEl.className = 'tep-status' + (cls ? ' ' + cls : '');
+  }
+
+  const TEP_STATUS_SUPERPOWERS = 'Ensure you have Superpowers enabled';
+  const TEP_STATUS_CREATE_DUPLICATE = 'A test could not be created: duplicate name. Use a unique name for each test.';
+
+  function applyDefaultAuthenticatedStatus() {
+    if (!isOnTEPage()) return;
+    if (isDashboardToolsPage()) {
+      setStatus(agents && agents.length ? `Dashboard — ${agents.length} portal agent(s) loaded` : 'Authenticated — dashboard tools', 'ok');
+    } else {
+      setStatus(agents && agents.length ? `Authenticated — ${agents.length} agent(s) loaded` : 'Authenticated — loading agents…', 'ok');
+    }
+  }
+
+  /** Clears create-specific error lines when the user adjusts the create form or starts a new run. */
+  function clearCreateFailureStatus() {
+    const t = (statusEl.textContent || '').trim();
+    if (t !== TEP_STATUS_SUPERPOWERS && t !== TEP_STATUS_CREATE_DUPLICATE) return;
+    applyDefaultAuthenticatedStatus();
+  }
+
+  function isLikelyCreatePermissionDenied(status, bodyText) {
+    const st = Number(status);
+    if (st === 401 || st === 403) return true;
+    const t = String(bodyText || '').slice(0, 8000);
+    const tl = t.toLowerCase();
+    if (/<\s*(?:SOAP|soap)\s*-?(?:ENV|env)?\s*:\s*Fault|<\s*s:Fault|soapenv:fault/i.test(t)) return true;
+    if (/forbidden|not\s*authorized|unauthorized|permission\s*denied|access\s*denied|insufficient\s*privilege|requires\s*.*privilege|superpower/i.test(tl)) return true;
+    if (st === 400 && /forbidden|unauthorized|permission|privilege|superpower|not\s*allowed\s*to/i.test(tl)) return true;
+    return false;
+  }
+
+  function isLikelyDuplicateTestNameError(status, bodyText) {
+    const st = Number(status);
+    const t = String(bodyText || '').slice(0, 8000);
+    const tl = t.toLowerCase();
+    if (st === 409) return true;
+    if (/duplicate(\s*name|\s*test)?|already\s*exists|name\s*already|not\s*unique|unique\s*constraint|uniqueviolation|name\s*conflict|same\s*name|exists\s*with\s*(the\s*)?same\s*name/i.test(tl)) return true;
+    try {
+      const j = JSON.parse(t);
+      const blob = JSON.stringify(j).toLowerCase();
+      if (/duplicate|already exist|uniqueviolation|unique constraint|same name|name conflict/.test(blob)) return true;
+    } catch (_) { /* */ }
+    return false;
   }
 
   function log(msg, cls) {
@@ -3538,6 +3582,7 @@
         `;
         const cb = item.querySelector('input');
         cb.addEventListener('change', () => {
+          if (boxEl === agentsBox) clearCreateFailureStatus();
           if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
           else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
           renderAgentPickerSection(boxEl, filter, selectionSet, {
@@ -4624,10 +4669,12 @@
         break;
     }
     syncTargetsCloneGutter();
+    clearCreateFailureStatus();
   });
 
   // A2S protocol toggle — show/hide TCP options when ICMP is selected
   $('#tep-a2s-protocol').addEventListener('change', () => {
+    clearCreateFailureStatus();
     $('#tep-a2s-tcp-opts').style.display = $('#tep-a2s-protocol').value.startsWith('TCP') ? 'contents' : 'none';
   });
 
@@ -4799,6 +4846,7 @@
     if (ta) ta.value = '';
     syncTargetsCloneGutter();
     selectedAgentIds.clear();
+    clearCreateFailureStatus();
     renderAgents(filterInput.value);
     const nameInput = $('#tep-testname');
     if (nameInput) {
@@ -4828,6 +4876,8 @@
     if (!targets.length) { log('No targets specified.', 'tep-log-err'); return; }
     if (!vAgentIds.length) { log('No agents selected.', 'tep-log-err'); return; }
 
+    clearCreateFailureStatus();
+
     const createBtn = $('#tep-create');
     createBtn.disabled = true;
     const dismissProcessing = toastProcessing(`Creating ${targets.length} test(s)…`);
@@ -4836,6 +4886,8 @@
 
     let createOk = 0;
     let createFail = 0;
+    let sawCreatePermissionDenied = false;
+    let sawCreateDuplicateName = false;
 
     for (const target of targets) {
       const testName = nameTemplate.replace(/\{target\}/g, target);
@@ -4891,6 +4943,8 @@
           toast(`Created "${testName}" (id: ${testId})`, 'ok');
         } else {
           createFail++;
+          if (isLikelyCreatePermissionDenied(resp.status, respText)) sawCreatePermissionDenied = true;
+          else if (isLikelyDuplicateTestNameError(resp.status, respText)) sawCreateDuplicateName = true;
           log(`  ✗ ${resp.status}: ${respText.substring(0, 300)}`, 'tep-log-err');
           toast(`Failed to create "${testName}": ${resp.status}`, 'err');
         }
@@ -4903,6 +4957,11 @@
 
     createBtn.disabled = false;
     dismissProcessing();
+    if (sawCreatePermissionDenied) {
+      setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+    } else if (sawCreateDuplicateName) {
+      setStatus(TEP_STATUS_CREATE_DUPLICATE, 'err');
+    }
     log('Done.', 'tep-log-info');
     if (createOk === targets.length && targets.length > 0) {
       resetCreateTestsForm();
@@ -4987,15 +5046,24 @@
     initAuth();
   });
   $('#tep-clear-log').addEventListener('click', () => { logEl.innerHTML = ''; });
-  filterInput.addEventListener('input', () => renderAgents(filterInput.value));
+  filterInput.addEventListener('input', () => { clearCreateFailureStatus(); renderAgents(filterInput.value); });
   const agentFilterWrap = filterInput && filterInput.closest('.tep-agent-filter-wrap');
   if (agentFilterWrap && filterInput) {
-    wireAgentFilterClear(agentFilterWrap, filterInput, () => renderAgents(filterInput.value));
+    wireAgentFilterClear(agentFilterWrap, filterInput, () => { clearCreateFailureStatus(); renderAgents(filterInput.value); });
   }
+
+  const testNameInput = $('#tep-testname');
+  if (testNameInput) testNameInput.addEventListener('input', clearCreateFailureStatus);
+  const intervalSel = $('#tep-interval');
+  if (intervalSel) intervalSel.addEventListener('change', clearCreateFailureStatus);
+  const a2sPort = $('#tep-a2s-port');
+  if (a2sPort) a2sPort.addEventListener('input', clearCreateFailureStatus);
+  const a2sInsession = $('#tep-a2s-insession');
+  if (a2sInsession) a2sInsession.addEventListener('change', clearCreateFailureStatus);
 
   const targetsTa = root.querySelector('#tep-targets');
   if (targetsTa) {
-    targetsTa.addEventListener('input', () => syncTargetsCloneGutter());
+    targetsTa.addEventListener('input', () => { clearCreateFailureStatus(); syncTargetsCloneGutter(); });
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(() => syncTargetsCloneGutter()).observe(targetsTa);
     }
