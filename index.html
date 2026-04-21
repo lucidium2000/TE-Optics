@@ -5024,7 +5024,7 @@
       const subPanel = root.querySelector('#tep-dash-panel-' + dashSub);
       if (subPanel) subPanel.classList.add('active');
     }
-    if (tab.dataset.view === 'manage' && allTests.length === 0 && teInitData) {
+    if (tab.dataset.view === 'manage') {
       loadTests();
     }
   });
