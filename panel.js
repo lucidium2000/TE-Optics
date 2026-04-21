@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.01';
+  const TEP_VERSION = '2.02';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -1161,7 +1161,7 @@
   root.insertAdjacentHTML('beforeend', `
     <div class="tep-header" id="tep-drag-handle">
       <h2>TE Optics</h2>
-      <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle dark mode on TE page">&#9789;</button>
+      <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle softer dark theme on this TE page (approximate inversion)">&#9789;</button>
       <button class="tep-close" id="tep-close">&times;</button>
     </div>
     <div class="tep-status" id="tep-status">Detecting session&hellip;</div>
@@ -4742,14 +4742,169 @@
 
   // Dark mode toggle for TE page
   let darkStyles = null;
+  let darkMainTarget = null;
+  let darkMainRescanTimer = null;
   const darkToggle = $('#tep-dark-toggle');
-  const TE_DARK_CSS = `
-    html { filter: invert(0.9) hue-rotate(180deg); }
-    img, svg, video, canvas, [class*="chart"], [class*="map"], [class*="graph"] {
-      filter: invert(1) hue-rotate(180deg);
+  const DARK_MAIN_CLASS = 'tep-dark-main-canvas';
+
+  function skipDarkMainPick(el) {
+    return !el || !el.getBoundingClientRect || el.closest('#te-panel-root') ||
+      el.id === 'tep-resize-handle' || el.closest('#tep-resize-handle');
+  }
+
+  /** TE often has no <main>; pick the largest plausible content shell so path views get a second filter pass. */
+  function pickDarkMainTarget() {
+    const selectors = [
+      '[role="main"]', 'main',
+      '[class*="page-content" i]', '[class*="PageContent" i]',
+      '[class*="main-content" i]', '[class*="MainContent" i]',
+      '[class*="primary-content" i]', '[class*="PrimaryContent" i]',
+      '[class*="application-body" i]', '[class*="ApplicationBody" i]',
+      '[class*="app-body" i]', '[class*="AppBody" i]',
+      '[class*="workspace" i]', '[class*="Workspace" i]',
+      '[class*="view-container" i]', '[class*="ViewContainer" i]',
+      '[class*="route-outlet" i]', '[class*="RouteOutlet" i]',
+      '[data-testid*="content" i]', '[data-testid*="main" i]'
+    ];
+    let best = null;
+    let bestArea = 0;
+    for (const sel of selectors) {
+      let nodes;
+      try {
+        nodes = document.querySelectorAll(sel);
+      } catch (_) {
+        continue;
+      }
+      nodes.forEach((el) => {
+        if (skipDarkMainPick(el)) return;
+        const cs = window.getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return;
+        const r = el.getBoundingClientRect();
+        const area = r.width * r.height;
+        if (area > bestArea && r.width > 380 && r.height > 200) {
+          bestArea = area;
+          best = el;
+        }
+      });
     }
-    #te-panel-root, #tep-resize-handle {
-      filter: invert(1) hue-rotate(180deg);
+    return best;
+  }
+
+  function detachDarkMainTarget() {
+    document.querySelectorAll('.' + DARK_MAIN_CLASS).forEach((n) => {
+      if (!n.closest('#te-panel-root')) n.classList.remove(DARK_MAIN_CLASS);
+    });
+    darkMainTarget = null;
+  }
+
+  function attachDarkMainTarget() {
+    const el = pickDarkMainTarget();
+    if (el === darkMainTarget && el && el.classList.contains(DARK_MAIN_CLASS)) return;
+    detachDarkMainTarget();
+    darkMainTarget = el;
+    if (darkMainTarget) darkMainTarget.classList.add(DARK_MAIN_CLASS);
+  }
+
+  /*
+   * Host-page dark: TE’s DOM can’t be re-themed, so we approximate a “midnight UI” (deep cool
+   * neutrals, restrained saturation) using stacked filters. !important wins over TE’s own rules.
+   * `.tep-dark-main-canvas` is assigned at runtime to the largest content pane (TE rarely uses <main>).
+   */
+  const TE_DARK_CSS = `
+    html {
+      filter: invert(0.78) hue-rotate(180deg) brightness(0.82) contrast(1.15) saturate(0.58) hue-rotate(-10deg) !important;
+    }
+
+    header,
+    [role="banner"],
+    nav[aria-label],
+    [class*="Masthead" i],
+    [class*="TopNav" i],
+    [class*="top-nav" i],
+    [class*="AppBar" i],
+    [class*="app-bar" i],
+    [class*="ProductHeader" i],
+    [class*="product-header" i],
+    [class*="GlobalHeader" i],
+    [class*="AppHeader" i],
+    [class*="ShellHeader" i],
+    [class*="chrome-header" i],
+    [class*="ChromeHeader" i] {
+      filter: brightness(0.36) saturate(0.62) contrast(1.22) hue-rotate(8deg) !important;
+    }
+
+    header img,
+    header svg,
+    [role="banner"] img,
+    [role="banner"] svg {
+      filter: invert(1) hue-rotate(180deg) saturate(0.88) brightness(1.05) !important;
+    }
+
+    [role="main"],
+    main,
+    .tep-dark-main-canvas {
+      filter: invert(1) hue-rotate(180deg) brightness(0.4) saturate(0.78) contrast(1.08) !important;
+    }
+
+    img,
+    video,
+    canvas,
+    picture img,
+    svg {
+      filter: invert(1) hue-rotate(180deg) saturate(0.88) brightness(1.02) !important;
+    }
+
+    main img,
+    [role="main"] img,
+    .tep-dark-main-canvas img,
+    main svg,
+    [role="main"] svg,
+    .tep-dark-main-canvas svg,
+    main video,
+    [role="main"] video,
+    .tep-dark-main-canvas video,
+    main canvas,
+    [role="main"] canvas,
+    .tep-dark-main-canvas canvas,
+    main picture img,
+    [role="main"] picture img,
+    .tep-dark-main-canvas picture img {
+      filter: none !important;
+    }
+
+    [class*="chart"],
+    [class*="Chart"],
+    [class*="map"],
+    [class*="Map"],
+    [class*="graph"],
+    [class*="Graph"] {
+      filter: invert(1) hue-rotate(180deg) saturate(0.88) brightness(1.02) !important;
+    }
+
+    main [class*="chart"],
+    [role="main"] [class*="chart"],
+    .tep-dark-main-canvas [class*="chart"],
+    main [class*="Chart"],
+    [role="main"] [class*="Chart"],
+    .tep-dark-main-canvas [class*="Chart"],
+    main [class*="map"],
+    [role="main"] [class*="map"],
+    .tep-dark-main-canvas [class*="map"],
+    main [class*="Map"],
+    [role="main"] [class*="Map"],
+    .tep-dark-main-canvas [class*="Map"],
+    main [class*="graph"],
+    [role="main"] [class*="graph"],
+    .tep-dark-main-canvas [class*="graph"],
+    main [class*="Graph"],
+    [role="main"] [class*="Graph"],
+    .tep-dark-main-canvas [class*="Graph"] {
+      filter: none !important;
+    }
+
+    #te-panel-root,
+    #tep-resize-handle {
+      filter: invert(1) hue-rotate(180deg) saturate(0.96) brightness(1.02) !important;
     }
   `;
   function toggleDarkMode() {
@@ -4758,10 +4913,35 @@
       darkStyles = null;
       darkToggle.classList.remove('active');
       localStorage.removeItem('tep-dark-mode');
+      document.documentElement.removeAttribute('data-tep-optics-dark');
+      detachDarkMainTarget();
+      if (darkMainRescanTimer) {
+        clearInterval(darkMainRescanTimer);
+        darkMainRescanTimer = null;
+      }
     } else {
       darkStyles = tepInjectCSS(TE_DARK_CSS);
       darkToggle.classList.add('active');
       localStorage.setItem('tep-dark-mode', '1');
+      document.documentElement.setAttribute('data-tep-optics-dark', '1');
+      attachDarkMainTarget();
+      if (!darkMainTarget) {
+        log('Page dark: no large content region matched yet — open a path view and toggle again, or wait a few seconds.', 'tep-log-info');
+      }
+      let ticks = 0;
+      darkMainRescanTimer = setInterval(() => {
+        if (!localStorage.getItem('tep-dark-mode')) {
+          clearInterval(darkMainRescanTimer);
+          darkMainRescanTimer = null;
+          return;
+        }
+        attachDarkMainTarget();
+        ticks += 1;
+        if (ticks >= 14) {
+          clearInterval(darkMainRescanTimer);
+          darkMainRescanTimer = null;
+        }
+      }, 2200);
     }
   }
   darkToggle.addEventListener('click', toggleDarkMode);
