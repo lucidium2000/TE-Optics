@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.05';
+  const TEP_VERSION = '2.06';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -3679,11 +3679,50 @@
   }
 
   function getInterval(t) {
-    return t.freqHttp || t.freqA2s || t.freq
+    const intv = t && t.interval;
+    if (intv != null && Number(intv) > 0) return Number(intv);
+    return t.freqBrowserbot || t.freqHttp || t.freqA2s || t.freq
       || t.freqPage || t.freqDns
       || t.freqVoip || t.freqBgp || t.freqFtp || t.freqSip
       || t.frequency || t.testInterval || t.intervalInSeconds
-      || t.interval || 0;
+      || 0;
+  }
+
+  /** Native list/detail for Web Page Load uses testType "BrowserBot" and freqHttp + freqBrowserbot. */
+  function isBrowserOrPageTest(t) {
+    if (!t) return false;
+    const a = String(t.testType == null ? '' : t.testType);
+    const b = String(t.type == null ? '' : t.type);
+    return /browser|page/i.test(a) || /browser|page|page-load/i.test(b);
+  }
+
+  /**
+   * TE returns 400 "Subinterval must evenly divide the interval" if the body still
+   * carries a prior subinterval after interval/freq were changed. Align root and
+   * server.* subinterval when they no longer divide the new interval.
+   */
+  function alignSubintervalToInterval(obj, newInterval) {
+    if (obj == null || !Number.isFinite(newInterval) || newInterval < 1) return;
+    const coerced = (cur) => {
+      if (cur == null || typeof cur !== 'number' || !Number.isFinite(cur) || cur < 1) return null;
+      if (newInterval % cur === 0) return Math.floor(cur);
+      for (let s = Math.min(Math.floor(cur), newInterval); s >= 1; s--) {
+        if (newInterval % s === 0) return s;
+      }
+      return newInterval;
+    };
+    if (obj.subinterval != null && typeof obj.subinterval === 'number') {
+      const a = coerced(obj.subinterval);
+      if (a != null) obj.subinterval = a;
+    }
+    if (obj.server && typeof obj.server === 'object' && obj.server.subinterval != null && typeof obj.server.subinterval === 'number') {
+      const b = coerced(obj.server.subinterval);
+      if (b != null) obj.server.subinterval = b;
+    }
+    if (obj.targetServer && typeof obj.targetServer === 'object' && obj.targetServer.subinterval != null && typeof obj.targetServer.subinterval === 'number') {
+      const c = coerced(obj.targetServer.subinterval);
+      if (c != null) obj.targetServer.subinterval = c;
+    }
   }
 
   /** Native TE agent→server edit POSTs use testType "Network", full server.* (incl. serverId), and freq+interval — not A2s/freqA2s. */
@@ -4409,7 +4448,17 @@
             updated.server = { ...updated.server, serverName: host, port };
             syncNetworkTargetStrings(updated);
           } else {
-            updated.server = { serverName: host, port: port };
+            updated.server = { ...updated.server, serverName: host, port: port };
+            if (port > 0) updated.server.target = `${host}:${port}`;
+            else if (port < 0) updated.server.target = host;
+            if (updated.targetServer && typeof updated.targetServer === 'object') {
+              updated.targetServer = {
+                ...updated.targetServer,
+                serverName: host,
+                port: port,
+                target: updated.server.target
+              };
+            }
           }
         } else {
           updated.server = newTarget;
@@ -4470,12 +4519,17 @@
       } else {
         updated.interval = newInterval;
         updated.freq = newInterval;
-        if (!Object.keys(updated).some((k) => /^freq/i.test(k))) {
+        if (isBrowserOrPageTest(t)) {
+          /* Native /ajax/tests/page-load payload: freqHttp, freqBrowserbot, interval, subinterval (see F12). */
+          updated.freqHttp = newInterval;
+          updated.freqBrowserbot = Math.max(newInterval, 120);
+        } else if (!Object.keys(updated).some((k) => /^freq/i.test(k))) {
           if (/page|browser/i.test(tt)) updated.freqPage = newInterval;
           else if (/dns/i.test(tt)) updated.freqDns = newInterval;
           else updated.freqHttp = newInterval;
         }
       }
+      alignSubintervalToInterval(updated, newInterval);
 
       // Set agents
       if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
@@ -4609,6 +4663,11 @@
             updated.freq = newInterval;
             delete updated.freqA2s;
             if (updated.testId == null && updated.id != null) updated.testId = updated.id;
+          } else if (isBrowserOrPageTest(t)) {
+            updated.interval = newInterval;
+            updated.freq = newInterval;
+            updated.freqHttp = newInterval;
+            updated.freqBrowserbot = Math.max(newInterval, 120);
           } else if (updated.freqHttp !== undefined) updated.freqHttp = newInterval;
           else if (updated.freqA2s !== undefined) updated.freqA2s = newInterval;
           else if (updated.freqPage !== undefined) updated.freqPage = newInterval;
@@ -4617,6 +4676,7 @@
             updated.interval = newInterval;
             updated.freq = newInterval;
           }
+          alignSubintervalToInterval(updated, newInterval);
           resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
         } else if (action === 'protocol') {
           const tt = (t.testType || t.type || '').toLowerCase();
@@ -4871,7 +4931,6 @@
       flagVerifyCertHostname: 1,
       freqHttp: interval,
       freqBrowserbot: Math.max(interval, 120),
-      freqHttp: interval,
       httpTimeLimit: 10,
       httpVersion: 2,
       maxRedirects: 10,
@@ -4886,7 +4945,7 @@
       targetResponseTime: 1000,
       url: { url: target },
       userAgent: null,
-      testType: 'Page',
+      testType: 'BrowserBot',
       vaultSecrets: [],
       clientCertPresent: false,
       allowVerifyContent: false,
