@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.04';
+  const TEP_VERSION = '2.05';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -717,12 +717,47 @@
     .tep-input { height: 38px; }
     .tep-select { appearance: auto; height: 38px; line-height: 18px; }
 
-    /* Agent list */
+    /* Agent list: persistent bar + one scroll (bar stays visible while list scrolls) */
     .tep-agents-box {
-      max-height: 180px; overflow-y: auto; background: #1e293b;
-      border: 1px solid #334155; border-radius: 6px; padding: 6px;
+      display: flex;
+      flex-direction: column;
+      max-height: 180px;
+      overflow: hidden;
+      background: #1e293b;
+      border: 1px solid #334155; border-radius: 6px;
       margin-top: 4px;
     }
+    .tep-agent-persistent-bar {
+      flex: 0 0 auto;
+      font-weight: bold;
+      padding: 4px 6px;
+      background: #334155;
+      border-bottom: 1px solid #475569;
+      border-top-left-radius: 5px;
+      border-top-right-radius: 5px;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 2;
+    }
+    .tep-agents-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 0 6px 6px 6px;
+      background: #1e293b;
+    }
+    .tep-agent-section--selected { margin: 0 0 6px 0; }
+    .tep-agent-section--selected .tep-agent-section-body { background: #1e293b; }
+    .tep-sel-badges { font-weight: 600; }
+    .tep-sel-badges strong { color: #38bdf8; }
+    .tep-agent-picker-hint {
+      padding: 6px 8px; font-size: 11px; color: #94a3b8; line-height: 1.35;
+    }
+    .tep-agent-picker-hint--muted { color: #64748b; font-style: italic; }
     .tep-agent-item {
       display: flex; align-items: center; gap: 6px;
       padding: 4px 6px; border-radius: 4px; cursor: pointer;
@@ -1028,10 +1063,27 @@
     }
     .tep-edit-actions { display: flex; gap: 6px; margin-top: 8px; }
     .tep-edit-agents-box {
-      max-height: 150px; overflow-y: auto; background: #0f172a;
-      border: 1px solid #334155; border-radius: 4px; padding: 4px;
+      display: flex;
+      flex-direction: column;
+      max-height: 150px;
+      overflow: hidden;
+      background: #0f172a;
+      border: 1px solid #334155; border-radius: 4px;
       margin-top: 4px;
     }
+    .tep-edit-agents-box .tep-agent-persistent-bar {
+      background: #1e293b;
+      border-top-left-radius: 3px;
+      border-top-right-radius: 3px;
+    }
+    .tep-edit-agents-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 0 4px 4px 4px;
+    }
+    .tep-edit-agents-box .tep-agent-section--selected .tep-agent-section-body { background: #0f172a; }
     .tep-edit-agents-box label {
       display: flex; align-items: center; gap: 5px; padding: 3px 5px;
       border-radius: 3px; cursor: pointer; font-size: 11px; color: #e2e8f0;
@@ -3208,6 +3260,32 @@
     }
   }
 
+  /** Count selected agents by type (uses full `agents` list, not the current filter). */
+  function getSelectionTypeBreakdown(selectionSet) {
+    let ent = 0, cloud = 0;
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      if (!restoreAgentSelectionSetHas(selectionSet, a.agentId)) continue;
+      if (a.agentType === 'Enterprise') ent++;
+      else cloud++;
+    }
+    return { ent, cloud, total: ent + cloud };
+  }
+
+  /**
+   * Whether the selected rows/hints in the agent picker scroll are hidden.
+   * User toggles via the persistent "✓ Selected" bar (tepSelectedListCollapsed on the box).
+   * Otherwise: match focus to enterprise/cloud (hidden), or when nothing to show in selected.
+   */
+  function isSelectedListCollapsedState(box, eff, br, selectedLen) {
+    if (!box) return true;
+    const d = box.dataset.tepSelectedListCollapsed;
+    if (d === '1') return true;
+    if (d === '0') return false;
+    if (eff) return eff !== 'selected';
+    return !(br.total > 0 || selectedLen > 0);
+  }
+
   /**
    * Shared Enterprise / Cloud grouped picker (same pattern as Create Tests).
    * @param {HTMLElement|null} boxEl
@@ -3232,7 +3310,38 @@
       : agents;
 
     if (!filtered.length) {
-      boxEl.innerHTML = `<span class="tep-log-info">${options.emptyText || 'No agents match filter.'}</span>`;
+      const brF = getSelectionTypeBreakdown(selectionSet);
+      if (brF.total) {
+        const listCollapsedF = isSelectedListCollapsedState(boxEl, null, brF, 0);
+        boxEl.innerHTML = '';
+        const barF = document.createElement('div');
+        barF.className = 'tep-agent-persistent-bar';
+        const titleF = `✓ Selected <span class="tep-sel-badges">— <strong>${brF.total}</strong> (🏢 ${brF.ent} · ☁️ ${brF.cloud})</span>`;
+        barF.innerHTML = `<span>${titleF}</span><span class="tep-section-arrow">${listCollapsedF ? '▶' : '▼'}</span>`;
+        barF.addEventListener('click', () => {
+          boxEl.dataset.tepSelectedListCollapsed = listCollapsedF ? '0' : '1';
+          renderAgentPickerSection(boxEl, filter, selectionSet, { ...options, focusSection: 'selected' });
+        });
+        const scrollF = document.createElement('div');
+        scrollF.className = 'tep-agents-scroll';
+        const sectionF = document.createElement('div');
+        sectionF.className = 'tep-agent-section tep-agent-section--selected';
+        sectionF.dataset.tepSection = 'selected';
+        sectionF.style.marginBottom = '6px';
+        if (listCollapsedF) sectionF.style.display = 'none';
+        const bodyF = document.createElement('div');
+        bodyF.className = 'tep-agent-section-body';
+        const hintF = document.createElement('div');
+        hintF.className = 'tep-agent-picker-hint';
+        hintF.textContent = 'No agents match this filter. Clear the filter to list selected agents.';
+        bodyF.appendChild(hintF);
+        sectionF.appendChild(bodyF);
+        scrollF.appendChild(sectionF);
+        boxEl.appendChild(barF);
+        boxEl.appendChild(scrollF);
+      } else {
+        boxEl.innerHTML = `<span class="tep-log-info">${options.emptyText || 'No agents match filter.'}</span>`;
+      }
       return;
     }
 
@@ -3276,20 +3385,80 @@
     const selectedSorted = sortSelectedAgents(selectedAgents);
     const enterpriseSorted = sortEnterpriseAgents(enterprise);
     const cloudSorted = sortCloudAgents(cloud);
+    const br = getSelectionTypeBreakdown(selectionSet);
 
     function effectiveAgentSectionFocus(cat) {
       if (!cat) return null;
-      if (cat === 'selected' && selectedSorted.length) return 'selected';
+      if (cat === 'selected' && (selectedSorted.length || br.total)) return 'selected';
       if (cat === 'enterprise' && enterpriseSorted.length) return 'enterprise';
       if (cat === 'cloud' && cloudSorted.length) return 'cloud';
-      if (selectedSorted.length) return 'selected';
+      if (selectedSorted.length || br.total) return 'selected';
       if (enterpriseSorted.length) return 'enterprise';
       if (cloudSorted.length) return 'cloud';
       return null;
     }
     const eff = effectiveAgentSectionFocus(options.focusSection);
+    const listCollapsed = isSelectedListCollapsedState(boxEl, eff, br, selectedSorted.length);
 
     boxEl.innerHTML = '';
+    const persistentBar = document.createElement('div');
+    persistentBar.className = 'tep-agent-persistent-bar';
+    const titleText = `✓ Selected <span class="tep-sel-badges">— <strong>${br.total}</strong> (🏢 ${br.ent} · ☁️ ${br.cloud})</span>`;
+    persistentBar.innerHTML = `<span>${titleText}</span><span class="tep-section-arrow">${listCollapsed ? '▶' : '▼'}</span>`;
+    persistentBar.addEventListener('click', () => {
+      boxEl.dataset.tepSelectedListCollapsed = listCollapsed ? '0' : '1';
+      renderAgentPickerSection(boxEl, filter, selectionSet, { ...options, focusSection: 'selected' });
+    });
+    const scrollHost = document.createElement('div');
+    scrollHost.className = 'tep-agents-scroll';
+    boxEl.appendChild(persistentBar);
+    boxEl.appendChild(scrollHost);
+
+    (function renderSelectedGroup() {
+      const section = document.createElement('div');
+      section.className = 'tep-agent-section tep-agent-section--selected';
+      section.dataset.tepSection = 'selected';
+      section.style.marginBottom = '6px';
+      if (listCollapsed) section.style.display = 'none';
+      const body = document.createElement('div');
+      body.className = 'tep-agent-section-body';
+      if (selectedSorted.length) {
+        selectedSorted.forEach((agent) => {
+          const item = document.createElement('label');
+          item.className = 'tep-agent-item';
+          const checked = restoreAgentSelectionSetHas(selectionSet, agent.agentId) ? 'checked' : '';
+          const statusDot = agent.agentType === 'Enterprise'
+            ? `<span class="tep-agent-status ${agent.status}" title="${agent.status}"></span>`
+            : '';
+          item.innerHTML = `
+          <input type="checkbox" value="${agent.agentId}" ${checked}>
+          ${statusDot}
+          <span class="tep-agent-name">${agent.agentName || 'Agent ' + agent.agentId}</span>
+          <span class="tep-agent-loc">${agent.location || ''}</span>
+        `;
+          const cb = item.querySelector('input');
+          cb.addEventListener('change', () => {
+            if (boxEl === agentsBox) clearCreateFailureStatus();
+            if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
+            else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
+            renderAgentPickerSection(boxEl, filter, selectionSet, { ...options, focusSection: 'selected' });
+          });
+          body.appendChild(item);
+        });
+      } else {
+        const hint = document.createElement('div');
+        if (br.total > 0) {
+          hint.className = 'tep-agent-picker-hint';
+          hint.textContent = 'No selected agents match this filter. Clear the filter to list and manage them.';
+        } else {
+          hint.className = 'tep-agent-picker-hint tep-agent-picker-hint--muted';
+          hint.textContent = 'No agents selected yet. Choose from Enterprise or Cloud below.';
+        }
+        body.appendChild(hint);
+      }
+      section.appendChild(body);
+      scrollHost.appendChild(section);
+    })();
 
     const renderSection = (sectionKey, title, list, fallbackOpen) => {
       if (!list.length) return;
@@ -3298,6 +3467,7 @@
       section.dataset.tepSection = sectionKey;
       section.style.marginBottom = '6px';
       const header = document.createElement('div');
+      header.className = 'tep-agent-section-header';
       header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
       const shouldOpen = eff ? eff === sectionKey : fallbackOpen;
       header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
@@ -3339,17 +3509,16 @@
 
       section.appendChild(header);
       section.appendChild(body);
-      boxEl.appendChild(section);
+      scrollHost.appendChild(section);
     };
 
     const hasFilter = !!q;
-    if (selectedSorted.length) renderSection('selected', '✓ Selected', selectedSorted, true);
     if (enterpriseSorted.length) renderSection('enterprise', '🏢 Enterprise Agents', enterpriseSorted, !selectedSorted.length);
     if (cloudSorted.length) renderSection('cloud', '☁️ Cloud Agents', cloudSorted, hasFilter || false);
 
-    if (eff && boxEl.querySelector('.tep-agent-section')) {
+    if (eff && scrollHost.querySelector('.tep-agent-section')) {
       requestAnimationFrame(() => {
-        const sec = boxEl.querySelector(`.tep-agent-section[data-tep-section="${eff}"]`);
+        const sec = scrollHost.querySelector(`.tep-agent-section[data-tep-section="${eff}"]`);
         if (!sec) return;
         try {
           sec.scrollIntoView({ block: 'nearest', behavior: 'auto' });
@@ -3408,7 +3577,7 @@
     'DnsServer': 'tep-type-dns', 'DnsTrace': 'tep-type-dns'
   };
   const TYPE_API_PATH = {
-    'Http': 'http-server', 'A2s': 'agent-to-server', 'Page': 'page-load',
+    'Http': 'http-server', 'A2s': 'network', 'Page': 'page-load',
     'DnsServer': 'dns-server', 'DnsTrace': 'dns-trace',
     'Voip': 'voip', 'WebTransaction': 'web-transaction', 'Ftp': 'ftp',
     'Dnssec': 'dnssec', 'Bgp': 'bgp', 'Network': 'network',
@@ -3510,10 +3679,44 @@
   }
 
   function getInterval(t) {
-    return t.freqHttp || t.freqA2s || t.freqPage || t.freqDns
+    return t.freqHttp || t.freqA2s || t.freq
+      || t.freqPage || t.freqDns
       || t.freqVoip || t.freqBgp || t.freqFtp || t.freqSip
       || t.frequency || t.testInterval || t.intervalInSeconds
       || t.interval || 0;
+  }
+
+  /** Native TE agent→server edit POSTs use testType "Network", full server.* (incl. serverId), and freq+interval — not A2s/freqA2s. */
+  function shouldWriteNetworkTestShape(t) {
+    if (!t) return false;
+    const ty = t.type;
+    const tyL = String(ty == null ? '' : ty).toLowerCase();
+    if (tyL === 'network' || tyL === 'agent-to-server' || tyL === 'agent_to_server' || ty === 3) return true;
+    const tt = String(t.testType == null ? '' : t.testType).toLowerCase();
+    if (tt === 'a2s' || tt === 'network' || /(^|[^a-z])a2s([^a-z]|$)/.test(tt)) return true;
+    return false;
+  }
+
+  function syncNetworkTargetStrings(updated) {
+    if (!updated || !updated.server || typeof updated.server !== 'object') return;
+    const h = (updated.server.serverName || '').trim();
+    const p = updated.server.port;
+    if (!h) return;
+    if (p != null && p < 0) {
+      updated.server.target = h;
+    } else if (p != null && p > 0) {
+      updated.server.target = `${h}:${p}`;
+    } else {
+      updated.server.target = h;
+    }
+    if (updated.targetServer && typeof updated.targetServer === 'object') {
+      updated.targetServer = {
+        ...updated.targetServer,
+        serverName: updated.server.serverName,
+        port: updated.server.port,
+        target: updated.server.target
+      };
+    }
   }
 
   function formatInterval(seconds) {
@@ -3549,6 +3752,8 @@
     } else {
       slug = TYPE_API_PATH[slug] || TYPE_API_PATH[t.testType] || slugLower;
     }
+    /* TE REST slug for agent→server tests is `network`, not `agent-to-server` (save would 404/500). */
+    if (slug === 'agent-to-server') slug = 'network';
     if (forWrite) return `/ajax/tests/${slug}`;
     const aid = t.aid;
     const testId = t.testId || t.id;
@@ -3943,9 +4148,40 @@
       const filtered = q
         ? agents.filter(a => (a.agentName || '').toLowerCase().includes(q) || (a.agentType || '').toLowerCase().includes(q))
         : agents;
-      editAgentsBox.innerHTML = '';
       if (!filtered.length) {
-        editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
+        const brEmpty = getSelectionTypeBreakdown(editAgentIds);
+        if (brEmpty.total) {
+          const listCollapsedE = isSelectedListCollapsedState(editAgentsBox, null, brEmpty, 0);
+          editAgentsBox.innerHTML = '';
+          const barE = document.createElement('div');
+          barE.className = 'tep-agent-persistent-bar';
+          barE.style.cssText = 'font-size:12px;color:#e2e8f0;';
+          const titleE = `✓ Selected <span class="tep-sel-badges">— <strong>${brEmpty.total}</strong> (🏢 ${brEmpty.ent} · ☁️ ${brEmpty.cloud})</span>`;
+          barE.innerHTML = `<span>${titleE}</span><span class="tep-section-arrow">${listCollapsedE ? '▶' : '▼'}</span>`;
+          barE.addEventListener('click', () => {
+            editAgentsBox.dataset.tepSelectedListCollapsed = listCollapsedE ? '0' : '1';
+            renderEditAgents(filter, 'selected');
+          });
+          const scrollE = document.createElement('div');
+          scrollE.className = 'tep-edit-agents-scroll';
+          const sectionE = document.createElement('div');
+          sectionE.className = 'tep-agent-section tep-agent-section--selected';
+          sectionE.dataset.tepSection = 'selected';
+          sectionE.style.marginBottom = '6px';
+          if (listCollapsedE) sectionE.style.display = 'none';
+          const bodyE = document.createElement('div');
+          bodyE.className = 'tep-agent-section-body';
+          const hintE = document.createElement('div');
+          hintE.className = 'tep-agent-picker-hint';
+          hintE.textContent = 'No agents match this filter. Clear the filter to list selected agents.';
+          bodyE.appendChild(hintE);
+          sectionE.appendChild(bodyE);
+          scrollE.appendChild(sectionE);
+          editAgentsBox.appendChild(barE);
+          editAgentsBox.appendChild(scrollE);
+        } else {
+          editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
+        }
         return;
       }
 
@@ -3989,18 +4225,75 @@
       const selectedSorted = sortSel(selectedList);
       const entSorted = sortEnt(enterpriseRest);
       const cloudSorted = sortNm(cloudRest);
+      const brEdit = getSelectionTypeBreakdown(editAgentIds);
 
       function effectiveEditFocus(cat) {
         if (!cat) return null;
-        if (cat === 'selected' && selectedSorted.length) return 'selected';
+        if (cat === 'selected' && (selectedSorted.length || brEdit.total)) return 'selected';
         if (cat === 'enterprise' && entSorted.length) return 'enterprise';
         if (cat === 'cloud' && cloudSorted.length) return 'cloud';
-        if (selectedSorted.length) return 'selected';
+        if (selectedSorted.length || brEdit.total) return 'selected';
         if (entSorted.length) return 'enterprise';
         if (cloudSorted.length) return 'cloud';
         return null;
       }
       const effEdit = effectiveEditFocus(focusSection);
+      const listCollapsedEdit = isSelectedListCollapsedState(editAgentsBox, effEdit, brEdit, selectedSorted.length);
+
+      editAgentsBox.innerHTML = '';
+      const barEdit = document.createElement('div');
+      barEdit.className = 'tep-agent-persistent-bar';
+      barEdit.style.cssText = 'font-size:12px;color:#e2e8f0;';
+      const titleEdit = `✓ Selected <span class="tep-sel-badges">— <strong>${brEdit.total}</strong> (🏢 ${brEdit.ent} · ☁️ ${brEdit.cloud})</span>`;
+      barEdit.innerHTML = `<span>${titleEdit}</span><span class="tep-section-arrow">${listCollapsedEdit ? '▶' : '▼'}</span>`;
+      barEdit.addEventListener('click', () => {
+        editAgentsBox.dataset.tepSelectedListCollapsed = listCollapsedEdit ? '0' : '1';
+        renderEditAgents(filter, 'selected');
+      });
+      const scrollHostEdit = document.createElement('div');
+      scrollHostEdit.className = 'tep-edit-agents-scroll';
+      editAgentsBox.appendChild(barEdit);
+      editAgentsBox.appendChild(scrollHostEdit);
+
+      (function renderEditSelectedGroup() {
+        const section = document.createElement('div');
+        section.className = 'tep-agent-section tep-agent-section--selected';
+        section.dataset.tepSection = 'selected';
+        section.style.marginBottom = '6px';
+        if (listCollapsedEdit) section.style.display = 'none';
+        const body = document.createElement('div');
+        body.className = 'tep-agent-section-body';
+        if (selectedSorted.length) {
+          for (const agent of selectedSorted) {
+            const aid = String(agent.agentId);
+            const lbl = document.createElement('label');
+            const checked = restoreAgentSelectionSetHas(editAgentIds, agent.agentId) ? 'checked' : '';
+            const statusDot = agent.agentType === 'Enterprise'
+              ? `<span class="tep-agent-status ${agent.status}" style="width:6px;height:6px;"></span>` : '';
+            const locTxt = agent.location ? ` <span style="color:#64748b;font-size:10px;">${agent.location}</span>` : '';
+            lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:#64748b;font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
+            const cb = lbl.querySelector('input');
+            cb.addEventListener('change', () => {
+              if (cb.checked) editAgentIds.add(aid);
+              else editAgentIds.delete(aid);
+              renderEditAgents(editFilterInput.value, 'selected');
+            });
+            body.appendChild(lbl);
+          }
+        } else {
+          const hint = document.createElement('div');
+          if (brEdit.total > 0) {
+            hint.className = 'tep-agent-picker-hint';
+            hint.textContent = 'No selected agents match this filter. Clear the filter to list and manage them.';
+          } else {
+            hint.className = 'tep-agent-picker-hint tep-agent-picker-hint--muted';
+            hint.textContent = 'No agents selected yet. Choose from Enterprise or Cloud below.';
+          }
+          body.appendChild(hint);
+        }
+        section.appendChild(body);
+        scrollHostEdit.appendChild(section);
+      })();
 
       const renderSection = (sectionKey, title, list, fallbackOpen) => {
         if (!list.length) return;
@@ -4009,6 +4302,7 @@
         section.dataset.tepSection = sectionKey;
         section.style.marginBottom = '6px';
         const header = document.createElement('div');
+        header.className = 'tep-agent-section-header';
         header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#e2e8f0;';
         const shouldOpen = effEdit ? effEdit === sectionKey : fallbackOpen;
         header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
@@ -4038,17 +4332,16 @@
         }
         section.appendChild(header);
         section.appendChild(body);
-        editAgentsBox.appendChild(section);
+        scrollHostEdit.appendChild(section);
       };
 
       const hasFilter = !!q;
-      if (selectedSorted.length) renderSection('selected', '✓ Selected', selectedSorted, true);
       if (entSorted.length) renderSection('enterprise', '🏢 Enterprise Agents', entSorted, !selectedSorted.length);
       if (cloudSorted.length) renderSection('cloud', '☁️ Cloud Agents', cloudSorted, hasFilter || false);
 
-      if (effEdit && editAgentsBox.querySelector('.tep-agent-section')) {
+      if (effEdit && scrollHostEdit.querySelector('.tep-agent-section')) {
         requestAnimationFrame(() => {
-          const sec = editAgentsBox.querySelector(`.tep-agent-section[data-tep-section="${effEdit}"]`);
+          const sec = scrollHostEdit.querySelector(`.tep-agent-section[data-tep-section="${effEdit}"]`);
           if (!sec) return;
           try {
             sec.scrollIntoView({ block: 'nearest', behavior: 'auto' });
@@ -4094,7 +4387,7 @@
       const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
       const newEnabled = parseInt(form.querySelector('.tep-edit-enabled').value, 10);
 
-      // Build updated body — start from enriched test, strip internal keys
+      // Build updated body — same path as HTTP/Page: enriched list/detail object, not a create body
       const updated = { ...t };
       Object.keys(updated).forEach(k => { if (k.startsWith('_')) delete updated[k]; });
       updated.name = newName;
@@ -4104,16 +4397,20 @@
       // Set target
       if (updated.url && typeof updated.url === 'object') updated.url.url = newTarget;
       else if (updated.server !== undefined) {
-        // Network/A2S tests use server as { serverName, port }
         if (typeof updated.server === 'object' && updated.server !== null) {
           let host = newTarget.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
-          let port = updated.server.port || 443;
+          let port = updated.server.port != null ? updated.server.port : 443;
           const ci = host.lastIndexOf(':');
           if (ci > 0 && !host.includes('[')) {
             const mp = parseInt(host.substring(ci + 1), 10);
             if (mp > 0 && mp < 65536) { port = mp; host = host.substring(0, ci); }
           }
-          updated.server = { serverName: host, port: port };
+          if (shouldWriteNetworkTestShape(t)) {
+            updated.server = { ...updated.server, serverName: host, port };
+            syncNetworkTargetStrings(updated);
+          } else {
+            updated.server = { serverName: host, port: port };
+          }
         } else {
           updated.server = newTarget;
         }
@@ -4153,30 +4450,42 @@
         } else {
           updated.port = newPort;
         }
+        if (shouldWriteNetworkTestShape(t)) {
+          syncNetworkTargetStrings(updated);
+        }
       }
 
-      // Ensure freq and interval are always present
-      updated.interval = newInterval;
-      updated.freq = newInterval;
       if (!updated.dscp && updated.dscp !== 0) {
-        const tt = (t.testType || t.type || '').toLowerCase();
-        if (/a2s|network|agent/i.test(tt)) updated.dscp = updated.dscp || 0;
+        const ttD = (t.testType || t.type || '').toLowerCase();
+        if (/a2s|network|agent/i.test(ttD)) updated.dscp = updated.dscp || 0;
       }
-      if (!Object.keys(updated).some(k => /^freq/i.test(k))) {
-        const tt = (t.testType || t.type || '').toLowerCase();
-        if (/page|browser/i.test(tt)) updated.freqPage = newInterval;
-        else if (/a2s|agent|network/i.test(tt)) updated.freqA2s = newInterval;
-        else if (/dns/i.test(tt)) updated.freqDns = newInterval;
-        else updated.freqHttp = newInterval;
+      const tt = (t.testType || t.type || '').toLowerCase();
+      /* Native UI: Network tests use testType "Network" + freq + interval (not A2s / freqA2s). */
+      if (shouldWriteNetworkTestShape(t)) {
+        updated.testType = 'Network';
+        updated.interval = newInterval;
+        updated.freq = newInterval;
+        delete updated.freqA2s;
+        if (updated.aid == null && t.aid != null) updated.aid = t.aid;
+      } else {
+        updated.interval = newInterval;
+        updated.freq = newInterval;
+        if (!Object.keys(updated).some((k) => /^freq/i.test(k))) {
+          if (/page|browser/i.test(tt)) updated.freqPage = newInterval;
+          else if (/dns/i.test(tt)) updated.freqDns = newInterval;
+          else updated.freqHttp = newInterval;
+        }
       }
 
       // Set agents
       if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
       updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
 
+      if (updated.testId == null && updated.id != null) updated.testId = updated.id;
+
       // Debug: log freq fields being sent
       const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval input: ${newInterval}`, 'tep-log-info');
+      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval: ${newInterval} | POST ${testApiUrl(t, { forWrite: true })}`, 'tep-log-info');
 
       try {
         const resp = await ajax(testApiUrl(t, { forWrite: true }), {
@@ -4294,10 +4603,20 @@
         } else if (action === 'interval') {
           const newInterval = parseInt(bulkInterval.value, 10);
           const updated = { ...t };
-          if (updated.freqHttp !== undefined) updated.freqHttp = newInterval;
+          if (shouldWriteNetworkTestShape(t)) {
+            updated.testType = 'Network';
+            updated.interval = newInterval;
+            updated.freq = newInterval;
+            delete updated.freqA2s;
+            if (updated.testId == null && updated.id != null) updated.testId = updated.id;
+          } else if (updated.freqHttp !== undefined) updated.freqHttp = newInterval;
           else if (updated.freqA2s !== undefined) updated.freqA2s = newInterval;
           else if (updated.freqPage !== undefined) updated.freqPage = newInterval;
           else if (updated.freqDns !== undefined) updated.freqDns = newInterval;
+          else {
+            updated.interval = newInterval;
+            updated.freq = newInterval;
+          }
           resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
         } else if (action === 'protocol') {
           const tt = (t.testType || t.type || '').toLowerCase();
