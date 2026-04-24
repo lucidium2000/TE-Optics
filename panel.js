@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.06';
+  const TEP_VERSION = '2.07';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -1518,6 +1518,7 @@
   }
 
   const TEP_STATUS_SUPERPOWERS = 'Ensure you have Superpowers enabled';
+  const TEP_STATUS_MANAGE_ACCESS_DENIED = 'Manage Tests: access was denied. ' + TEP_STATUS_SUPERPOWERS;
   const TEP_STATUS_CREATE_DUPLICATE = 'A test could not be created: duplicate name. Use a unique name for each test.';
 
   function applyDefaultAuthenticatedStatus() {
@@ -1536,7 +1537,19 @@
     applyDefaultAuthenticatedStatus();
   }
 
-  function isLikelyCreatePermissionDenied(status, bodyText) {
+  function clearManageFailureStatus() {
+    const t = (statusEl.textContent || '').trim();
+    if (t !== TEP_STATUS_MANAGE_ACCESS_DENIED) return;
+    applyDefaultAuthenticatedStatus();
+  }
+
+  function notifyManageAccessDenied() {
+    setStatus(TEP_STATUS_MANAGE_ACCESS_DENIED, 'err');
+    toast('Access was denied. ' + TEP_STATUS_SUPERPOWERS, 'err');
+  }
+
+  /** API writes (Create + Manage) often return 401/403 or a SOAP/HTML body for permission issues. */
+  function isLikelyPermissionDenied(status, bodyText) {
     const st = Number(status);
     if (st === 401 || st === 403) return true;
     const t = String(bodyText || '').slice(0, 8000);
@@ -1546,6 +1559,7 @@
     if (st === 400 && /forbidden|unauthorized|permission|privilege|superpower|not\s*allowed\s*to/i.test(tl)) return true;
     return false;
   }
+  const isLikelyCreatePermissionDenied = isLikelyPermissionDenied;
 
   function isLikelyDuplicateTestNameError(status, bodyText) {
     const st = Number(status);
@@ -3910,6 +3924,7 @@
     ];
 
     let found = false;
+    let sawListPermissionDenied = false;
     for (const ep of endpoints) {
       try {
         const resp = await ajax(ep);
@@ -3944,6 +3959,8 @@
             log(`${ep} → 200 but 0 tests (${typeof data}, keys: ${Object.keys(data).slice(0,5).join(',')})`, 'tep-log-info');
           }
         } else {
+          const errTxt = await resp.text().catch(() => '');
+          if (isLikelyPermissionDenied(resp.status, errTxt)) sawListPermissionDenied = true;
           log(`${ep} → ${resp.status}`, 'tep-log-info');
         }
       } catch (e) {
@@ -3953,16 +3970,23 @@
 
     if (!found) {
       log('Could not find test list endpoint. Check log above.', 'tep-log-err');
+      if (sawListPermissionDenied) {
+        notifyManageAccessDenied();
+      }
       if (!quiet) {
         testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
       } else {
-        toast('Could not load portal tests — see log', 'err');
+        if (!sawListPermissionDenied) {
+          toast('Could not load portal tests — see log', 'err');
+        }
       }
     } else {
       if (!quiet) {
+        clearManageFailureStatus();
         renderTests();
         if (!skipEnrich) enrichTestsWithAgents();
       } else {
+        clearManageFailureStatus();
         log(`Loaded ${allTests.length} portal test(s) (quiet)`, 'tep-log-ok');
       }
     }
@@ -4555,7 +4579,11 @@
         } else {
           const txt = await resp.text().catch(() => '');
           log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
-          toast(`Failed to save "${newName}": ${resp.status}`, 'err');
+          if (isLikelyPermissionDenied(resp.status, txt)) {
+            notifyManageAccessDenied();
+          } else {
+            toast(`Failed to save "${newName}": ${resp.status}`, 'err');
+          }
         }
       } catch (e) { dismissProcessing(); log(`  ✗ Error: ${e.message}`, 'tep-log-err'); toast(`Error saving "${newName}"`, 'err'); }
     });
@@ -4587,6 +4615,11 @@
       } else {
         const txt = await resp.text().catch(() => '');
         log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+        if (isLikelyPermissionDenied(resp.status, txt)) {
+          notifyManageAccessDenied();
+        } else {
+          toast(`Could not clone test: ${resp.status}`, 'err');
+        }
       }
     } catch (e) { log(`  ✗ Error: ${e.message}`, 'tep-log-err'); }
   }
@@ -4608,6 +4641,11 @@
       } else {
         const txt = await resp.text().catch(() => '');
         log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+        if (isLikelyPermissionDenied(resp.status, txt)) {
+          notifyManageAccessDenied();
+        } else {
+          toast(`Could not change test: ${resp.status}`, 'err');
+        }
       }
     } catch (e) { log(`  ✗ Error: ${e.message}`, 'tep-log-err'); }
   }
@@ -4629,6 +4667,11 @@
       } else {
         const txt = await resp.text().catch(() => '');
         log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+        if (isLikelyPermissionDenied(resp.status, txt)) {
+          notifyManageAccessDenied();
+        } else {
+          toast(`Could not delete test: ${resp.status}`, 'err');
+        }
       }
     } catch (e) { log(`  ✗ Error: ${e.message}`, 'tep-log-err'); }
   }
@@ -4646,6 +4689,7 @@
     log(`Bulk ${action} on ${selected.length} test(s)…`, 'tep-log-info');
     const dismissProcessing = toastProcessing(`Bulk ${action} on ${selected.length} test(s)…`);
     let ok = 0, fail = 0;
+    let sawBulkPermissionDenied = false;
 
     for (const t of selected) {
       if (isReadOnly(t)) { log(`  Skipping "${t.name}" — read-only type`, 'tep-log-info'); fail++; continue; }
@@ -4701,13 +4745,23 @@
         }
 
         if (resp && resp.ok) { ok++; }
-        else { fail++; log(`  ✗ "${t.name}" → ${resp ? resp.status : 'no response'}`, 'tep-log-err'); }
+        else {
+          fail++;
+          const failBody = resp ? await resp.text().catch(() => '') : '';
+          if (resp && isLikelyPermissionDenied(resp.status, failBody)) sawBulkPermissionDenied = true;
+          log(`  ✗ "${t.name}" → ${resp ? resp.status : 'no response'}`, 'tep-log-err');
+        }
       } catch (e) { fail++; log(`  ✗ "${t.name}" error: ${e.message}`, 'tep-log-err'); }
     }
 
     dismissProcessing();
+    if (sawBulkPermissionDenied) {
+      notifyManageAccessDenied();
+    }
     log(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, ok ? 'tep-log-ok' : 'tep-log-err');
-    toast(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, fail ? 'err' : 'ok');
+    if (!sawBulkPermissionDenied) {
+      toast(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, fail ? 'err' : 'ok');
+    }
     selectedTestIds.clear();
     updateBulkUI();
     loadTests();
@@ -5222,10 +5276,14 @@
 
   // Manage panel listeners
   $('#tep-manage-load').addEventListener('click', loadTests);
-  manageTypeFilter.addEventListener('change', renderTests);
-  manageSearch.addEventListener('input', renderTests);
+  function renderTestsAfterManageInput() {
+    clearManageFailureStatus();
+    renderTests();
+  }
+  manageTypeFilter.addEventListener('change', renderTestsAfterManageInput);
+  manageSearch.addEventListener('input', renderTestsAfterManageInput);
   manageSearch.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadTests(); });
-  manageSort.addEventListener('change', renderTests);
+  manageSort.addEventListener('change', renderTestsAfterManageInput);
 
   // Bulk controls
   $('#tep-select-all').addEventListener('click', () => {
