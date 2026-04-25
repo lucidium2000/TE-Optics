@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.13';
+  const TEP_VERSION = '2.20';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -609,6 +609,38 @@
       cursor: col-resize; z-index: 2147483648;
       background: transparent;
     }
+    #tep-resize-handle::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 3px;
+      height: 56px;
+      transform: translate(-50%, -50%);
+      border-radius: 999px;
+      opacity: 0.55;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(148, 163, 184, 0.0) 0px,
+        rgba(148, 163, 184, 0.0) 6px,
+        rgba(148, 163, 184, 0.75) 6px,
+        rgba(148, 163, 184, 0.75) 10px
+      );
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55);
+      pointer-events: none;
+    }
+    #tep-resize-handle:hover::after,
+    #tep-resize-handle.active::after {
+      opacity: 0.9;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(59, 130, 246, 0.0) 0px,
+        rgba(59, 130, 246, 0.0) 6px,
+        rgba(59, 130, 246, 0.95) 6px,
+        rgba(59, 130, 246, 0.95) 10px
+      );
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.65);
+    }
     #tep-resize-handle:hover, #tep-resize-handle.active {
       background: #3b82f6;
     }
@@ -620,6 +652,30 @@
       user-select: none; gap: 8px;
     }
     .tep-header h2 { font-size: 15px; font-weight: 700; color: #f1f5f9; margin: 0; flex: 1; }
+    .tep-title-version {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      margin-left: 6px;
+      letter-spacing: 0.02em;
+    }
+    .tep-title-update {
+      font-size: 10px;
+      font-weight: 700;
+      color: #bae6fd;
+      margin-left: 8px;
+      text-decoration: none;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      background: rgba(56, 189, 248, 0.14);
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6) inset;
+    }
+    .tep-title-update:hover {
+      color: #e0f2fe;
+      border-color: rgba(56, 189, 248, 0.75);
+      background: rgba(56, 189, 248, 0.22);
+    }
     .tep-dark-toggle {
       background: none; border: 1px solid #475569; color: #94a3b8; font-size: 16px;
       cursor: pointer; padding: 2px 6px; border-radius: 6px; line-height: 1;
@@ -1278,7 +1334,11 @@
 
   root.insertAdjacentHTML('beforeend', `
     <div class="tep-header" id="tep-drag-handle">
-      <h2>TE Optics</h2>
+      <h2>
+        <span>TE Optics</span>
+        <span class="tep-title-version">v${TEP_VERSION}</span>
+        <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>
+      </h2>
       <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle dark mode on TE page">&#9789;</button>
       <button class="tep-close" id="tep-close">&times;</button>
     </div>
@@ -1599,7 +1659,9 @@
     if (!tabs || !pDash || !pManage) return;
 
     if (isDashboardToolsPage()) {
-      if (h2) h2.textContent = 'TE Optics';
+      if (h2) {
+        h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      }
       tabs.style.display = 'none';
       tabs.innerHTML = '';
       pManage.classList.remove('active');
@@ -1626,6 +1688,10 @@
     if (pManage) pManage.classList.add('active');
     if (back) back.removeAttribute('hidden');
     tepFromDashTests = true;
+    const h2 = root.querySelector('.tep-header h2');
+    if (h2) {
+      h2.innerHTML = `<span>TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+    }
     void loadTests();
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
@@ -1640,6 +1706,10 @@
     if (pDash) pDash.classList.add('active');
     if (back) back.setAttribute('hidden', '');
     tepFromDashTests = false;
+    const h2 = root.querySelector('.tep-header h2');
+    if (h2) {
+      h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+    }
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
   }

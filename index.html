@@ -17,7 +17,7 @@
       justify-content: center;
       padding: 3rem 1rem;
     }
-    .container { max-width: 720px; width: 100%; }
+    .container { max-width: 980px; width: 100%; }
     h1.install-title {
       font-size: 2rem;
       font-weight: 700;
@@ -49,8 +49,76 @@
     .subtitle {
       color: #94a3b8;
       font-size: 1.05rem;
-      margin-bottom: 2.5rem;
+      margin-bottom: 0.65rem;
       line-height: 1.6;
+    }
+    .subtitle-sep {
+      border: 0;
+      height: 1px;
+      margin: 0.55rem 0 0.55rem;
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0), rgba(148, 163, 184, 0.18), rgba(148, 163, 184, 0));
+    }
+    .subtitle-disclaimer {
+      color: #64748b;
+      font-size: 0.9rem;
+      margin: 0 0 1.6rem;
+      line-height: 1.5;
+    }
+    .req-line {
+      font-size: 0.92rem;
+      color: #94a3b8;
+    }
+    .req-line strong { color: #cbd5e1; }
+    .req-app {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 6px;
+      white-space: nowrap;
+    }
+    .req-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-block;
+      vertical-align: text-bottom;
+    }
+    .steps-2up {
+      display: flex;
+      gap: 1.25rem;
+      align-items: stretch;
+      margin-bottom: 1.25rem;
+    }
+    .steps-2up > .step {
+      flex: 1 1 0;
+      margin-bottom: 0;
+    }
+    @media (max-width: 860px) {
+      .steps-2up { display: block; margin-bottom: 0; }
+      .steps-2up > .step { margin-bottom: 1.25rem; }
+    }
+
+    .step.step--bookmark { overflow: visible; }
+    .bookmarklet-wrap { position: relative; display: inline-block; }
+    .bookmarklet-wrap .bookmarklet-link { position: relative; z-index: 1; }
+    .install-drag-img {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      height: 420px;
+      width: auto;
+      max-width: min(1710px, 92vw);
+      /* 9% up + 5% left vs prior centering (percent of the image’s own width/height) */
+      transform: translate(calc(-100% - 5%), calc(-50% - 9%));
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.7; /* ~30% transparent */
+      background: transparent;
+      /* PNG alpha shows the page background through; shadow is separate from fill */
+      filter: drop-shadow(0 18px 28px rgba(0,0,0,0.45));
+      user-select: none;
+    }
+    @media (max-width: 860px) {
+      .install-drag-img { display: none; }
     }
     .step {
       background: #1e293b;
@@ -163,66 +231,111 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.13</span>
+        TE Optics<span class="install-version" aria-label="Build">2.20</span>
     </h1>
     <p class="subtitle">
-      Bulk-create ThousandEyes tests using your existing browser session.
-      No API tokens needed &mdash; this tool piggybacks on the session you already
-      have open in <code>app.thousandeyes.com</code>.
+      An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
+      manage dashboards, and more. Designed to work seamlessly via your existing permissions,
+      no API token needed.
+    </p>
+    <hr class="subtitle-sep" aria-hidden="true">
+    <p class="subtitle-disclaimer">
+      Not official. This is independent community software. It is not sponsored, endorsed, or affiliated with Cisco or ThousandEyes.
     </p>
 
-    <div class="step">
-      <span class="step-number">1</span>
-      <h2>Log into ThousandEyes</h2>
-      <p>
-        Open <a href="https://app.thousandeyes.com" target="_blank" style="color:#60a5fa;">app.thousandeyes.com</a>
-        in your browser and make sure you&rsquo;re signed in.
-      </p>
+    <div class="steps-2up">
+      <div class="step step--bookmark">
+        <span class="step-number">1</span>
+        <h2>Drag this button to your bookmark bar</h2>
+        <p class="req-line" style="margin-top:0.5rem;">
+        <span class="req-app" title="Chrome">
+          <svg class="req-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <circle cx="24" cy="24" r="22" fill="#e53935"/>
+            <path d="M24 24 L43 24 A22 22 0 0 1 12 43 Z" fill="#43a047"/>
+            <path d="M24 24 L12 43 A22 22 0 0 1 5 14 Z" fill="#fbc02d"/>
+            <circle cx="24" cy="24" r="10" fill="#1e88e5"/>
+            <circle cx="24" cy="24" r="5" fill="#bbdefb"/>
+          </svg>
+          Chrome
+        </span>
+        <span class="req-app" title="Edge">
+          <svg class="req-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <defs>
+              <radialGradient id="edgeg" cx="45%" cy="40%" r="75%">
+                <stop offset="0" stop-color="#93c5fd"/>
+                <stop offset="0.55" stop-color="#3b82f6"/>
+                <stop offset="1" stop-color="#1d4ed8"/>
+              </radialGradient>
+              <radialGradient id="edgeg2" cx="55%" cy="60%" r="70%">
+                <stop offset="0" stop-color="#34d399"/>
+                <stop offset="0.55" stop-color="#22c55e"/>
+                <stop offset="1" stop-color="#0ea5e9"/>
+              </radialGradient>
+            </defs>
+            <!-- simplified "Edge-like" swirl -->
+            <circle cx="24" cy="24" r="22" fill="url(#edgeg)"/>
+            <path d="M9 28c1.2 8.2 8.3 14.5 16.9 14.5 7.6 0 14.2-4.9 16.5-11.8-2.8 2.7-6.7 4.3-10.9 4.3-8.3 0-15-6.7-15-15 0-3.2 1-6.1 2.7-8.5C13.2 17.6 9.4 22.4 9 28z" fill="url(#edgeg2)"/>
+            <path d="M36.8 20.4c-2.2-4.5-6.8-7.6-12.1-7.6-4.8 0-9.1 2.6-11.4 6.5 2.2-1.4 4.8-2.2 7.7-2.2 7.5 0 13.6 5.9 13.6 13.2 0 2.2-.6 4.2-1.6 6 5.3-2.1 8.8-7.2 8.8-12.9 0-1.1-.1-2.1-.4-3z" fill="#0ea5e9" opacity="0.95"/>
+            <path d="M32.5 27.2H18.7c.5 3.9 3.9 6.9 8 6.9 3.1 0 5.9-1.7 7.3-4.3-.9.4-1.9.6-3 .6-2.7 0-5-1.2-6.3-3.2h7.8z" fill="#ffffff" opacity="0.92"/>
+          </svg>
+          Edge
+        </span>
+        </p>
+        <div class="bookmarklet-wrap">
+          <img
+            class="install-drag-img"
+            src="assets/install-arrow.png"
+            width="500"
+            height="792"
+            alt=""
+            decoding="async"
+            loading="lazy" />
+          <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(0);">TE Optics</a>
+        </div>
+        <span class="hint">
+          Drag &amp; drop onto your bookmarks toolbar. If hidden,
+          press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.
+        </span>
+      </div>
+
+      <div class="step step--login">
+        <span class="step-number">2</span>
+        <h2>Log into ThousandEyes</h2>
+        <p>
+          That&rsquo;s it! just use ThousandEyes as normal, hit the <strong style="color:#e2e8f0;">TE Optics</strong> bookmark
+          to launch the side bar.
+        </p>
+        <p style="margin-top:2.4rem;">
+          <strong style="color:#e2e8f0;">Updating?</strong>
+          Just delete your old one and drag a new one!
+        </p>
+      </div>
     </div>
 
-    <div class="step">
-      <span class="step-number">2</span>
-      <h2>Launch the panel</h2>
-      <p style="margin-top:0.5rem;">
-        <strong style="color:#e2e8f0;">Bookmarklet</strong> <span style="font-size:0.8rem;color:#f59e0b;">(Chrome/Edge)</span><br>
-        Drag this button to your bookmarks bar, then click it while on <code>app.thousandeyes.com</code>:
-      </p>
-      <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(0);">TE Optics</a>
-      <span class="hint">
-        Drag &amp; drop onto your bookmarks toolbar. If hidden,
-        press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.
-      </span>
-      <p style="margin-top:0.85rem;">
-        <strong style="color:#e2e8f0;">Updating?</strong>
-        Remove your old TE Optics bookmark from the bar, then drag the button above again to add a replacement.
-        Bookmarklets store a copy of the script from when the bookmark was saved, so replacing the bookmark is how you get the latest version.
-      </p>
-    </div>
-
-    <div class="step">
-      <span class="step-number">3</span>
-      <h2>Use the panel</h2>
+    <div class="step step--howto">
+      <h2>How to Use</h2>
       <p>
-        After you launch TE Optics from your bookmark, the same sidebar shows <strong>different tabs</strong> depending on where you are in
-        <code>app.thousandeyes.com</code>: <strong>Dashboards</strong> (the <code>/dashboard</code> experience) vs the rest of the app for
-        <strong>enterprise agent tests</strong>.
+        Think of TE Optics as a <strong>power sidebar</strong> that “snaps” to what you’re doing in <code>app.thousandeyes.com</code>.
+        Open it anywhere, and it surfaces the right tools for that page.
       </p>
       <p style="margin-top:0.85rem;">
-        <strong style="color:#e2e8f0;">Dashboards</strong> &mdash; On a dashboard URL you get <strong>Backup</strong> and <strong>Restore</strong>:
-        import or refresh dashboard JSON from the app, save it to disk, upload a backup back to ThousandEyes, optionally remove all widget
-        <code>filters</code> and clear virtual-agent fields on restore, load the account-group dashboard list for cleanup (sort and bulk delete),
-        plus advanced diagnostics for <code>/namespace/dash-api</code> and related traffic.
+        <strong style="color:#e2e8f0;">On Dashboards</strong> (the <code>/dashboard</code> experience) it turns into a dashboard toolkit:
+        <strong>backup</strong>, <strong>restore</strong>, and <strong>cleanup</strong>—grab JSON straight from the UI, save it, re‑apply it,
+        and optionally strip widget <code>filters</code> / clear virtual-agent fields for cleaner restores.
       </p>
       <p style="margin-top:0.85rem;">
-        <strong style="color:#e2e8f0;">Enterprise tests</strong> &mdash; On other pages the panel opens to <strong>Manage tests</strong>; use <strong>Create test</strong> to expand bulk create.
-        the panel verifies your session, loads agents for the current account group, and supports bulk create and bulk edits. Supported types for creation:
+        <strong style="color:#e2e8f0;">Everywhere else</strong> it becomes a test command center:
+        fast <strong>Manage</strong> (filter, inspect, edit) plus <strong>Create</strong> for bulk creation—powered by your existing permissions
+        (no API token needed). Create supports:
       </p>
       <ul>
-        <li><strong style="color:#e2e8f0;">HTTP Server</strong> &mdash; monitor web endpoints</li>
-        <li><strong style="color:#e2e8f0;">Agent-to-Server</strong> &mdash; network connectivity</li>
-        <li><strong style="color:#e2e8f0;">Page Load</strong> &mdash; full page render timing</li>
+        <li><strong style="color:#e2e8f0;">HTTP Server</strong> &mdash; web endpoint monitoring</li>
+        <li><strong style="color:#e2e8f0;">Agent-to-Server</strong> &mdash; network connectivity checks</li>
+        <li><strong style="color:#e2e8f0;">Page Load</strong> &mdash; real page render timing</li>
       </ul>
-      <p>Enter multiple targets (one per line) when bulk-creating tests.</p>
+      <p style="margin:0.6rem 0 0;">
+        Tip: paste multiple targets (one per line) to spin up a whole batch in one go.
+      </p>
     </div>
 
     <div class="note">
@@ -281,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.13';
+  const TEP_VERSION = '2.20';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -871,6 +984,38 @@
       cursor: col-resize; z-index: 2147483648;
       background: transparent;
     }
+    #tep-resize-handle::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 3px;
+      height: 56px;
+      transform: translate(-50%, -50%);
+      border-radius: 999px;
+      opacity: 0.55;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(148, 163, 184, 0.0) 0px,
+        rgba(148, 163, 184, 0.0) 6px,
+        rgba(148, 163, 184, 0.75) 6px,
+        rgba(148, 163, 184, 0.75) 10px
+      );
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55);
+      pointer-events: none;
+    }
+    #tep-resize-handle:hover::after,
+    #tep-resize-handle.active::after {
+      opacity: 0.9;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(59, 130, 246, 0.0) 0px,
+        rgba(59, 130, 246, 0.0) 6px,
+        rgba(59, 130, 246, 0.95) 6px,
+        rgba(59, 130, 246, 0.95) 10px
+      );
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.65);
+    }
     #tep-resize-handle:hover, #tep-resize-handle.active {
       background: #3b82f6;
     }
@@ -882,6 +1027,30 @@
       user-select: none; gap: 8px;
     }
     .tep-header h2 { font-size: 15px; font-weight: 700; color: #f1f5f9; margin: 0; flex: 1; }
+    .tep-title-version {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      margin-left: 6px;
+      letter-spacing: 0.02em;
+    }
+    .tep-title-update {
+      font-size: 10px;
+      font-weight: 700;
+      color: #bae6fd;
+      margin-left: 8px;
+      text-decoration: none;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      background: rgba(56, 189, 248, 0.14);
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6) inset;
+    }
+    .tep-title-update:hover {
+      color: #e0f2fe;
+      border-color: rgba(56, 189, 248, 0.75);
+      background: rgba(56, 189, 248, 0.22);
+    }
     .tep-dark-toggle {
       background: none; border: 1px solid #475569; color: #94a3b8; font-size: 16px;
       cursor: pointer; padding: 2px 6px; border-radius: 6px; line-height: 1;
@@ -1540,7 +1709,11 @@
 
   root.insertAdjacentHTML('beforeend', `
     <div class="tep-header" id="tep-drag-handle">
-      <h2>TE Optics</h2>
+      <h2>
+        <span>TE Optics</span>
+        <span class="tep-title-version">v${TEP_VERSION}</span>
+        <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>
+      </h2>
       <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle dark mode on TE page">&#9789;</button>
       <button class="tep-close" id="tep-close">&times;</button>
     </div>
@@ -1860,7 +2033,9 @@
     if (!tabs || !pDash || !pManage) return;
 
     if (isDashboardToolsPage()) {
-      if (h2) h2.textContent = 'TE Optics';
+      if (h2) {
+        h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      }
       tabs.style.display = 'none';
       tabs.innerHTML = '';
       pManage.classList.remove('active');
@@ -1887,6 +2062,10 @@
     if (pManage) pManage.classList.add('active');
     if (back) back.removeAttribute('hidden');
     tepFromDashTests = true;
+    const h2 = root.querySelector('.tep-header h2');
+    if (h2) {
+      h2.innerHTML = `<span>TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+    }
     void loadTests();
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
@@ -1901,6 +2080,10 @@
     if (pDash) pDash.classList.add('active');
     if (back) back.setAttribute('hidden', '');
     tepFromDashTests = false;
+    const h2 = root.querySelector('.tep-header h2');
+    if (h2) {
+      h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+    }
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
   }
