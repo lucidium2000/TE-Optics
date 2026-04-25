@@ -910,6 +910,7 @@
       color: #f97316; font-weight: 600;
     }
     .tep-units-total { flex-shrink: 0; text-align: right; }
+    .tep-units-plan { color: #f8fafc; font-weight: 600; }
 
     /* Toast notifications — out of flow so “Loading test…” etc. do not push content */
     .tep-toast {
@@ -4866,11 +4867,11 @@
     } else if (counted === 0) {
       el.textContent = '—';
     } else {
-      const used = formatManageFilterTotalUnits(sum).replace(/\s+Units$/, '');
+      const usedNum = Math.round(sum).toLocaleString();
       if (usagePlanUnits != null) {
-        el.textContent = `${used} / ${usagePlanUnits.toLocaleString()} Units`;
+        el.innerHTML = `${usedNum} Units <span class="tep-units-plan">/ ${usagePlanUnits.toLocaleString()} Plan</span>`;
       } else {
-        el.textContent = `${used} Units`;
+        el.textContent = `${usedNum} Units`;
       }
     }
   }
