@@ -4281,10 +4281,10 @@
   }
 
   /**
-   * Web Page Load bills two cadences (browser + sub/HTTP). TE usage matches combining
-   * them with the harmonic mean of the two interval seconds: 2*P*S/(P+S) — e.g. 2m/1m → 80s
-   * effective, 1m/1m → 60s, 2m/2m → 120s (spot-checked vs Usage calculator for 1 ent agent).
-   * Web Transaction has a single test interval (no subinterval); it uses the branch below, not the harmonic.
+   * Web Page Load bills two cadences (browser + sub/HTTP). Effective interval is based on combined rate:
+   * \(1/P + 1/S\) ⇒ equivalent seconds \(= 1/(1/P + 1/S) = P*S/(P+S)\).
+   * Example: 2m/2m ⇒ 60s (double cost vs a single 2m cadence).
+   * Web Transaction has a single test interval (no subinterval).
    */
   function getThousandEysBillingIntervalSec(t, opts) {
     if (isBrowserOrPageTest(t)) {
@@ -4303,7 +4303,7 @@
       if (!Number.isFinite(subS) || subS <= 0) {
         subS = pageS;
       }
-      return (2 * pageS * subS) / (pageS + subS);
+      return (pageS * subS) / (pageS + subS);
     }
     if (opts && opts.intervalSec != null) {
       const s = Number(opts.intervalSec);
@@ -4727,7 +4727,7 @@
           <span>${target ? String(target).substring(0, 50) : '—'}</span>
           <span class="tep-test-card-meta-interval" title="${(isBrowserOrPageTest(t) ? 'Page/browser interval vs sub interval (subinterval); sub must divide page interval' : 'Test interval').replace(/"/g, '&quot;')}"><span class="tep-interval-line-inner">${formatTestIntervalLineHtml(intervalLine)}</span></span>
           <span class="tep-test-card-meta-agents"><span class="tep-meta-num">${String(agentCount)}</span> agent(s)</span>
-          <span class="tep-test-units tep-units" title="TE usage units (31-day projection): Page load uses harmonic mean of page+sub interval as divisor; milli = cloud×2×timeout + 🏢×0.5×timeout for BrowserBot (cloud double vs HTTP); other web tests cloud×timeout + 🏢×0.5×timeout; A2S fixed 5/2.5. Formula: (milli × 31d) ÷ divisor ÷ 1000.">${formatManageTestUnitsLine(t)}</span>
+          <span class="tep-test-units tep-units" title="TE usage units (31-day projection): Page load uses combined cadence rate (P*S/(P+S)) as divisor; milli = cloud×2×timeout + 🏢×0.5×timeout for BrowserBot (cloud double vs HTTP); other web tests cloud×timeout + 🏢×0.5×timeout; A2S fixed 5/2.5. Formula: (milli × 31d) ÷ divisor ÷ 1000.">${formatManageTestUnitsLine(t)}</span>
         </div>
       `;
 
