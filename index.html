@@ -1308,6 +1308,14 @@
       background: #1e293b; border: 1px solid #334155; border-radius: 8px;
       padding: 10px 12px; margin-bottom: 8px; transition: border-color .15s;
     }
+    .tep-test-card.tep-test-card--disabled {
+      background: #172235;
+      border-color: #263449;
+      filter: saturate(0.9);
+    }
+    .tep-test-card.tep-test-card--disabled .tep-test-card-name {
+      color: #cbd5e1;
+    }
     .tep-test-card:hover { border-color: #475569; }
     .tep-test-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .tep-test-page-pointer {
@@ -4996,7 +5004,7 @@
       const tid = String(t.testId || t.id || '');
       const showPageTestPointer = focusTidForPointer && i === 0 && tid === focusTidForPointer;
       const card = document.createElement('div');
-      card.className = 'tep-test-card';
+      card.className = 'tep-test-card' + (t.flagEnabled ? '' : ' tep-test-card--disabled');
       card.dataset.testId = tid;
       const typeCss = TYPE_CSS[t.testType] || 'tep-type-other';
       const typeLabel = TYPE_LABELS[t.testType] || t.testType || '?';
