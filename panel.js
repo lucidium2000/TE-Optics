@@ -4620,6 +4620,18 @@
     return `${s} Units`;
   }
 
+  function isTestEnabledForUnits(t) {
+    // TE list/detail commonly uses flagEnabled: 1/0. Be defensive across shapes.
+    const v = (t && (t.flagEnabled != null ? t.flagEnabled : (t.enabled != null ? t.enabled : (t.isEnabled != null ? t.isEnabled : (t.active != null ? t.active : null)))));
+    if (v == null) return true; // unknown → assume enabled (matches prior behavior)
+    if (v === 1 || v === true) return true;
+    if (v === 0 || v === false) return false;
+    const s = String(v).trim().toLowerCase();
+    if (s === '1' || s === 'true' || s === 'yes' || s === 'on' || s === 'enabled') return true;
+    if (s === '0' || s === 'false' || s === 'no' || s === 'off' || s === 'disabled') return false;
+    return true;
+  }
+
   function updateManageUnitsTotal(unitEditHint) {
     const el = $('#tep-manage-units-total');
     if (!el) return;
@@ -4634,6 +4646,7 @@
     let sum = 0;
     let counted = 0;
     for (const t of filtered) {
+      if (!isTestEnabledForUnits(t)) continue;
       const tid = String(t.testId || t.id || '');
       const n = (unitEditHint && unitEditHint.testId === tid)
         ? computeThousandEyesAccountUnitsRaw(t, unitEditHint.unitOpts)
