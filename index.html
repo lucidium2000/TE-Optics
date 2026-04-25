@@ -4598,7 +4598,8 @@
       : countEnterpriseAndCloudAgentsForUnits(t);
     const milli = getThousandEysMilliSumPerRound(cloud, ent, t);
     if (milli == null || !Number.isFinite(milli)) return null;
-    const u = (milli * THOUSANDEYS_UNIT_ROUNDS_31D) / sec / 1000;
+    const directionMultiplier = (isOneWayNetworkTest(t) && isOneWayDirectionBidirectional(t)) ? 2 : 1;
+    const u = directionMultiplier * (milli * THOUSANDEYS_UNIT_ROUNDS_31D) / sec / 1000;
     if (!Number.isFinite(u)) return null;
     return u;
   }
