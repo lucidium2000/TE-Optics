@@ -1518,7 +1518,6 @@
           </button>
           <div class="tep-create-expand" id="tep-dash-expand-tests" hidden>
             <p class="tep-dash-hint" style="margin:0 0 8px;">Open the standard test tools (Create test, Manage) while staying on this page.</p>
-            <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-go-tests" style="width:100%;">Open tests</button>
           </div>
         </div>
 
@@ -3941,6 +3940,30 @@
     }
     return 'to-target';
   }
+
+  function getOneWayDirectionValueForSavePreserveShape(t, bidirectionalChecked) {
+    const want = getOneWayDirectionValueForSave(t, bidirectionalChecked); // 'to-target' | 'from-target' | 'bidirectional'
+    const wantNum = want === 'to-target' ? 0 : (want === 'from-target' ? 1 : 2);
+    const wantSnake = want.toUpperCase().replace(/-/g, '_'); // TO_TARGET | FROM_TARGET | BIDIRECTIONAL
+
+    const shapeCandidates = [
+      t && t.direction,
+      t && t.testDirection,
+      t && t.test_direction,
+      t && t.oneWayDirection,
+      t && t.server && t.server.direction,
+      t && t.server && t.server.testDirection
+    ];
+    for (const v of shapeCandidates) {
+      if (typeof v === 'number' && Number.isFinite(v)) return wantNum;
+      if (typeof v === 'string' && v) {
+        if (v.includes('_')) return wantSnake;
+        if (/^[A-Z]+(?:_[A-Z]+)+$/.test(v)) return wantSnake;
+        return want;
+      }
+    }
+    return want;
+  }
   function tepEscapeHtmlText(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -4699,8 +4722,10 @@
     for (const t of filtered) {
       if (!isTestEnabledForUnits(t)) continue;
       const tid = String(t.testId || t.id || '');
-      const n = (unitEditHint && unitEditHint.testId === tid)
-        ? computeThousandEyesAccountUnitsRaw(t, unitEditHint.unitOpts)
+      const isHint = !!(unitEditHint && unitEditHint.testId === tid);
+      const hintTest = (isHint && unitEditHint.testOverride) ? unitEditHint.testOverride : null;
+      const n = isHint
+        ? computeThousandEyesAccountUnitsRaw(hintTest || t, unitEditHint.unitOpts)
         : computeThousandEyesAccountUnitsRaw(t);
       if (n != null) {
         sum += n;
@@ -4938,9 +4963,24 @@
         const des = (Number.isFinite(rawSub) && rawSub > 0) ? rawSub : p;
         o.subIntervalSec = coerceSubintervalToDividePageInterval(p, des);
       }
-      u.textContent = formatManageTestUnitsLine(t, o);
+      let tForUnits = t;
+      if (isOneWayNetworkTest(t)) {
+        const bi = form.querySelector('.tep-edit-bidirectional');
+        if (bi) {
+          const d = getOneWayDirectionValueForSave(t, bi.checked);
+          tForUnits = {
+            ...t,
+            direction: d,
+            testDirection: d,
+            test_direction: d.toUpperCase().replace(/-/g, '_'),
+            bidirectional: bi.checked ? 1 : 0,
+            flagBidirectional: bi.checked ? 1 : 0
+          };
+        }
+      }
+      u.textContent = formatManageTestUnitsLine(tForUnits, o);
       if (isManageViewActive()) {
-        updateManageUnitsTotal({ testId: String(t.testId || t.id), unitOpts: o });
+        updateManageUnitsTotal({ testId: String(t.testId || t.id), unitOpts: o, testOverride: tForUnits });
       }
     }
 
@@ -5321,9 +5361,12 @@
       if (isOneWayNetworkTest(t)) {
         const bi = form.querySelector('.tep-edit-bidirectional');
         if (bi) {
-          const d = getOneWayDirectionValueForSave(t, bi.checked);
+          const d = getOneWayDirectionValueForSavePreserveShape(t, bi.checked);
           updated.direction = d;
           updated.testDirection = d;
+          updated.test_direction = (typeof d === 'string') ? d : getOneWayDirectionValueForSave(t, bi.checked).toUpperCase().replace(/-/g, '_');
+          updated.bidirectional = bi.checked ? 1 : 0;
+          updated.flagBidirectional = bi.checked ? 1 : 0;
         }
       }
 
@@ -6196,7 +6239,7 @@
   $('#tep-bulk-apply').addEventListener('click', bulkApply);
 
   if (isDashboardToolsPage()) {
-    function wireDashSectionToggle(toggleId, expandId, defaultOpen) {
+    function wireDashSectionToggle(toggleId, expandId, defaultOpen, { onExpand } = {}) {
       const btn = root.querySelector('#' + toggleId);
       const el = root.querySelector('#' + expandId);
       if (!btn || !el) return;
@@ -6207,11 +6250,17 @@
       }
       btn.setAttribute('aria-expanded', defaultOpen ? 'true' : 'false');
       btn.setAttribute('aria-controls', expandId);
+      if (defaultOpen && typeof onExpand === 'function') {
+        try { onExpand(); } catch (_) {}
+      }
       btn.addEventListener('click', () => {
         const h = el.hasAttribute('hidden');
         if (h) {
           el.removeAttribute('hidden');
           btn.setAttribute('aria-expanded', 'true');
+          if (typeof onExpand === 'function') {
+            try { onExpand(); } catch (_) {}
+          }
         } else {
           el.setAttribute('hidden', '');
           btn.setAttribute('aria-expanded', 'false');
@@ -6221,15 +6270,9 @@
     wireDashSectionToggle('tep-dash-toggle-backup', 'tep-dash-expand-backup', true);
     wireDashSectionToggle('tep-dash-toggle-restore', 'tep-dash-expand-restore', false);
     wireDashSectionToggle('tep-dash-toggle-cleanup', 'tep-dash-expand-cleanup', false);
-    wireDashSectionToggle('tep-dash-toggle-tests', 'tep-dash-expand-tests', false);
-    const goTestsBtn = root.querySelector('#tep-dash-go-tests');
-    if (goTestsBtn) {
-      goTestsBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showTestsPanelFromDashboard();
-      });
-    }
+    wireDashSectionToggle('tep-dash-toggle-tests', 'tep-dash-expand-tests', false, {
+      onExpand: () => showTestsPanelFromDashboard()
+    });
     const backToDashBtn = root.querySelector('#tep-dash-back-to-tools');
     if (backToDashBtn) {
       backToDashBtn.addEventListener('click', (e) => {
