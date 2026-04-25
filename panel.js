@@ -1633,6 +1633,9 @@
   let usagePlanUnits = null;
   let usagePlanUnitsLastAt = 0;
   let usagePlanPollTimer = null;
+  // Create units estimate (only counts toward total while focused in Create panel)
+  let createUnitsEstimate = null;
+  let createUnitsFocused = false;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -4668,7 +4671,8 @@
     } else if (counted === 0) {
       el.textContent = '—';
     } else {
-      const usedNum = Math.round(sum).toLocaleString();
+      const usedTotal = Math.round(sum) + (createUnitsFocused && Number.isFinite(createUnitsEstimate) ? createUnitsEstimate : 0);
+      const usedNum = usedTotal.toLocaleString();
       if (usagePlanUnits != null) {
         el.innerHTML = `${usedNum} Units <span class="tep-units-plan">/ ${usagePlanUnits.toLocaleString()} Plan</span>`;
       } else {
@@ -5801,10 +5805,12 @@
     if (!el) return;
     if (!selectedAgentIds || selectedAgentIds.size === 0) {
       el.textContent = '';
+      createUnitsEstimate = null;
+      if (createUnitsFocused) updateManageUnitsTotal();
       return;
     }
     const typeInfo = TE_TYPE_MAP[currentType];
-    if (!typeInfo) { el.textContent = '—'; return; }
+    if (!typeInfo) { el.textContent = '—'; createUnitsEstimate = null; if (createUnitsFocused) updateManageUnitsTotal(); return; }
 
     const targetsRaw = ($('#tep-targets') && $('#tep-targets').value ? $('#tep-targets').value : '').trim();
     const firstTarget = targetsRaw.split('\n').map(s => s.trim()).filter(Boolean)[0]
@@ -5834,8 +5840,10 @@
       intervalSec: interval,
       subIntervalSec: subInterval
     });
-    if (raw == null) { el.textContent = '—'; return; }
-    el.textContent = `${Math.round(raw).toLocaleString()} units`;
+    if (raw == null) { el.textContent = '—'; createUnitsEstimate = null; if (createUnitsFocused) updateManageUnitsTotal(); return; }
+    createUnitsEstimate = Math.round(raw);
+    el.textContent = `${createUnitsEstimate.toLocaleString()} units`;
+    if (createUnitsFocused) updateManageUnitsTotal();
   }
 
   async function createTests() {
@@ -6022,10 +6030,28 @@
       if (isHidden) {
         createExpandPanel.removeAttribute('hidden');
         createToggle.setAttribute('aria-expanded', 'true');
+        updateCreateUnitsEstimate();
       } else {
         createExpandPanel.setAttribute('hidden', '');
         createToggle.setAttribute('aria-expanded', 'false');
+        createUnitsFocused = false;
+        updateManageUnitsTotal();
       }
+    });
+  }
+  if (createExpandPanel) {
+    createExpandPanel.addEventListener('focusin', () => {
+      createUnitsFocused = true;
+      updateCreateUnitsEstimate();
+      updateManageUnitsTotal();
+    });
+    createExpandPanel.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (!createExpandPanel.contains(document.activeElement)) {
+          createUnitsFocused = false;
+          updateManageUnitsTotal();
+        }
+      }, 0);
     });
   }
   const manageToggle = $('#tep-manage-toggle');
