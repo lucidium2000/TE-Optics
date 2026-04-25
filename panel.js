@@ -1029,6 +1029,8 @@
     /* Create (expandable under button, not a top-level tab) */
     .tep-create-block { margin-bottom: 14px; }
     .tep-manage-block { margin-top: 0; }
+    .tep-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .tep-create-units-est { font-size: 12px; font-weight: 700; white-space: nowrap; }
     .tep-create-toggle {
       width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;
       padding: 10px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;
@@ -1278,7 +1280,10 @@
           <div class="tep-tab" data-type="page-load">Page Load</div>
         </div>
 
-        <label class="tep-label">Test Name (use {target} as placeholder for bulk)</label>
+        <div class="tep-label-row">
+          <label class="tep-label">Test Name (use {target} as placeholder for bulk)</label>
+          <span class="tep-units tep-create-units-est" id="tep-create-units" aria-live="polite"></span>
+        </div>
         <input class="tep-input" id="tep-testname" value="HTTP Test - {target}" placeholder="My test name">
 
         <label class="tep-label">Targets (one per line)</label>
@@ -3658,6 +3663,7 @@
             if (boxEl === agentsBox) clearCreateFailureStatus();
             if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
             else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
+            if (boxEl === agentsBox) updateCreateUnitsEstimate();
             renderAgentPickerSection(boxEl, filter, selectionSet, { ...options, focusSection: 'selected' });
           });
           body.appendChild(item);
@@ -3716,6 +3722,7 @@
           if (boxEl === agentsBox) clearCreateFailureStatus();
           if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
           else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
+          if (boxEl === agentsBox) updateCreateUnitsEstimate();
           renderAgentPickerSection(boxEl, filter, selectionSet, {
             ...options,
             focusSection: sectionKey
@@ -5586,12 +5593,14 @@
     }
     syncTargetsCloneGutter();
     clearCreateFailureStatus();
+    updateCreateUnitsEstimate();
   });
 
   // A2S protocol toggle — show/hide TCP options when ICMP is selected
   $('#tep-a2s-protocol').addEventListener('change', () => {
     clearCreateFailureStatus();
     $('#tep-a2s-tcp-opts').style.display = $('#tep-a2s-protocol').value.startsWith('TCP') ? 'contents' : 'none';
+    updateCreateUnitsEstimate();
   });
 
   // ---------------------------------------------------------------------------
@@ -5785,6 +5794,48 @@
           break;
       }
     }
+  }
+
+  function updateCreateUnitsEstimate() {
+    const el = $('#tep-create-units');
+    if (!el) return;
+    if (!selectedAgentIds || selectedAgentIds.size === 0) {
+      el.textContent = '';
+      return;
+    }
+    const typeInfo = TE_TYPE_MAP[currentType];
+    if (!typeInfo) { el.textContent = '—'; return; }
+
+    const targetsRaw = ($('#tep-targets') && $('#tep-targets').value ? $('#tep-targets').value : '').trim();
+    const firstTarget = targetsRaw.split('\n').map(s => s.trim()).filter(Boolean)[0]
+      || (currentType === 'agent-to-server' ? 'example.com' : 'https://example.com');
+
+    const interval = parseInt($('#tep-interval').value, 10) || 0;
+    const subIntervalEl = $('#tep-subinterval');
+    const subInterval = (currentType === 'page-load' && subIntervalEl)
+      ? (parseInt(subIntervalEl.value, 10) || interval)
+      : interval;
+
+    const pv = $('#tep-a2s-protocol').value;
+    const protoOpts = {
+      protocol: pv && pv.startsWith('TCP') ? 'TCP' : 'ICMP',
+      port: parseInt($('#tep-a2s-port').value, 10) || 443,
+      probeMode: pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO'),
+      pathtraceInSession: $('#tep-a2s-insession').checked ? 1 : 0,
+      subInterval,
+      httpInterval: subInterval
+    };
+
+    const aid = (teInitData && teInitData._currentAid) ? teInitData._currentAid : '';
+    const vAgentIds = [...selectedAgentIds];
+    const pseudo = typeInfo.buildBody('__units__', firstTarget, interval, vAgentIds, aid, protoOpts);
+    const raw = computeThousandEyesAccountUnitsRaw(pseudo, {
+      agentIdSet: selectedAgentIds,
+      intervalSec: interval,
+      subIntervalSec: subInterval
+    });
+    if (raw == null) { el.textContent = '—'; return; }
+    el.textContent = `${Math.round(raw).toLocaleString()} units`;
   }
 
   async function createTests() {
@@ -6005,19 +6056,19 @@
   }
 
   const testNameInput = $('#tep-testname');
-  if (testNameInput) testNameInput.addEventListener('input', clearCreateFailureStatus);
+  if (testNameInput) testNameInput.addEventListener('input', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const intervalSel = $('#tep-interval');
-  if (intervalSel) intervalSel.addEventListener('change', clearCreateFailureStatus);
+  if (intervalSel) intervalSel.addEventListener('change', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const subIntervalSel = $('#tep-subinterval');
-  if (subIntervalSel) subIntervalSel.addEventListener('change', clearCreateFailureStatus);
+  if (subIntervalSel) subIntervalSel.addEventListener('change', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const a2sPort = $('#tep-a2s-port');
-  if (a2sPort) a2sPort.addEventListener('input', clearCreateFailureStatus);
+  if (a2sPort) a2sPort.addEventListener('input', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const a2sInsession = $('#tep-a2s-insession');
-  if (a2sInsession) a2sInsession.addEventListener('change', clearCreateFailureStatus);
+  if (a2sInsession) a2sInsession.addEventListener('change', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
 
   const targetsTa = root.querySelector('#tep-targets');
   if (targetsTa) {
-    targetsTa.addEventListener('input', () => { clearCreateFailureStatus(); syncTargetsCloneGutter(); });
+    targetsTa.addEventListener('input', () => { clearCreateFailureStatus(); syncTargetsCloneGutter(); updateCreateUnitsEstimate(); });
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(() => syncTargetsCloneGutter()).observe(targetsTa);
     }
