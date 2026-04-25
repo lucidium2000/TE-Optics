@@ -163,7 +163,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.12</span>
+        TE Optics<span class="install-version" aria-label="Build">2.13</span>
     </h1>
     <p class="subtitle">
       Bulk-create ThousandEyes tests using your existing browser session.
@@ -281,7 +281,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.12';
+  const TEP_VERSION = '2.13';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -909,6 +909,11 @@
     .tep-units, .tep-test-units {
       color: #f97316; font-weight: 600;
     }
+    .tep-test-card.tep-test-card--disabled .tep-units,
+    .tep-test-card.tep-test-card--disabled .tep-test-units {
+      color: #64748b;
+      font-weight: 600;
+    }
     .tep-units-total { flex-shrink: 0; text-align: right; }
     .tep-units-plan { color: #f8fafc; font-weight: 600; }
 
@@ -1300,6 +1305,20 @@
     }
     .tep-create-toggle:hover { background: #273449; border-color: #475569; }
     .tep-create-chevron { font-size: 10px; color: #94a3b8; display: inline-block; transition: transform .15s; }
+    .tep-create-toggle[aria-expanded="true"] {
+      border-color: rgba(251, 146, 60, 0.55);
+      background: linear-gradient(135deg,
+        rgba(251, 146, 60, 0.14),
+        rgba(15, 23, 42, 0.75) 55%,
+        rgba(30, 41, 59, 0.9)
+      );
+      box-shadow:
+        0 0 0 1px rgba(251, 146, 60, 0.10) inset,
+        0 10px 30px rgba(251, 146, 60, 0.12),
+        0 2px 10px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
     .tep-create-toggle[aria-expanded="true"] .tep-create-chevron { transform: rotate(90deg); }
     .tep-create-expand { margin-top: 10px; padding: 12px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; }
 
@@ -1309,12 +1328,12 @@
       padding: 10px 12px; margin-bottom: 8px; transition: border-color .15s;
     }
     .tep-test-card.tep-test-card--disabled {
-      background: #172235;
-      border-color: #263449;
-      filter: saturate(0.9);
+      background: #0b1324;
+      border-color: #1e2b42;
+      filter: saturate(0.75) brightness(0.9);
     }
     .tep-test-card.tep-test-card--disabled .tep-test-card-name {
-      color: #cbd5e1;
+      color: #94a3b8;
     }
     .tep-test-card:hover { border-color: #475569; }
     .tep-test-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
