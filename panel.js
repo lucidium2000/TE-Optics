@@ -635,7 +635,7 @@
     /* Body — relative so toasts can overlay without shifting layout */
     .tep-body { position: relative; padding: 16px; overflow-y: auto; flex: 1; }
 
-    /* Status bar — left: session message, right: manage filter units total (TE orange, kUnits) */
+    /* Status bar — left: session message, right: manage filter units total (TE orange, Units) */
     .tep-status {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 8px 12px; font-size: 12px; color: #94a3b8;
@@ -1050,8 +1050,8 @@
       line-height: 1; user-select: none; margin: 0 6px 0 0;
     }
     .tep-test-card-name { font-weight: 600; color: #e2e8f0; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
-    .tep-test-link { font-size: 11px; text-decoration: none; opacity: 0.35; transition: opacity .15s; flex-shrink: 0; }
-    .tep-test-link:hover { opacity: 1; }
+    .tep-test-link { text-decoration: none; }
+    .tep-test-link:hover { text-decoration: underline; text-underline-offset: 2px; }
     .tep-test-card-meta { display: flex; gap: 8px; margin-top: 6px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
     .tep-test-card-meta > span { display: inline-flex; align-items: center; gap: 3px; }
     .tep-test-card-meta .tep-meta-num { color: #f8fafc; font-weight: 600; }
@@ -1254,7 +1254,7 @@
     </div>
     <div class="tep-status" id="tep-status">
       <span class="tep-status-msg" id="tep-status-msg">Detecting session&hellip;</span>
-      <span class="tep-units tep-units-total" id="tep-manage-units-total" style="display:none;" aria-hidden="true" title="31-day unit projection (kUnits) for tests matching the current Manage filter"></span>
+      <span class="tep-units tep-units-total" id="tep-manage-units-total" style="display:none;" aria-hidden="true" title="31-day unit projection (Used / Plan Units) for tests matching the current Manage filter"></span>
     </div>
 
     <!-- Top-level view switcher (filled by renderViewTabsInitial) -->
@@ -1623,6 +1623,10 @@
   const filterInput = $('#tep-agent-filter');
   const tabsContainer = $('#tep-tabs');
   let currentType = 'http-server';
+  // Usage plan polling (/ajax/settings/account/usage-summary)
+  let usagePlanUnits = null;
+  let usagePlanUnitsLastAt = 0;
+  let usagePlanPollTimer = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -1634,6 +1638,77 @@
       statusEl.textContent = text;
     }
     statusEl.className = 'tep-status' + (cls ? ' ' + cls : '');
+  }
+
+  function extractUsagePlanUnitsFromUsageSummary(data) {
+    if (!data || typeof data !== 'object') return null;
+    const seen = new Set();
+    const candidates = [];
+    const isBadKey = (k) => k === '__proto__' || k === 'prototype' || k === 'constructor';
+    const walk = (node, path) => {
+      if (!node || typeof node !== 'object') return;
+      if (seen.has(node)) return;
+      seen.add(node);
+      const entries = Array.isArray(node) ? node.entries() : Object.entries(node);
+      for (const [rawK, v] of entries) {
+        const k = String(rawK);
+        if (isBadKey(k)) continue;
+        const p = path ? `${path}.${k}` : k;
+        if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+          const pl = p.toLowerCase();
+          const score =
+            (pl.includes('plan') ? 4 : 0) +
+            (pl.includes('limit') || pl.includes('allow') || pl.includes('entitl') || pl.includes('quota') ? 3 : 0) +
+            (pl.includes('unit') ? 4 : 0) +
+            (pl.includes('kunit') ? 1 : 0) +
+            (pl.includes('max') ? 1 : 0) -
+            (pl.includes('used') || pl.includes('usage') || pl.includes('consum') ? 2 : 0);
+          if (score > 0) candidates.push({ p, v, score });
+        } else if (typeof v === 'string') {
+          const n = Number(String(v).replace(/,/g, '').trim());
+          if (Number.isFinite(n) && n > 0) {
+            const pl = p.toLowerCase();
+            const score =
+              (pl.includes('plan') ? 4 : 0) +
+              (pl.includes('limit') || pl.includes('allow') || pl.includes('entitl') || pl.includes('quota') ? 3 : 0) +
+              (pl.includes('unit') ? 4 : 0) -
+              (pl.includes('used') || pl.includes('usage') || pl.includes('consum') ? 2 : 0);
+            if (score > 0) candidates.push({ p, v: n, score });
+          }
+        } else if (v && typeof v === 'object') {
+          walk(v, p);
+        }
+      }
+    };
+    walk(data, '');
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => (b.score - a.score) || (b.v - a.v));
+    const best = candidates[0];
+    const plan = Math.round(best.v);
+    if (!Number.isFinite(plan) || plan <= 0) return null;
+    return plan;
+  }
+
+  async function pollUsageSummaryPlanUnitsOnce() {
+    try {
+      const resp = await ajax('/ajax/settings/account/usage-summary');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const plan = extractUsagePlanUnitsFromUsageSummary(data);
+      if (plan != null) {
+        usagePlanUnits = plan;
+        usagePlanUnitsLastAt = Date.now();
+        updateManageUnitsTotal();
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  function startUsageSummaryPlanUnitsPoll() {
+    if (usagePlanPollTimer) return;
+    void pollUsageSummaryPlanUnitsOnce();
+    usagePlanPollTimer = setInterval(() => {
+      void pollUsageSummaryPlanUnitsOnce();
+    }, 5 * 60 * 1000);
   }
 
   const TEP_STATUS_SUPERPOWERS = 'Ensure you have Superpowers enabled';
@@ -3138,11 +3213,13 @@
           log('Dashboard mode: optional agent load failed — ' + e.message, 'tep-log-info');
         }
         refreshDashboardEditor();
+        startUsageSummaryPlanUnitsPoll();
       } else {
         setStatus('Authenticated — loading agents…', 'ok');
         log('Session OK. Loading agents…', 'tep-log-ok');
         loadAgents();
         void loadTests();
+        startUsageSummaryPlanUnitsPoll();
       }
     } catch (e) {
       setStatus('Auth failed — ' + e.message, 'err');
@@ -4523,12 +4600,12 @@
     return !!(p && p.classList.contains('active'));
   }
 
-  /** Status bar: raw unit sum → kUnits for the filtered-total line only. */
-  function formatManageFilterTotalKilo(sum) {
-    if (!Number.isFinite(sum) || sum < 0) return '0 kUnits';
-    if (sum === 0) return '0 kUnits';
-    const s = Math.round(sum / 1000).toLocaleString();
-    return `${s} kUnits`;
+  /** Status bar: raw unit sum → Units for the filtered-total line only. */
+  function formatManageFilterTotalUnits(sum) {
+    if (!Number.isFinite(sum) || sum < 0) return '0 Units';
+    if (sum === 0) return '0 Units';
+    const s = Math.round(sum).toLocaleString();
+    return `${s} Units`;
   }
 
   function updateManageUnitsTotal(unitEditHint) {
@@ -4555,11 +4632,16 @@
       }
     }
     if (filtered.length === 0) {
-      el.textContent = '0 kUnits';
+      el.textContent = '0 Units';
     } else if (counted === 0) {
       el.textContent = '—';
     } else {
-      el.textContent = formatManageFilterTotalKilo(sum);
+      const used = formatManageFilterTotalUnits(sum).replace(/\s+Units$/, '');
+      if (usagePlanUnits != null) {
+        el.textContent = `${used} / ${usagePlanUnits.toLocaleString()} Units`;
+      } else {
+        el.textContent = `${used} Units`;
+      }
     }
   }
 
@@ -4595,7 +4677,7 @@
           ${showPageTestPointer ? '<span class="tep-test-page-pointer" title="This test matches the one on the current ThousandEyes page (URL testId) — points to the app content on the left" aria-hidden="true">&#8592;</span>' : ''}
           <input type="checkbox" class="tep-test-card-check" data-tid="${tid}" ${selectedTestIds.has(tid) ? 'checked' : ''}>
           <span class="tep-type-badge ${typeCss}">${typeLabelHtml}</span>
-          <span class="tep-test-card-name" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'} <a class="tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="Open in ThousandEyes">&#x1F517;</a></span>
+          <a class="tep-test-card-name tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'}</a>
           <div class="tep-test-actions">
             ${isReadOnly(t) ? '<span style="font-size:10px;color:#64748b;">read-only</span>' : `
             <button data-action="edit" title="Edit">Edit</button>
