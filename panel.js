@@ -4305,7 +4305,7 @@
     return (Number.isFinite(g) && g > 0) ? g : null;
   }
 
-  function computeThousandEyesAccountUnits(t, opts) {
+  function computeThousandEyesAccountUnitsRaw(t, opts) {
     if (!testTypeUsesThousandEyesAccountUnits(t)) return null;
     const sec = getThousandEysBillingIntervalSec(t, opts);
     if (!Number.isFinite(sec) || sec <= 0) return null;
@@ -4316,6 +4316,12 @@
     if (milli == null || !Number.isFinite(milli)) return null;
     const u = (milli * THOUSANDEYS_UNIT_ROUNDS_31D) / sec / 1000;
     if (!Number.isFinite(u)) return null;
+    return u;
+  }
+
+  function computeThousandEyesAccountUnits(t, opts) {
+    const u = computeThousandEyesAccountUnitsRaw(t, opts);
+    if (u == null) return null;
     return Math.round(u);
   }
 
@@ -4630,8 +4636,8 @@
     for (const t of filtered) {
       const tid = String(t.testId || t.id || '');
       const n = (unitEditHint && unitEditHint.testId === tid)
-        ? computeThousandEyesAccountUnits(t, unitEditHint.unitOpts)
-        : computeThousandEyesAccountUnits(t);
+        ? computeThousandEyesAccountUnitsRaw(t, unitEditHint.unitOpts)
+        : computeThousandEyesAccountUnitsRaw(t);
       if (n != null) {
         sum += n;
         counted++;
