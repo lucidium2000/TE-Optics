@@ -3788,10 +3788,12 @@
         )
       : agents;
 
+    const selectedAgentsAll = agents.filter((a) => restoreAgentSelectionSetHas(selectionSet, a.agentId));
+
     if (!filtered.length) {
       const brF = getSelectionTypeBreakdown(selectionSet);
       if (brF.total) {
-        const listCollapsedF = isSelectedListCollapsedState(boxEl, null, brF, 0);
+        const listCollapsedF = isSelectedListCollapsedState(boxEl, null, brF, selectedAgentsAll.length);
         boxEl.innerHTML = '';
         const barF = document.createElement('div');
         barF.className = 'tep-agent-persistent-bar';
@@ -3810,10 +3812,48 @@
         if (listCollapsedF) sectionF.style.display = 'none';
         const bodyF = document.createElement('div');
         bodyF.className = 'tep-agent-section-body';
-        const hintF = document.createElement('div');
-        hintF.className = 'tep-agent-picker-hint';
-        hintF.textContent = 'No agents match this filter. Clear the filter to list selected agents.';
-        bodyF.appendChild(hintF);
+        if (selectedAgentsAll.length) {
+          const selectedSortedF = [...selectedAgentsAll].sort((a, b) => {
+            const aEnt = a.agentType === 'Enterprise' ? 0 : 1;
+            const bEnt = b.agentType === 'Enterprise' ? 0 : 1;
+            if (aEnt !== bEnt) return aEnt - bEnt;
+            if (a.status !== b.status) {
+              if (a.status === 'online') return -1;
+              if (b.status === 'online') return 1;
+              if (a.status === 'offline') return 1;
+              if (b.status === 'offline') return -1;
+            }
+            return (a.agentName || '').localeCompare(b.agentName || '');
+          });
+          selectedSortedF.forEach((agent) => {
+            const item = document.createElement('label');
+            item.className = 'tep-agent-item';
+            const checked = restoreAgentSelectionSetHas(selectionSet, agent.agentId) ? 'checked' : '';
+            const statusDot = agent.agentType === 'Enterprise'
+              ? `<span class="tep-agent-status ${agent.status}" title="${agent.status}"></span>`
+              : '';
+            item.innerHTML = `
+          <input type="checkbox" value="${agent.agentId}" ${checked}>
+          ${statusDot}
+          <span class="tep-agent-name">${agent.agentName || 'Agent ' + agent.agentId}</span>
+          <span class="tep-agent-loc">${agent.location || ''}</span>
+        `;
+            const cb = item.querySelector('input');
+            cb.addEventListener('change', () => {
+              if (boxEl === agentsBox) clearCreateFailureStatus();
+              if (cb.checked) addAgentIdToSelectionSet(selectionSet, agent.agentId);
+              else removeAgentIdFromSelectionSet(selectionSet, agent.agentId);
+              if (boxEl === agentsBox) updateCreateUnitsEstimate();
+              renderAgentPickerSection(boxEl, filter, selectionSet, { ...options, focusSection: 'selected' });
+            });
+            bodyF.appendChild(item);
+          });
+        } else {
+          const hintF = document.createElement('div');
+          hintF.className = 'tep-agent-picker-hint';
+          hintF.textContent = 'No agents match filter.';
+          bodyF.appendChild(hintF);
+        }
         sectionF.appendChild(bodyF);
         scrollF.appendChild(sectionF);
         boxEl.appendChild(barF);
@@ -3824,7 +3864,7 @@
       return;
     }
 
-    const selectedAgents = filtered.filter((a) => restoreAgentSelectionSetHas(selectionSet, a.agentId));
+    const selectedAgents = selectedAgentsAll;
     const enterprise = filtered.filter(
       (a) => a.agentType === 'Enterprise' && !restoreAgentSelectionSetHas(selectionSet, a.agentId)
     );
@@ -3929,7 +3969,7 @@
         const hint = document.createElement('div');
         if (br.total > 0) {
           hint.className = 'tep-agent-picker-hint';
-          hint.textContent = 'No selected agents match this filter. Clear the filter to list and manage them.';
+          hint.textContent = 'Selected agents (always shown) — use the filter to narrow Enterprise/Cloud lists below.';
         } else {
           hint.className = 'tep-agent-picker-hint tep-agent-picker-hint--muted';
           hint.textContent = 'No agents selected yet. Choose from Enterprise or Cloud below.';
@@ -5166,7 +5206,7 @@
           bodyE.className = 'tep-agent-section-body';
           const hintE = document.createElement('div');
           hintE.className = 'tep-agent-picker-hint';
-          hintE.textContent = 'No agents match this filter. Clear the filter to list selected agents.';
+          hintE.textContent = 'No agents match this filter.';
           bodyE.appendChild(hintE);
           sectionE.appendChild(bodyE);
           scrollE.appendChild(sectionE);
@@ -5278,7 +5318,7 @@
           const hint = document.createElement('div');
           if (brEdit.total > 0) {
             hint.className = 'tep-agent-picker-hint';
-            hint.textContent = 'No selected agents match this filter. Clear the filter to list and manage them.';
+            hint.textContent = 'Selected agents (always shown) — use the filter to narrow Enterprise/Cloud lists below.';
           } else {
             hint.className = 'tep-agent-picker-hint tep-agent-picker-hint--muted';
             hint.textContent = 'No agents selected yet. Choose from Enterprise or Cloud below.';
