@@ -3467,6 +3467,11 @@
       } else {
         setStatus(`Authenticated — ${agents.length} agent(s) loaded`, 'ok');
       }
+      // Units depend on enterprise vs cloud agent types; refresh once agent types are known.
+      if (allTests && allTests.length) {
+        renderTests();
+        updateManageUnitsTotal();
+      }
     } catch (e) {
       agentsBox.innerHTML = `<span class="tep-log-err">Error: ${e.message}</span>`;
     }
