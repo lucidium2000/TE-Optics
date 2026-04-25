@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.07';
+  const TEP_VERSION = '2.10';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -44,6 +44,9 @@
       return false;
     }
   }
+
+  /** On /dashboard, true when the user opened the standard tests (manage) view from dashboard tools. */
+  let tepFromDashTests = false;
 
   const TEP_DASH_CAPTURE = { entries: [], max: 24 };
   /** @type {{ path: string, status: number, ct: string, snippet: string, t: number }[]} */
@@ -632,13 +635,19 @@
     /* Body — relative so toasts can overlay without shifting layout */
     .tep-body { position: relative; padding: 16px; overflow-y: auto; flex: 1; }
 
-    /* Status bar */
+    /* Status bar — left: session message, right: manage filter units total (TE orange, kUnits) */
     .tep-status {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 8px 12px; font-size: 12px; color: #94a3b8;
       background: #1e293b; border-bottom: 1px solid #334155;
     }
-    .tep-status.ok { color: #4ade80; }
-    .tep-status.err { color: #f87171; }
+    .tep-status-msg { flex: 1; min-width: 0; }
+    .tep-status.ok .tep-status-msg { color: #4ade80; }
+    .tep-status.err .tep-status-msg { color: #f87171; }
+    .tep-units, .tep-test-units {
+      color: #f97316; font-weight: 600;
+    }
+    .tep-units-total { flex-shrink: 0; text-align: right; }
 
     /* Toast notifications — out of flow so “Loading test…” etc. do not push content */
     .tep-toast {
@@ -833,6 +842,11 @@
     .tep-btn-danger { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
     .tep-btn-danger:hover { background: #7f1d1d; color: #fecaca; }
     .tep-btn-sm { padding: 5px 10px; font-size: 12px; }
+    .tep-btn-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 32px; padding: 6px; line-height: 0;
+    }
+    .tep-btn-icon svg { display: block; }
     .tep-dash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
     .tep-dash-intro { font-size: 12px; color: #94a3b8; line-height: 1.55; margin: 0 0 14px; }
     .tep-dash-card {
@@ -904,8 +918,7 @@
     .tep-dash-cleanup-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .tep-dash-cleanup-name { font-weight: 600; color: #e2e8f0; word-break: break-word; }
     .tep-dash-cleanup-id { font-size: 10px; color: #64748b; word-break: break-all; }
-    .tep-dash-tab-panel { display: none; }
-    .tep-dash-tab-panel.active { display: block; }
+    .tep-dash-back-banner { margin-bottom: 10px; }
     .tep-actions { display: flex; gap: 8px; margin-top: 16px; }
 
     .tep-attribution {
@@ -1001,6 +1014,7 @@
 
     /* Top-level view switcher */
     .tep-view-tabs { display: flex; border-bottom: 1px solid #334155; }
+    .tep-view-tabs:empty { display: none; }
     .tep-view-tab {
       flex: 1; padding: 10px; text-align: center; font-size: 13px;
       font-weight: 600; color: #94a3b8; cursor: pointer;
@@ -1011,6 +1025,19 @@
     .tep-view-panel { display: none; }
     .tep-view-panel.active { display: block; }
 
+    /* Create (expandable under button, not a top-level tab) */
+    .tep-create-block { margin-bottom: 14px; }
+    .tep-manage-block { margin-top: 0; }
+    .tep-create-toggle {
+      width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      color: #e2e8f0; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s;
+    }
+    .tep-create-toggle:hover { background: #273449; border-color: #475569; }
+    .tep-create-chevron { font-size: 10px; color: #94a3b8; display: inline-block; transition: transform .15s; }
+    .tep-create-toggle[aria-expanded="true"] .tep-create-chevron { transform: rotate(90deg); }
+    .tep-create-expand { margin-top: 10px; padding: 12px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; }
+
     /* Test cards */
     .tep-test-card {
       background: #1e293b; border: 1px solid #334155; border-radius: 8px;
@@ -1018,11 +1045,17 @@
     }
     .tep-test-card:hover { border-color: #475569; }
     .tep-test-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .tep-test-page-pointer {
+      display: inline-flex; align-items: center; flex-shrink: 0; color: #38bdf8; font-size: 15px; font-weight: 700;
+      line-height: 1; user-select: none; margin: 0 6px 0 0;
+    }
     .tep-test-card-name { font-weight: 600; color: #e2e8f0; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
     .tep-test-link { font-size: 11px; text-decoration: none; opacity: 0.35; transition: opacity .15s; flex-shrink: 0; }
     .tep-test-link:hover { opacity: 1; }
     .tep-test-card-meta { display: flex; gap: 8px; margin-top: 6px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
-    .tep-test-card-meta span { display: inline-flex; align-items: center; gap: 3px; }
+    .tep-test-card-meta > span { display: inline-flex; align-items: center; gap: 3px; }
+    .tep-test-card-meta .tep-meta-num { color: #f8fafc; font-weight: 600; }
+    .tep-test-card-meta .tep-meta-interval-suffix { color: #64748b; font-weight: 400; }
     .tep-type-badge {
       font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
       text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
@@ -1117,9 +1150,6 @@
     .tep-bulk-delete { background: #7f1d1d; color: #fca5a5; }
     .tep-bulk-delete:hover { background: #991b1b; }
     .tep-test-card-check { accent-color: #3b82f6; margin-right: 4px; cursor: pointer; flex-shrink: 0; }
-    .tep-select-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-    .tep-select-bar button { background: none; border: none; color: #3b82f6; font-size: 12px; cursor: pointer; padding: 0; }
-    .tep-select-bar button:hover { text-decoration: underline; }
 
     /* Scrollbar */
     #te-panel-root ::-webkit-scrollbar { width: 6px; }
@@ -1222,14 +1252,25 @@
       <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle dark mode on TE page">&#9789;</button>
       <button class="tep-close" id="tep-close">&times;</button>
     </div>
-    <div class="tep-status" id="tep-status">Detecting session&hellip;</div>
+    <div class="tep-status" id="tep-status">
+      <span class="tep-status-msg" id="tep-status-msg">Detecting session&hellip;</span>
+      <span class="tep-units tep-units-total" id="tep-manage-units-total" style="display:none;" aria-hidden="true" title="31-day unit projection (kUnits) for tests matching the current Manage filter"></span>
+    </div>
 
     <!-- Top-level view switcher (filled by renderViewTabsInitial) -->
     <div class="tep-view-tabs" id="tep-view-tabs"></div>
 
-    <div class="tep-body" id="tep-body">
-      <!-- ============== CREATE PANEL ============== -->
-      <div class="tep-view-panel active" id="tep-panel-create">
+      <div class="tep-body" id="tep-body">
+      <!-- ============== MANAGE (default) + expandable CREATE ============== -->
+      <div class="tep-view-panel active" id="tep-panel-manage">
+        <div class="tep-dash-back-banner" id="tep-dash-tests-back-wrap" hidden>
+          <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-back-to-tools" style="width:100%;">← Dashboard tools</button>
+        </div>
+        <div class="tep-create-block">
+          <button type="button" class="tep-create-toggle" id="tep-create-toggle" aria-expanded="false" aria-controls="tep-panel-create">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Create test
+          </button>
+          <div class="tep-create-expand" id="tep-panel-create" hidden>
         <div class="tep-tabs" id="tep-tabs">
           <div class="tep-tab active" data-type="http-server">HTTP Server</div>
           <div class="tep-tab" data-type="agent-to-server">Agent&rarr;Server</div>
@@ -1263,18 +1304,31 @@
               <input type="checkbox" id="tep-a2s-insession" checked> In-Session
             </label>
           </div>
+          <div>
+            <label class="tep-label" for="tep-interval" id="tep-interval-primary-label">Test interval</label>
+            <select class="tep-select" id="tep-interval">
+              <option value="60">1 minute</option>
+              <option value="120" selected>2 minutes</option>
+              <option value="300">5 minutes</option>
+              <option value="600">10 minutes</option>
+              <option value="900">15 minutes</option>
+              <option value="1800">30 minutes</option>
+              <option value="3600">60 minutes</option>
+            </select>
+          </div>
+          <div id="tep-subinterval-wrap" style="display:none;" aria-hidden="true">
+            <label class="tep-label" for="tep-subinterval" title="Sub interval (seconds): inner HTTP checks must run on a cadence that evenly divides the page/browser interval (TE field: subinterval).">Sub interval</label>
+            <select class="tep-select" id="tep-subinterval">
+              <option value="60">1 minute</option>
+              <option value="120" selected>2 minutes</option>
+              <option value="300">5 minutes</option>
+              <option value="600">10 minutes</option>
+              <option value="900">15 minutes</option>
+              <option value="1800">30 minutes</option>
+              <option value="3600">60 minutes</option>
+            </select>
+          </div>
         </div>
-
-        <label class="tep-label">Test Interval</label>
-        <select class="tep-select" id="tep-interval">
-          <option value="60">1 minute</option>
-          <option value="120" selected>2 minutes</option>
-          <option value="300">5 minutes</option>
-          <option value="600">10 minutes</option>
-          <option value="900">15 minutes</option>
-          <option value="1800">30 minutes</option>
-          <option value="3600">60 minutes</option>
-        </select>
 
 
         <div class="tep-section-title">
@@ -1294,10 +1348,13 @@
           <button class="tep-btn tep-btn-secondary" id="tep-retry-auth">Retry Auth</button>
           <button class="tep-btn tep-btn-secondary" id="tep-clear-log">Clear Log</button>
         </div>
-      </div>
-
-      <!-- ============== MANAGE PANEL ============== -->
-      <div class="tep-view-panel" id="tep-panel-manage">
+          </div>
+        </div>
+        <div class="tep-manage-block">
+          <button type="button" class="tep-create-toggle" id="tep-manage-toggle" aria-expanded="true" aria-controls="tep-panel-manage-body">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Manage
+          </button>
+          <div class="tep-manage-expand tep-create-expand" id="tep-panel-manage-body">
         <div class="tep-manage-toolbar">
           <select id="tep-manage-type-filter">
             <option value="">All Types</option>
@@ -1312,7 +1369,14 @@
             <option value="name">Sort: Name</option>
             <option value="modified">Sort: Date Modified</option>
           </select>
-          <button class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-manage-load">Load Tests</button>
+          <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-manage-load" title="Refresh test list" aria-label="Refresh test list">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
+              <path d="M21 3v5h-5" />
+              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
+              <path d="M3 21v-5h5" />
+            </svg>
+          </button>
         </div>
         <div class="tep-bulk-bar" id="tep-bulk-bar">
           <span id="tep-bulk-count">0 selected</span>
@@ -1343,21 +1407,22 @@
           </select>
           <button class="tep-bulk-apply" id="tep-bulk-apply">Apply</button>
         </div>
-        <div class="tep-select-bar" id="tep-select-bar" style="display:none;">
-          <button id="tep-select-all">Select All</button>
-          <button id="tep-select-none">Deselect All</button>
-          <button id="tep-select-filtered">Select Filtered</button>
-        </div>
         <div class="tep-test-count" id="tep-test-count"></div>
         <div class="tep-test-list" id="tep-test-list">
-          <span class="tep-log-info">Click "Load Tests" or switch to this tab after auth.</span>
+          <span class="tep-log-info">Loading tests&hellip;</span>
+        </div>
+          </div>
         </div>
       </div>
 
       <!-- ============== DASHBOARD TOOLS (/dashboard only) ============== -->
       <div class="tep-view-panel" id="tep-panel-dashboard">
-        <div id="tep-dash-panel-backup" class="tep-dash-tab-panel active">
-          <div class="tep-dash-card">
+        <div class="tep-create-block" id="tep-dash-block-backup">
+          <button type="button" class="tep-create-toggle" id="tep-dash-toggle-backup" aria-expanded="true" aria-controls="tep-dash-expand-backup">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Backup
+          </button>
+          <div class="tep-create-expand" id="tep-dash-expand-backup">
+            <div class="tep-dash-card">
             <div class="tep-dash-meta" id="tep-dash-meta">Nothing loaded yet — use Refresh import.</div>
             <label class="tep-label">Dashboard JSON (backup)</label>
             <details class="tep-dash-json-details" id="tep-dash-json-details">
@@ -1375,22 +1440,15 @@
             <div class="tep-dash-actions">
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-download">Save as file…</button>
             </div>
-
-            <div class="tep-dash-cleanup" id="tep-dash-cleanup">
-              <div class="tep-dash-section-title">Dashboard cleanup</div>
-              <p class="tep-dash-cleanup-meta" id="tep-dash-cleanup-meta">Not loaded yet.</p>
-              <div class="tep-dash-cleanup-toolbar">
-                <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-cleanup-refresh">Load dashboards in account group</button>
-                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-sort" title="Toggle list order">Sort: newest first</button>
-                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-select-none">Select none</button>
-                <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-cleanup-delete">Delete selected…</button>
-              </div>
-              <div class="tep-dash-cleanup-list" id="tep-dash-cleanup-list"></div>
             </div>
           </div>
         </div>
 
-        <div id="tep-dash-panel-restore" class="tep-dash-tab-panel">
+        <div class="tep-create-block" id="tep-dash-block-restore">
+          <button type="button" class="tep-create-toggle" id="tep-dash-toggle-restore" aria-expanded="false" aria-controls="tep-dash-expand-restore">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Restore
+          </button>
+          <div class="tep-create-expand" id="tep-dash-expand-restore" hidden>
           <div class="tep-dash-card tep-dash-restore-card">
             <div class="tep-dash-meta" id="tep-dash-restore-meta">No restore payload yet — use Open import file…</div>
 
@@ -1426,6 +1484,35 @@
             <div class="tep-dash-row" style="margin-top:14px;">
               <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-restore" style="flex:1;">Restore to ThousandEyes…</button>
             </div>
+          </div>
+          </div>
+        </div>
+
+        <div class="tep-create-block" id="tep-dash-block-cleanup">
+          <button type="button" class="tep-create-toggle" id="tep-dash-toggle-cleanup" aria-expanded="false" aria-controls="tep-dash-expand-cleanup">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Cleanup
+          </button>
+          <div class="tep-create-expand" id="tep-dash-expand-cleanup" hidden>
+            <div class="tep-dash-cleanup" id="tep-dash-cleanup" style="margin-top:0;padding-top:0;border-top:0;">
+              <p class="tep-dash-cleanup-meta" id="tep-dash-cleanup-meta">Not loaded yet.</p>
+              <div class="tep-dash-cleanup-toolbar">
+                <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-cleanup-refresh">Load dashboards in account group</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-sort" title="Toggle list order">Sort: newest first</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-select-none">Select none</button>
+                <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-cleanup-delete">Delete selected…</button>
+              </div>
+              <div class="tep-dash-cleanup-list" id="tep-dash-cleanup-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tep-create-block" id="tep-dash-block-tests">
+          <button type="button" class="tep-create-toggle" id="tep-dash-toggle-tests" aria-expanded="false" aria-controls="tep-dash-expand-tests">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Tests
+          </button>
+          <div class="tep-create-expand" id="tep-dash-expand-tests" hidden>
+            <p class="tep-dash-hint" style="margin:0 0 8px;">Open the standard test tools (Create test, Manage) while staying on this page.</p>
+            <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-go-tests" style="width:100%;">Open tests</button>
           </div>
         </div>
 
@@ -1476,33 +1563,61 @@
     const tabs = root.querySelector('#tep-view-tabs');
     const h2 = root.querySelector('.tep-header h2');
     const pDash = root.querySelector('#tep-panel-dashboard');
-    const pCreate = root.querySelector('#tep-panel-create');
     const pManage = root.querySelector('#tep-panel-manage');
-    if (!tabs || !pDash || !pCreate || !pManage) return;
+    if (!tabs || !pDash || !pManage) return;
 
     if (isDashboardToolsPage()) {
       if (h2) h2.textContent = 'TE Optics';
-      tabs.innerHTML =
-        '<div class="tep-view-tab active" data-view="dashboard" data-dash-tab="backup">Backup</div>' +
-        '<div class="tep-view-tab" data-view="dashboard" data-dash-tab="restore">Restore</div>';
-      pCreate.classList.remove('active');
+      tabs.style.display = 'none';
+      tabs.innerHTML = '';
       pManage.classList.remove('active');
       pDash.classList.add('active');
+      const back = root.querySelector('#tep-dash-tests-back-wrap');
+      if (back) back.setAttribute('hidden', '');
+      tepFromDashTests = false;
     } else {
-      tabs.innerHTML = '<div class="tep-view-tab active" data-view="create">Create Tests</div>' +
-        '<div class="tep-view-tab" data-view="manage">Manage Tests</div>';
+      tabs.style.display = 'none';
+      tabs.innerHTML = '';
       pDash.classList.remove('active');
-      pCreate.classList.add('active');
+      pManage.classList.add('active');
     }
   }
 
   renderViewTabsInitial();
+
+  function showTestsPanelFromDashboard() {
+    if (!isDashboardToolsPage()) return;
+    const pDash = root.querySelector('#tep-panel-dashboard');
+    const pManage = root.querySelector('#tep-panel-manage');
+    const back = root.querySelector('#tep-dash-tests-back-wrap');
+    if (pDash) pDash.classList.remove('active');
+    if (pManage) pManage.classList.add('active');
+    if (back) back.removeAttribute('hidden');
+    tepFromDashTests = true;
+    void loadTests();
+    updateManageUnitsTotal();
+    applyDefaultAuthenticatedStatus();
+  }
+
+  function showDashboardPanelFromTests() {
+    if (!isDashboardToolsPage()) return;
+    const pDash = root.querySelector('#tep-panel-dashboard');
+    const pManage = root.querySelector('#tep-panel-manage');
+    const back = root.querySelector('#tep-dash-tests-back-wrap');
+    if (pManage) pManage.classList.remove('active');
+    if (pDash) pDash.classList.add('active');
+    if (back) back.setAttribute('hidden', '');
+    tepFromDashTests = false;
+    updateManageUnitsTotal();
+    applyDefaultAuthenticatedStatus();
+  }
 
   // ---------------------------------------------------------------------------
   // Refs
   // ---------------------------------------------------------------------------
   const $ = (sel) => root.querySelector(sel);
   const statusEl = $('#tep-status');
+  const statusMsgEl = $('#tep-status-msg');
   const logEl = $('#tep-log');
   const agentsBox = $('#tep-agents-box');
   const filterInput = $('#tep-agent-filter');
@@ -1513,7 +1628,11 @@
   // Helpers
   // ---------------------------------------------------------------------------
   function setStatus(text, cls) {
-    statusEl.textContent = text;
+    if (statusMsgEl) {
+      statusMsgEl.textContent = text;
+    } else {
+      statusEl.textContent = text;
+    }
     statusEl.className = 'tep-status' + (cls ? ' ' + cls : '');
   }
 
@@ -1523,7 +1642,7 @@
 
   function applyDefaultAuthenticatedStatus() {
     if (!isOnTEPage()) return;
-    if (isDashboardToolsPage()) {
+    if (isDashboardToolsPage() && !tepFromDashTests) {
       setStatus(agents && agents.length ? `Dashboard — ${agents.length} portal agent(s) loaded` : 'Authenticated — dashboard tools', 'ok');
     } else {
       setStatus(agents && agents.length ? `Authenticated — ${agents.length} agent(s) loaded` : 'Authenticated — loading agents…', 'ok');
@@ -1532,13 +1651,13 @@
 
   /** Clears create-specific error lines when the user adjusts the create form or starts a new run. */
   function clearCreateFailureStatus() {
-    const t = (statusEl.textContent || '').trim();
+    const t = ((statusMsgEl && statusMsgEl.textContent) || statusEl.textContent || '').trim();
     if (t !== TEP_STATUS_SUPERPOWERS && t !== TEP_STATUS_CREATE_DUPLICATE) return;
     applyDefaultAuthenticatedStatus();
   }
 
   function clearManageFailureStatus() {
-    const t = (statusEl.textContent || '').trim();
+    const t = ((statusMsgEl && statusMsgEl.textContent) || statusEl.textContent || '').trim();
     if (t !== TEP_STATUS_MANAGE_ACCESS_DENIED) return;
     applyDefaultAuthenticatedStatus();
   }
@@ -3011,7 +3130,7 @@
         } else {
           log('Dashboard mode: aid still unknown — dashboard probes run without ?aid= (may 404).', 'tep-log-err');
         }
-        setStatus('Authenticated — dashboard tools', 'ok');
+        applyDefaultAuthenticatedStatus();
         log('Dashboard mode: session OK; loading portal agents for restore…', 'tep-log-ok');
         try {
           await loadAgents();
@@ -3023,6 +3142,7 @@
         setStatus('Authenticated — loading agents…', 'ok');
         log('Session OK. Loading agents…', 'tep-log-ok');
         loadAgents();
+        void loadTests();
       }
     } catch (e) {
       setStatus('Auth failed — ' + e.message, 'err');
@@ -3264,7 +3384,7 @@
         return (a.agentName || '').localeCompare(b.agentName || '');
       });
       renderAgents();
-      if (isDashboardToolsPage()) {
+      if (isDashboardToolsPage() && !tepFromDashTests) {
         setStatus(`Dashboard — ${agents.length} portal agent(s) loaded`, 'ok');
       } else {
         setStatus(`Authenticated — ${agents.length} agent(s) loaded`, 'ok');
@@ -3578,13 +3698,12 @@
   const bulkProtocol = $('#tep-bulk-protocol');
   const bulkInsessionLabel = $('#tep-bulk-insession');
   const bulkInsessionCb = $('#tep-bulk-insession-cb');
-  const selectBar = $('#tep-select-bar');
 
   const TYPE_LABELS = {
     'Http': 'HTTP Server', 'A2s': 'Agent→Server', 'Page': 'Page Load',
     'DnsServer': 'DNS Server', 'DnsTrace': 'DNS Trace', 'Bgp': 'BGP',
     'Voip': 'Voice', 'WebTransaction': 'Transaction', 'Ftp': 'FTP',
-    'Dnssec': 'DNSSEC', 'OneWayNetwork': 'One-Way'
+    'Dnssec': 'DNSSEC', 'OneWayNetwork': 'Agent<->Agent'
   };
   const TYPE_CSS = {
     'Http': 'tep-type-http', 'A2s': 'tep-type-a2s', 'Page': 'tep-type-page',
@@ -3596,9 +3715,10 @@
     'Voip': 'voip', 'WebTransaction': 'web-transaction', 'Ftp': 'ftp',
     'Dnssec': 'dnssec', 'Bgp': 'bgp', 'Network': 'network',
     'HTTP': 'http-server', 'DNS': 'dns-server', 'Voice': 'voip',
-    'OneWayNetwork': 'network', 'Sip': 'sip-server'
+    'OneWayNetwork': 'oneway-network', 'Sip': 'sip-server'
   };
   const SLUG_REMAP = {
+    'onewaynetwork': 'oneway-network',
     'browserbot': 'page-load',
     'sip': 'sip-server',
     'webtransaction': 'web-transaction',
@@ -3613,12 +3733,94 @@
     'dns trace': 'dns-trace',
     'DNS Trace': 'dns-trace'
   };
-  const NO_API_SLUGS = new Set(['onewaynetwork', 'api']);
+  const NO_API_SLUGS = new Set(['api']);
   function isReadOnly(t) {
     return NO_API_SLUGS.has((t.type || '').toLowerCase());
   }
+  function isOneWayNetworkTest(t) {
+    if (!t) return false;
+    if (String(t.type || '').toLowerCase() === 'onewaynetwork') return true;
+    return /^OneWayNetwork$/i.test(String(t.testType || ''));
+  }
+  /**
+   * TE TestDirection: "to-target" | "from-target" | "bidirectional" (ajax may use testDirection, server/config nesting, or UPPER_SNAKE).
+   * We consider any non-empty `direction` first; empty `direction` must not hide a populated `testDirection`.
+   */
+  function normalizeOneWayDirToken(v) {
+    if (v == null) return '';
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      if (v === 0) return 'to-target';
+      if (v === 1) return 'from-target';
+      if (v === 2) return 'bidirectional';
+    }
+    return String(v).trim();
+  }
+  function collectOneWayDirectionStrings(t) {
+    if (!t || typeof t !== 'object') return [];
+    const out = [];
+    const add = (v) => {
+      const s = normalizeOneWayDirToken(v);
+      if (s) out.push(s);
+    };
+    add(t.testDirection);
+    add(t.test_direction);
+    add(t.direction);
+    add(t.oneWayDirection);
+    if (t.server && typeof t.server === 'object') {
+      add(t.server.testDirection);
+      add(t.server.direction);
+    }
+    if (t.config && typeof t.config === 'object') {
+      add(t.config.testDirection);
+      add(t.config.direction);
+    }
+    if (t.settings && typeof t.settings === 'object') {
+      add(t.settings.testDirection);
+      add(t.settings.direction);
+    }
+    return out;
+  }
+  function isOneWayDirTokenBidirectional(s) {
+    const l = s.toLowerCase().replace(/_/g, '-');
+    if (l === 'bidirectional' || l === 'bidi' || l === 'both') return true;
+    if (/^bidirect/i.test(l) || l.includes('bidirect')) return true;
+    if (l === 'to-target-from-target' || l === 'to_target_from_target' || l === 'from-to-target-and-back') return true;
+    return /both\s*directions/i.test(s);
+  }
+  /** True when the test is set to both-direction monitoring. */
+  function isOneWayDirectionBidirectional(t) {
+    if (!t) return false;
+    if (t.bidirectional === 1 || t.bidirectional === true) return true;
+    if (t.flagBidirectional === 1 || t.flagBidirectional === true) return true;
+    for (const s of collectOneWayDirectionStrings(t)) {
+      if (isOneWayDirTokenBidirectional(s)) return true;
+    }
+    return false;
+  }
+  /** When unchecking "Bidirectional", keep one-way mode: from-target vs to-target (TE TestDirection). */
+  function getOneWayDirectionValueForSave(t, bidirectionalChecked) {
+    if (bidirectionalChecked) return 'bidirectional';
+    for (const s of collectOneWayDirectionStrings(t)) {
+      if (isOneWayDirTokenBidirectional(s)) continue;
+      const l = s.toLowerCase().replace(/_/g, '-');
+      if (l === 'from-target' || l === 'from_target') return 'from-target';
+      if (l === 'to-target' || l === 'to_target') return 'to-target';
+    }
+    return 'to-target';
+  }
+  function tepEscapeHtmlText(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+  function isNetworkStyleProtocolFormTest(t) {
+    if (isOneWayNetworkTest(t)) return true;
+    return /A2s|Network|Http|Page/i.test(t.testType || t.type || '');
+  }
+  /** GET /ajax/tests/…/aid/testId — `api` has no detail to merge. */
   function canEnrich(t) {
-    return !isReadOnly(t);
+    return (t.type || '').toLowerCase() !== 'api';
   }
 
   const TYPE_NORMALIZE = {
@@ -3702,12 +3904,43 @@
       || 0;
   }
 
-  /** Native list/detail for Web Page Load uses testType "BrowserBot" and freqHttp + freqBrowserbot. */
+  /** Native list/detail for Web Page Load uses testType "BrowserBot", interval + subinterval, freqHttp / freqBrowserbot. */
   function isBrowserOrPageTest(t) {
     if (!t) return false;
     const a = String(t.testType == null ? '' : t.testType);
     const b = String(t.type == null ? '' : t.type);
     return /browser|page/i.test(a) || /browser|page|page-load/i.test(b);
+  }
+
+  /** Web Transaction: no page/sub two-cadence model, but TE accounts units with the same per-round milli weighting as page load. */
+  function isWebTransactionTest(t) {
+    if (!t) return false;
+    const tt = String(t.testType == null ? '' : t.testType);
+    if (/^webtransaction$/i.test(tt)) return true;
+    const ty = String(t.type == null ? '' : t.type).toLowerCase();
+    return ty === 'web-transaction' || ty === 'webtransaction' || ty === 'web-transactions';
+  }
+
+  /**
+   * For Web Page Load, TE stores the inner (HTTP) cadence in `subinterval` seconds. It
+   * must evenly divide the root `interval` (e.g. 10m page, 5m sub → 600 and 300).
+   */
+  function coerceSubintervalToDividePageInterval(pageSec, desiredSubSec) {
+    if (pageSec == null || !Number.isFinite(pageSec) || pageSec < 1) {
+      return desiredSubSec;
+    }
+    const cap = !Number.isFinite(desiredSubSec) || desiredSubSec < 1
+      ? pageSec
+      : Math.min(Math.floor(desiredSubSec), Math.floor(pageSec));
+    if (pageSec % cap === 0) {
+      return cap;
+    }
+    for (let s = cap; s >= 1; s--) {
+      if (pageSec % s === 0) {
+        return s;
+      }
+    }
+    return pageSec;
   }
 
   /**
@@ -3779,6 +4012,72 @@
     return seconds + 's';
   }
 
+  /** Page load: browser round-trip uses freqBrowserbot (or root interval / freqPage); inner layer uses `subinterval` (and freqHttp in some payloads). */
+  function getPageLoadBrowserIntervalSec(t) {
+    if (!t) return 0;
+    if (t.freqBrowserbot != null && Number(t.freqBrowserbot) > 0) return Number(t.freqBrowserbot);
+    if (t.interval != null && Number(t.interval) > 0) return Number(t.interval);
+    if (t.freqPage != null && Number(t.freqPage) > 0) return Number(t.freqPage);
+    return 0;
+  }
+
+  function getPageLoadSubintervalSec(t) {
+    if (!t) return 0;
+    if (t.subinterval != null && Number(t.subinterval) > 0) {
+      return Number(t.subinterval);
+    }
+    if (t.freqHttp != null && Number(t.freqHttp) > 0) {
+      return Number(t.freqHttp);
+    }
+    const b = getPageLoadBrowserIntervalSec(t);
+    return b > 0 ? b : getInterval(t);
+  }
+
+  function formatTestIntervalLine(t) {
+    if (isBrowserOrPageTest(t)) {
+      const p = getPageLoadBrowserIntervalSec(t);
+      const sub = getPageLoadSubintervalSec(t);
+      const pEff = p > 0 ? p : getInterval(t);
+      if (!pEff) {
+        return '—';
+      }
+      if (sub > 0 && sub !== pEff) {
+        return `${formatInterval(pEff)} page / ${formatInterval(sub)} sub`;
+      }
+      return `${formatInterval(pEff)} interval`;
+    }
+    const sec = getInterval(t);
+    if (!sec) return '—';
+    return `${formatInterval(sec)} interval`;
+  }
+
+  /** Splits interval line: duration tokens (e.g. 2m, 5h) stay white; words like "interval", "page", "sub" use meta grey. */
+  function formatTestIntervalLineHtml(line) {
+    const s = String(line);
+    if (s === '—') {
+      return '<span class="tep-meta-interval-suffix">' + tepEscapeHtmlText(s) + '</span>';
+    }
+    const re = /(\d+(?:\.\d+)?[hms])/g;
+    let out = '';
+    let last = 0;
+    let m;
+    const str = s;
+    while ((m = re.exec(str)) !== null) {
+      if (m.index > last) {
+        out += '<span class="tep-meta-interval-suffix">' + tepEscapeHtmlText(str.slice(last, m.index)) + '</span>';
+      }
+      out += '<span class="tep-meta-num">' + tepEscapeHtmlText(m[1]) + '</span>';
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) {
+      out += '<span class="tep-meta-interval-suffix">' + tepEscapeHtmlText(str.slice(last)) + '</span>';
+    }
+    if (!out) {
+      return '<span class="tep-meta-interval-suffix">' + tepEscapeHtmlText(str) + '</span>';
+    }
+    return out;
+  }
+
   function getTestAgentIds(t) {
     if (t.agentSet) {
       if (Array.isArray(t.agentSet.vAgentIds) && t.agentSet.vAgentIds.length) return t.agentSet.vAgentIds;
@@ -3795,6 +4094,156 @@
     return [];
   }
 
+  /** TE projects usage over 31 days; one round = one test at current interval. See calculating-units. */
+  const THOUSANDEYS_UNIT_ROUNDS_31D = 31 * 24 * 3600;
+
+  function isThousandEysTimeoutMilliTestType(t) {
+    if (!t) return false;
+    if (isBrowserOrPageTest(t)) return true;
+    const ty = String(t.type == null ? '' : t.type).toLowerCase();
+    if (ty === 'http-server' || ty === 'ftp' || ty === 'web-transaction' || /sip|sip-server/.test(ty)) return true;
+    const tt = String(t.testType == null ? '' : t.testType);
+    return /^(Http|Ftp|WebTransaction|Sip)$/i.test(tt);
+  }
+
+  function isThousandEysFixed5MilliTestType(t) {
+    if (!t || isThousandEysTimeoutMilliTestType(t)) return false;
+    const ty = String(t.type == null ? '' : t.type).toLowerCase();
+    const tt = String(t.testType == null ? '' : t.testType).toLowerCase();
+    if (ty === 'network' || ty === 'agent-to-server' || ty === 'agent_to_server') return true;
+    if (tt === 'a2s' || tt === 'network' || /(^|[^a-z])a2s([^a-z]|$)/.test(tt)) return true;
+    if (ty === 'onewaynetwork' || ty === 'oneway' || tt === 'onewaynetwork' || /oneway|one[\s-]*way|one.*way.*network/.test(tt) || /oneway|one[\s-]*way/.test(ty)) return true;
+    return false;
+  }
+
+  function testTypeUsesThousandEyesAccountUnits(t) {
+    return isThousandEysTimeoutMilliTestType(t) || isThousandEysFixed5MilliTestType(t);
+  }
+
+  /** Clamped 5–180s (TE “Calculating Units” web tests). */
+  function clampThousandEysTimeoutSec(raw, fallback) {
+    const f = (fallback != null && Number(fallback) > 0) ? +fallback : 5;
+    if (raw == null || raw === '' || (typeof raw !== 'number' && typeof raw !== 'string')) return Math.min(180, Math.max(5, f));
+    const n = +raw;
+    if (!Number.isFinite(n) || n <= 0) return Math.min(180, Math.max(5, f));
+    return Math.min(180, Math.max(5, n));
+  }
+
+  function getThousandEysWebTimeoutSecForUnits(t) {
+    if (!t) return 5;
+    if (isBrowserOrPageTest(t) || isWebTransactionTest(t)) {
+      const a = t.httpTimeLimit, b = t.pageLoadTimeLimit;
+      return clampThousandEysTimeoutSec(
+        a != null && a !== '' ? a : b,
+        10
+      );
+    }
+    const tt = String(t.testType == null ? '' : t.testType);
+    if (/^Ftp$/i.test(tt)) return clampThousandEysTimeoutSec(t.ftpTimeLimit != null ? t.ftpTimeLimit : t.ftpTimeOut, 5);
+    if (/^Sip$/i.test(tt)) return clampThousandEysTimeoutSec(t.sipTimeLimit != null ? t.sipTimeLimit : t.httpTimeLimit, 5);
+    if (/^Http$/i.test(tt)) return clampThousandEysTimeoutSec(t.httpTimeLimit, 5);
+    return 5;
+  }
+
+  function getThousandEysMilliSumPerRound(nC, nE, t) {
+    if (isThousandEysTimeoutMilliTestType(t)) {
+      const s = getThousandEysWebTimeoutSecForUnits(t);
+      /* 2:1 cloud vs 🏢 for most web tests. Web Page Load bills cloud at 2× that factor (2s per cloud
+       * agent vs 0.5s for enterprise) per TE usage — 6 cloud ×10s with harmonic interval matches 804 units. */
+      if (isBrowserOrPageTest(t) || isWebTransactionTest(t)) {
+        return nC * (2 * s) + nE * (0.5 * s);
+      }
+      return nC * s + nE * (0.5 * s);
+    }
+    if (isThousandEysFixed5MilliTestType(t)) {
+      return nC * 5 + nE * 2.5;
+    }
+    return null;
+  }
+
+  /** Match `getSelectionTypeBreakdown` / TE UI: 🏢 = agentType Enterprise, else cloud (not primaryAid — cloud agents can share the same aid). */
+  function countEnterpriseAndCloudByAgentIdList(ids) {
+    if (!ids || !ids.length) return { ent: 0, cloud: 0 };
+    const byId = new Map();
+    for (const a of agents) {
+      if (a.agentId == null) continue;
+      byId.set(a.agentId, a);
+      byId.set(String(a.agentId), a);
+    }
+    let ent = 0, cloud = 0;
+    for (const raw of ids) {
+      const a = byId.get(raw) || byId.get(String(raw)) || byId.get(Number(raw));
+      if (!a) {
+        cloud++;
+        continue;
+      }
+      if (a.agentType === 'Enterprise') ent++;
+      else cloud++;
+    }
+    return { ent, cloud };
+  }
+
+  function countEnterpriseAndCloudAgentsForUnits(t) {
+    return countEnterpriseAndCloudByAgentIdList(getTestAgentIds(t));
+  }
+
+  /**
+   * Web Page Load bills two cadences (browser + sub/HTTP). TE usage matches combining
+   * them with the harmonic mean of the two interval seconds: 2*P*S/(P+S) — e.g. 2m/1m → 80s
+   * effective, 1m/1m → 60s, 2m/2m → 120s (spot-checked vs Usage calculator for 1 ent agent).
+   * Web Transaction has a single test interval (no subinterval); it uses the branch below, not the harmonic.
+   */
+  function getThousandEysBillingIntervalSec(t, opts) {
+    if (isBrowserOrPageTest(t)) {
+      const oPage = opts && opts.intervalSec != null ? Number(opts.intervalSec) : null;
+      const oSub = opts && opts.subIntervalSec != null ? Number(opts.subIntervalSec) : null;
+      const pageS = (oPage != null && Number.isFinite(oPage) && oPage > 0)
+        ? oPage
+        : (getPageLoadBrowserIntervalSec(t) > 0 ? getPageLoadBrowserIntervalSec(t) : getInterval(t));
+      let subS = (oSub != null && Number.isFinite(oSub) && oSub > 0) ? oSub : null;
+      if (subS == null || subS <= 0) {
+        subS = getPageLoadSubintervalSec(t) > 0 ? getPageLoadSubintervalSec(t) : pageS;
+      }
+      if (!Number.isFinite(pageS) || pageS <= 0) {
+        return null;
+      }
+      if (!Number.isFinite(subS) || subS <= 0) {
+        subS = pageS;
+      }
+      return (2 * pageS * subS) / (pageS + subS);
+    }
+    if (opts && opts.intervalSec != null) {
+      const s = Number(opts.intervalSec);
+      if (Number.isFinite(s) && s > 0) {
+        return s;
+      }
+    }
+    const g = getInterval(t);
+    return (Number.isFinite(g) && g > 0) ? g : null;
+  }
+
+  function computeThousandEyesAccountUnits(t, opts) {
+    if (!testTypeUsesThousandEyesAccountUnits(t)) return null;
+    const sec = getThousandEysBillingIntervalSec(t, opts);
+    if (!Number.isFinite(sec) || sec <= 0) return null;
+    const { ent, cloud } = (opts && opts.agentIdSet)
+      ? countEnterpriseAndCloudByAgentIdList([...opts.agentIdSet])
+      : countEnterpriseAndCloudAgentsForUnits(t);
+    const milli = getThousandEysMilliSumPerRound(cloud, ent, t);
+    if (milli == null || !Number.isFinite(milli)) return null;
+    const u = (milli * THOUSANDEYS_UNIT_ROUNDS_31D) / sec / 1000;
+    if (!Number.isFinite(u)) return null;
+    return Math.round(u);
+  }
+
+  function formatManageTestUnitsLine(t, opts) {
+    if (!testTypeUsesThousandEyesAccountUnits(t)) return '—';
+    if (!opts && !t._agentsLoaded) return '…';
+    const n = computeThousandEyesAccountUnits(t, opts);
+    if (n == null) return '—';
+    return `${n.toLocaleString()} units`;
+  }
+
   function testApiUrl(t, { forWrite = false } = {}) {
     let slug = t.type || '';
     const slugLower = slug.toLowerCase();
@@ -3807,6 +4256,7 @@
     }
     /* TE REST slug for agent→server tests is `network`, not `agent-to-server` (save would 404/500). */
     if (slug === 'agent-to-server') slug = 'network';
+    if (slug === 'onewaynetwork' || slugLower === 'onewaynetwork') slug = 'oneway-network';
     if (forWrite) return `/ajax/tests/${slug}`;
     const aid = t.aid;
     const testId = t.testId || t.id;
@@ -3867,11 +4317,12 @@
         const tid = String(t.testId || t.id || '');
         const card = testListEl.querySelector(`.tep-test-card[data-test-id="${tid}"]`);
         if (card) {
-          const metaSpans = card.querySelectorAll('.tep-test-card-meta span');
-          if (metaSpans.length >= 4) {
-            metaSpans[2].textContent = `${formatInterval(getInterval(t))} interval`;
-            metaSpans[3].textContent = `${count} agent(s)`;
-          }
+          const intInner = card.querySelector('.tep-test-card-meta-interval .tep-interval-line-inner');
+          if (intInner) intInner.innerHTML = formatTestIntervalLineHtml(formatTestIntervalLine(t));
+          const agNum = card.querySelector('.tep-test-card-meta-agents .tep-meta-num');
+          if (agNum) agNum.textContent = String(count);
+          const u = card.querySelector('.tep-test-units');
+          if (u) u.textContent = formatManageTestUnitsLine(t);
         }
       }));
     }
@@ -3998,6 +4449,18 @@
     bulkBar.classList.toggle('active', count > 0);
   }
 
+  /** `?testId=` (or `testid`) on the current app URL — that test is listed first in Manage when it appears in the filtered set. */
+  function getUrlQueryTestIdFocus() {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const id = sp.get('testId') || sp.get('testid');
+      if (id == null || id === '') return null;
+      return String(id).trim();
+    } catch (_) {
+      return null;
+    }
+  }
+
   function getFilteredTests() {
     const typeF = manageTypeFilter.value;
     const searchQ = manageSearch.value.toLowerCase();
@@ -4022,7 +4485,15 @@
       return 99;
     }
     const sortMode = manageSort.value;
+    const focusTid = getUrlQueryTestIdFocus();
     return filtered.sort((a, b) => {
+      if (focusTid) {
+        const ida = String(a.testId != null ? a.testId : a.id != null ? a.id : '');
+        const idb = String(b.testId != null ? b.testId : b.id != null ? b.id : '');
+        const ma = ida === focusTid;
+        const mb = idb === focusTid;
+        if (ma !== mb) return ma ? -1 : 1;
+      }
       if (sortMode === 'modified') {
         const da = a.modifiedDate || a.lastModified || a.dateModified || '';
         const db = b.modifiedDate || b.lastModified || b.dateModified || '';
@@ -4047,33 +4518,83 @@
     });
   }
 
+  function isManageViewActive() {
+    const p = root.querySelector('#tep-panel-manage');
+    return !!(p && p.classList.contains('active'));
+  }
+
+  /** Status bar: raw unit sum → kUnits for the filtered-total line only. */
+  function formatManageFilterTotalKilo(sum) {
+    if (!Number.isFinite(sum) || sum < 0) return '0 kUnits';
+    if (sum === 0) return '0 kUnits';
+    const s = Math.round(sum / 1000).toLocaleString();
+    return `${s} kUnits`;
+  }
+
+  function updateManageUnitsTotal(unitEditHint) {
+    const el = $('#tep-manage-units-total');
+    if (!el) return;
+    if (!isManageViewActive()) {
+      el.style.display = 'none';
+      el.setAttribute('aria-hidden', 'true');
+      return;
+    }
+    el.style.display = '';
+    el.setAttribute('aria-hidden', 'false');
+    const filtered = getFilteredTests();
+    let sum = 0;
+    let counted = 0;
+    for (const t of filtered) {
+      const tid = String(t.testId || t.id || '');
+      const n = (unitEditHint && unitEditHint.testId === tid)
+        ? computeThousandEyesAccountUnits(t, unitEditHint.unitOpts)
+        : computeThousandEyesAccountUnits(t);
+      if (n != null) {
+        sum += n;
+        counted++;
+      }
+    }
+    if (filtered.length === 0) {
+      el.textContent = '0 kUnits';
+    } else if (counted === 0) {
+      el.textContent = '—';
+    } else {
+      el.textContent = formatManageFilterTotalKilo(sum);
+    }
+  }
+
   function renderTests() {
     const filtered = getFilteredTests();
     testCountEl.textContent = `Showing ${filtered.length} of ${allTests.length} test(s)`;
-    selectBar.style.display = allTests.length ? '' : 'none';
 
     if (!filtered.length) {
       testListEl.innerHTML = '<span class="tep-log-info">No tests match filter.</span>';
+      updateManageUnitsTotal();
       return;
     }
 
     testListEl.innerHTML = '';
-    for (const t of filtered) {
+    const focusTidForPointer = getUrlQueryTestIdFocus();
+    for (let i = 0; i < filtered.length; i++) {
+      const t = filtered[i];
       const tid = String(t.testId || t.id || '');
+      const showPageTestPointer = focusTidForPointer && i === 0 && tid === focusTidForPointer;
       const card = document.createElement('div');
       card.className = 'tep-test-card';
       card.dataset.testId = tid;
       const typeCss = TYPE_CSS[t.testType] || 'tep-type-other';
       const typeLabel = TYPE_LABELS[t.testType] || t.testType || '?';
+      const typeLabelHtml = tepEscapeHtmlText(typeLabel);
       const target = getTarget(t);
-      const interval = getInterval(t);
+      const intervalLine = formatTestIntervalLine(t);
       const enabled = t.flagEnabled ? 'on' : 'off';
       const agentCount = t._agentsLoaded ? getTestAgentIds(t).length : '…';
 
       card.innerHTML = `
         <div class="tep-test-card-header">
+          ${showPageTestPointer ? '<span class="tep-test-page-pointer" title="This test matches the one on the current ThousandEyes page (URL testId) — points to the app content on the left" aria-hidden="true">&#8592;</span>' : ''}
           <input type="checkbox" class="tep-test-card-check" data-tid="${tid}" ${selectedTestIds.has(tid) ? 'checked' : ''}>
-          <span class="tep-type-badge ${typeCss}">${typeLabel}</span>
+          <span class="tep-type-badge ${typeCss}">${typeLabelHtml}</span>
           <span class="tep-test-card-name" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'} <a class="tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="Open in ThousandEyes">&#x1F517;</a></span>
           <div class="tep-test-actions">
             ${isReadOnly(t) ? '<span style="font-size:10px;color:#64748b;">read-only</span>' : `
@@ -4086,8 +4607,9 @@
         <div class="tep-test-card-meta">
           <span><span class="tep-enabled-dot ${enabled}"></span> ${enabled === 'on' ? 'Enabled' : 'Disabled'}</span>
           <span>${target ? String(target).substring(0, 50) : '—'}</span>
-          <span>${formatInterval(interval)} interval</span>
-          <span>${agentCount} agent(s)</span>
+          <span class="tep-test-card-meta-interval" title="${(isBrowserOrPageTest(t) ? 'Page/browser interval vs sub interval (subinterval); sub must divide page interval' : 'Test interval').replace(/"/g, '&quot;')}"><span class="tep-interval-line-inner">${formatTestIntervalLineHtml(intervalLine)}</span></span>
+          <span class="tep-test-card-meta-agents"><span class="tep-meta-num">${String(agentCount)}</span> agent(s)</span>
+          <span class="tep-test-units tep-units" title="TE usage units (31-day projection): Page load uses harmonic mean of page+sub interval as divisor; milli = cloud×2×timeout + 🏢×0.5×timeout for BrowserBot (cloud double vs HTTP); other web tests cloud×timeout + 🏢×0.5×timeout; A2S fixed 5/2.5. Formula: (milli × 31d) ÷ divisor ÷ 1000.">${formatManageTestUnitsLine(t)}</span>
         </div>
       `;
 
@@ -4123,17 +4645,55 @@
 
       testListEl.appendChild(card);
     }
+    updateManageUnitsTotal();
   }
 
   function toggleEditForm(card, t) {
     const existing = card.querySelector('.tep-edit-form');
-    if (existing) { existing.remove(); return; }
+    if (existing) {
+      existing.remove();
+      updateManageUnitsTotal();
+      return;
+    }
 
     const target = getTarget(t);
     const interval = getInterval(t);
+    const isPageEdit = isBrowserOrPageTest(t);
+    const pageSec = isPageEdit
+      ? (getPageLoadBrowserIntervalSec(t) > 0 ? getPageLoadBrowserIntervalSec(t) : (Number(interval) > 0 ? Number(interval) : 120))
+      : interval;
+    const subSec = isPageEdit
+      ? (getPageLoadSubintervalSec(t) > 0 ? getPageLoadSubintervalSec(t) : pageSec)
+      : pageSec;
+    const intervalOpts = [60, 120, 300, 600, 900, 1800, 3600];
+    const intervalBlock = isPageEdit
+      ? `<div class="tep-edit-row" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;">
+        <div>
+          <label>Page / browser interval</label>
+          <select class="tep-edit-interval">
+            ${intervalOpts.map((v) =>
+    `<option value="${v}" ${v === pageSec ? 'selected' : ''}>${v / 60}m</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label title="Sub interval (subinterval): must evenly divide the page/browser interval">Sub interval</label>
+          <select class="tep-edit-subinterval">
+            ${intervalOpts.map((v) =>
+    `<option value="${v}" ${v === subSec ? 'selected' : ''}>${v / 60}m</option>`).join('')}
+          </select>
+        </div>
+      </div>`
+      : `<div class="tep-edit-row">
+        <label>Interval</label>
+        <select class="tep-edit-interval">
+          ${intervalOpts.map((v) =>
+    `<option value="${v}" ${v === interval ? 'selected' : ''}>${v / 60}m</option>`).join('')}
+        </select>
+      </div>`;
     const testAgentIds = getTestAgentIds(t);
     const currentAgentIds = new Set(testAgentIds.map(String));
     const editAgentIds = new Set(currentAgentIds);
+    const onewayBidirChecked = isOneWayDirectionBidirectional(t);
 
     const form = document.createElement('div');
     form.className = 'tep-edit-form';
@@ -4146,14 +4706,7 @@
         <label>Target</label>
         <input class="tep-edit-target" value="${target.replace(/"/g, '&quot;')}">
       </div>
-      <div class="tep-edit-row">
-        <label>Interval</label>
-        <select class="tep-edit-interval">
-          ${[60,120,300,600,900,1800,3600].map(v =>
-            `<option value="${v}" ${v === interval ? 'selected' : ''}>${v/60}m</option>`
-          ).join('')}
-        </select>
-      </div>
+      ${intervalBlock}
       <div class="tep-edit-row">
         <label>Enabled</label>
         <select class="tep-edit-enabled">
@@ -4161,7 +4714,13 @@
           <option value="0" ${!t.flagEnabled ? 'selected' : ''}>Disabled</option>
         </select>
       </div>
-      ${/A2s|Network|Http|Page/i.test(t.testType || t.type || '') ? (() => {
+      ${isOneWayNetworkTest(t) ? `<div class="tep-edit-row" style="display:flex;align-items:center;">
+        <label class="tep-edit-bidir-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+          <input type="checkbox" class="tep-edit-bidirectional" ${onewayBidirChecked ? 'checked' : ''}>
+          <span>Bidirectional</span>
+        </label>
+      </div>` : ''}
+      ${isNetworkStyleProtocolFormTest(t) ? (() => {
         const isIcmp = isNetworkTestIcmp(t);
         const curProto = isIcmp ? 'ICMP' : (t.probeMode === 'SYN' ? 'TCP-SYN' : 'TCP-SACK');
         const rawPort = (typeof t.server === 'object' && t.server && t.server.port != null) ? t.server.port : t.port;
@@ -4205,8 +4764,29 @@
     // Render agent checkboxes in the edit form
     const editAgentsBox = form.querySelector('.tep-edit-agents-box');
     const editFilterInput = form.querySelector('.tep-edit-agent-filter');
+    const editIntervalSelect = form.querySelector('.tep-edit-interval');
+    const editSubintervalSelect = form.querySelector('.tep-edit-subinterval');
+
+    function refreshEditUnitsPreview() {
+      const u = card.querySelector('.tep-test-units');
+      if (!u) return;
+      const pageSec = editIntervalSelect ? parseInt(editIntervalSelect.value, 10) : getInterval(t);
+      const o = { agentIdSet: editAgentIds };
+      if (Number.isFinite(pageSec) && pageSec > 0) o.intervalSec = pageSec;
+      if (isBrowserOrPageTest(t) && editSubintervalSelect) {
+        const rawSub = parseInt(editSubintervalSelect.value, 10);
+        const p = (Number.isFinite(pageSec) && pageSec > 0) ? pageSec : 120;
+        const des = (Number.isFinite(rawSub) && rawSub > 0) ? rawSub : p;
+        o.subIntervalSec = coerceSubintervalToDividePageInterval(p, des);
+      }
+      u.textContent = formatManageTestUnitsLine(t, o);
+      if (isManageViewActive()) {
+        updateManageUnitsTotal({ testId: String(t.testId || t.id), unitOpts: o });
+      }
+    }
 
     function renderEditAgents(filter, focusSection) {
+      try {
       const q = (filter || '').toLowerCase();
       const filtered = q
         ? agents.filter(a => (a.agentName || '').toLowerCase().includes(q) || (a.agentType || '').toLowerCase().includes(q))
@@ -4245,6 +4825,7 @@
         } else {
           editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
         }
+        refreshEditUnitsPreview();
         return;
       }
 
@@ -4424,9 +5005,14 @@
           }
         });
       }
+      } finally {
+        refreshEditUnitsPreview();
+      }
     }
 
     renderEditAgents();
+    if (editIntervalSelect) editIntervalSelect.addEventListener('change', refreshEditUnitsPreview);
+    if (editSubintervalSelect) editSubintervalSelect.addEventListener('change', refreshEditUnitsPreview);
     editFilterInput.addEventListener('input', () => renderEditAgents(editFilterInput.value, null));
     const editFilterWrap = editFilterInput && editFilterInput.closest('.tep-agent-filter-wrap');
     if (editFilterWrap && editFilterInput) {
@@ -4442,12 +5028,23 @@
       });
     }
 
-    form.querySelector('.tep-cancel-edit').addEventListener('click', () => form.remove());
+    form.querySelector('.tep-cancel-edit').addEventListener('click', () => {
+      const u = card.querySelector('.tep-test-units');
+      if (u) u.textContent = formatManageTestUnitsLine(t);
+      form.remove();
+      updateManageUnitsTotal();
+    });
     form.querySelector('.tep-save-edit').addEventListener('click', async () => {
       const dismissProcessing = toastProcessing('Saving…');
       const newName = form.querySelector('.tep-edit-name').value.trim();
       const newTarget = form.querySelector('.tep-edit-target').value.trim();
       const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
+      const newSubInterval = (() => {
+        const h = form.querySelector('.tep-edit-subinterval');
+        if (!h) return newInterval;
+        const v = parseInt(h.value, 10);
+        return Number.isFinite(v) && v > 0 ? v : newInterval;
+      })();
       const newEnabled = parseInt(form.querySelector('.tep-edit-enabled').value, 10);
 
       // Build updated body — same path as HTTP/Page: enriched list/detail object, not a create body
@@ -4490,10 +5087,12 @@
       }
       else if (updated.domain !== undefined) updated.domain = newTarget;
 
-      // Set ALL interval/freq fields to new value so the API sees a consistent change
-      for (const k of Object.keys(updated)) {
-        if (/^(freq|interval)/i.test(k) && typeof updated[k] === 'number') {
-          updated[k] = newInterval;
+      // Set ALL interval/freq fields to new value (not page load — that has separate HTTP vs browser)
+      if (!isBrowserOrPageTest(t)) {
+        for (const k of Object.keys(updated)) {
+          if (/^(freq|interval)/i.test(k) && typeof updated[k] === 'number') {
+            updated[k] = newInterval;
+          }
         }
       }
       // Apply protocol settings for A2S/Network/Http/Page tests
@@ -4530,7 +5129,7 @@
 
       if (!updated.dscp && updated.dscp !== 0) {
         const ttD = (t.testType || t.type || '').toLowerCase();
-        if (/a2s|network|agent/i.test(ttD)) updated.dscp = updated.dscp || 0;
+        if (/a2s|network|agent|oneway/i.test(ttD)) updated.dscp = updated.dscp || 0;
       }
       const tt = (t.testType || t.type || '').toLowerCase();
       /* Native UI: Network tests use testType "Network" + freq + interval (not A2s / freqA2s). */
@@ -4540,20 +5139,34 @@
         updated.freq = newInterval;
         delete updated.freqA2s;
         if (updated.aid == null && t.aid != null) updated.aid = t.aid;
+      } else if (isBrowserOrPageTest(t)) {
+        /* Page load: root interval; inner cadence is TE `subinterval` (must divide interval), also freqHttp. */
+        const sub = coerceSubintervalToDividePageInterval(newInterval, newSubInterval);
+        updated.interval = newInterval;
+        updated.freqPage = newInterval;
+        updated.subinterval = sub;
+        updated.freqHttp = sub;
+        updated.freqBrowserbot = Math.max(newInterval, 120);
+        if (typeof updated.freq === 'number') updated.freq = newInterval;
       } else {
         updated.interval = newInterval;
         updated.freq = newInterval;
-        if (isBrowserOrPageTest(t)) {
-          /* Native /ajax/tests/page-load payload: freqHttp, freqBrowserbot, interval, subinterval (see F12). */
-          updated.freqHttp = newInterval;
-          updated.freqBrowserbot = Math.max(newInterval, 120);
-        } else if (!Object.keys(updated).some((k) => /^freq/i.test(k))) {
+        if (!Object.keys(updated).some((k) => /^freq/i.test(k))) {
           if (/page|browser/i.test(tt)) updated.freqPage = newInterval;
           else if (/dns/i.test(tt)) updated.freqDns = newInterval;
           else updated.freqHttp = newInterval;
         }
       }
       alignSubintervalToInterval(updated, newInterval);
+
+      if (isOneWayNetworkTest(t)) {
+        const bi = form.querySelector('.tep-edit-bidirectional');
+        if (bi) {
+          const d = getOneWayDirectionValueForSave(t, bi.checked);
+          updated.direction = d;
+          updated.testDirection = d;
+        }
+      }
 
       // Set agents
       if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
@@ -4563,7 +5176,7 @@
 
       // Debug: log freq fields being sent
       const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval: ${newInterval} | POST ${testApiUrl(t, { forWrite: true })}`, 'tep-log-info');
+      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${testApiUrl(t, { forWrite: true })}`, 'tep-log-info');
 
       try {
         const resp = await ajax(testApiUrl(t, { forWrite: true }), {
@@ -4574,6 +5187,8 @@
         if (resp.ok) {
           log(`  ✓ Updated "${newName}"`, 'tep-log-ok');
           toast(`Test "${newName}" saved successfully.`, 'ok');
+          Object.assign(t, updated);
+          updateManageUnitsTotal();
           form.remove();
           loadTests();
         } else {
@@ -4710,6 +5325,7 @@
           } else if (isBrowserOrPageTest(t)) {
             updated.interval = newInterval;
             updated.freq = newInterval;
+            updated.subinterval = newInterval;
             updated.freqHttp = newInterval;
             updated.freqBrowserbot = Math.max(newInterval, 120);
           } else if (updated.freqHttp !== undefined) updated.freqHttp = newInterval;
@@ -4724,7 +5340,7 @@
           resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
         } else if (action === 'protocol') {
           const tt = (t.testType || t.type || '').toLowerCase();
-          if (!/a2s|network|http|page/i.test(tt)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
+          if (!/a2s|network|http|page|onewaynetwork|oneway/i.test(tt)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
           const pv = bulkProtocol.value;
           const proto = pv.startsWith('TCP') ? 'TCP' : 'ICMP';
           const pm = pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO');
@@ -4827,6 +5443,22 @@
 
     // Show/hide type-specific fields
     $('#tep-a2s-fields').style.display = (currentType === 'http-server' || currentType === 'agent-to-server' || currentType === 'page-load') ? 'flex' : 'none';
+
+    const subWrap = $('#tep-subinterval-wrap');
+    const primLabel = $('#tep-interval-primary-label');
+    if (subWrap) {
+      const isPage = currentType === 'page-load';
+      subWrap.style.display = isPage ? '' : 'none';
+      subWrap.setAttribute('aria-hidden', isPage ? 'false' : 'true');
+      if (isPage) {
+        const intSel = $('#tep-interval');
+        const subSel = $('#tep-subinterval');
+        if (intSel && subSel) subSel.value = intSel.value;
+        if (primLabel) primLabel.textContent = 'Page / browser interval';
+      } else {
+        if (primLabel) primLabel.textContent = 'Test interval';
+      }
+    }
 
     // Update placeholder & name template
     const nameInput = $('#tep-testname');
@@ -4966,12 +5598,15 @@
     };
   }
 
-  function buildPageLoadBody(name, target, interval, vAgentIds, aid, opts) {
+  function buildPageLoadBody(name, target, pageInterval, vAgentIds, aid, opts) {
     opts = opts || {};
     const proto = opts.protocol || 'TCP';
     const probeMode = opts.probeMode || 'SACK';
     const inSession = opts.pathtraceInSession != null ? opts.pathtraceInSession : 1;
     const port = opts.port || 443;
+    const rawSub = (opts.subInterval != null && Number(opts.subInterval) > 0) ? Number(opts.subInterval)
+      : ((opts.httpInterval != null && Number(opts.httpInterval) > 0) ? Number(opts.httpInterval) : pageInterval);
+    const subI = coerceSubintervalToDividePageInterval(pageInterval, rawSub);
     return {
       ...baseBody(name, vAgentIds, aid),
       authType: 'NONE',
@@ -4983,8 +5618,11 @@
       flagIcmp: proto === 'ICMP' ? 1 : 0,
       flagOverrideAgentProxy: 0,
       flagVerifyCertHostname: 1,
-      freqHttp: interval,
-      freqBrowserbot: Math.max(interval, 120),
+      interval: pageInterval,
+      freqPage: pageInterval,
+      subinterval: subI,
+      freqHttp: subI,
+      freqBrowserbot: Math.max(pageInterval, 120),
       httpTimeLimit: 10,
       httpVersion: 2,
       maxRedirects: 10,
@@ -5045,7 +5683,11 @@
   async function createTests() {
     const nameTemplate = $('#tep-testname').value.trim();
     const targets = $('#tep-targets').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-    const interval = parseInt($('#tep-interval').value, 10);
+    const pageOrTestInterval = parseInt($('#tep-interval').value, 10);
+    const subIntervalEl = $('#tep-subinterval');
+    const subInterval = (currentType === 'page-load' && subIntervalEl)
+      ? (parseInt(subIntervalEl.value, 10) || pageOrTestInterval)
+      : pageOrTestInterval;
     const vAgentIds = [...selectedAgentIds];
     const aid = teInitData._currentAid || '';
 
@@ -5076,7 +5718,11 @@
         probeMode: pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO'),
         pathtraceInSession: $('#tep-a2s-insession').checked ? 1 : 0
       };
-      body = typeInfo.buildBody(testName, target, interval, vAgentIds, aid, protoOpts);
+      if (currentType === 'page-load') {
+        body = typeInfo.buildBody(testName, target, pageOrTestInterval, vAgentIds, aid, { ...protoOpts, subInterval, httpInterval: subInterval });
+      } else {
+        body = typeInfo.buildBody(testName, target, pageOrTestInterval, vAgentIds, aid, protoOpts);
+      }
 
       // For network tests, try to fetch an existing one first to discover field format
       if (currentType === 'agent-to-server') {
@@ -5194,15 +5840,10 @@
     root.querySelectorAll('.tep-view-panel').forEach(p => p.classList.remove('active'));
     const panel = root.querySelector(`#tep-panel-${tab.dataset.view}`);
     if (panel) panel.classList.add('active');
-    if (tab.dataset.view === 'dashboard' && tab.dataset.dashTab) {
-      const dashSub = tab.dataset.dashTab;
-      root.querySelectorAll('.tep-dash-tab-panel').forEach((p) => p.classList.remove('active'));
-      const subPanel = root.querySelector('#tep-dash-panel-' + dashSub);
-      if (subPanel) subPanel.classList.add('active');
-    }
     if (tab.dataset.view === 'manage') {
       loadTests();
     }
+    updateManageUnitsTotal();
   });
 
 
@@ -5215,6 +5856,34 @@
     toggleBtn.textContent = '\u2699\ufe0f';
   });
   $('#tep-load-agents').addEventListener('click', loadAgents);
+  const createToggle = $('#tep-create-toggle');
+  const createExpandPanel = $('#tep-panel-create');
+  if (createToggle && createExpandPanel) {
+    createToggle.addEventListener('click', () => {
+      const isHidden = createExpandPanel.hasAttribute('hidden');
+      if (isHidden) {
+        createExpandPanel.removeAttribute('hidden');
+        createToggle.setAttribute('aria-expanded', 'true');
+      } else {
+        createExpandPanel.setAttribute('hidden', '');
+        createToggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+  const manageToggle = $('#tep-manage-toggle');
+  const manageExpandPanel = $('#tep-panel-manage-body');
+  if (manageToggle && manageExpandPanel) {
+    manageToggle.addEventListener('click', () => {
+      const isHidden = manageExpandPanel.hasAttribute('hidden');
+      if (isHidden) {
+        manageExpandPanel.removeAttribute('hidden');
+        manageToggle.setAttribute('aria-expanded', 'true');
+      } else {
+        manageExpandPanel.setAttribute('hidden', '');
+        manageToggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
   $('#tep-create').addEventListener('click', createTests);
   $('#tep-retry-auth').addEventListener('click', () => {
     stopPersistentIntercept();
@@ -5232,6 +5901,8 @@
   if (testNameInput) testNameInput.addEventListener('input', clearCreateFailureStatus);
   const intervalSel = $('#tep-interval');
   if (intervalSel) intervalSel.addEventListener('change', clearCreateFailureStatus);
+  const subIntervalSel = $('#tep-subinterval');
+  if (subIntervalSel) subIntervalSel.addEventListener('change', clearCreateFailureStatus);
   const a2sPort = $('#tep-a2s-port');
   if (a2sPort) a2sPort.addEventListener('input', clearCreateFailureStatus);
   const a2sInsession = $('#tep-a2s-insession');
@@ -5284,20 +5955,11 @@
   manageSearch.addEventListener('input', renderTestsAfterManageInput);
   manageSearch.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadTests(); });
   manageSort.addEventListener('change', renderTestsAfterManageInput);
+  window.addEventListener('popstate', () => {
+    if (isManageViewActive()) renderTests();
+  });
 
   // Bulk controls
-  $('#tep-select-all').addEventListener('click', () => {
-    allTests.forEach(t => selectedTestIds.add(String(t.testId || t.id)));
-    renderTests(); updateBulkUI();
-  });
-  $('#tep-select-none').addEventListener('click', () => {
-    selectedTestIds.clear();
-    renderTests(); updateBulkUI();
-  });
-  $('#tep-select-filtered').addEventListener('click', () => {
-    getFilteredTests().forEach(t => selectedTestIds.add(String(t.testId || t.id)));
-    renderTests(); updateBulkUI();
-  });
   bulkAction.addEventListener('change', () => {
     bulkInterval.style.display = bulkAction.value === 'interval' ? '' : 'none';
     bulkProtocol.style.display = bulkAction.value === 'protocol' ? '' : 'none';
@@ -5309,6 +5971,48 @@
   $('#tep-bulk-apply').addEventListener('click', bulkApply);
 
   if (isDashboardToolsPage()) {
+    function wireDashSectionToggle(toggleId, expandId, defaultOpen) {
+      const btn = root.querySelector('#' + toggleId);
+      const el = root.querySelector('#' + expandId);
+      if (!btn || !el) return;
+      if (defaultOpen) {
+        el.removeAttribute('hidden');
+      } else {
+        el.setAttribute('hidden', '');
+      }
+      btn.setAttribute('aria-expanded', defaultOpen ? 'true' : 'false');
+      btn.setAttribute('aria-controls', expandId);
+      btn.addEventListener('click', () => {
+        const h = el.hasAttribute('hidden');
+        if (h) {
+          el.removeAttribute('hidden');
+          btn.setAttribute('aria-expanded', 'true');
+        } else {
+          el.setAttribute('hidden', '');
+          btn.setAttribute('aria-expanded', 'false');
+        }
+      });
+    }
+    wireDashSectionToggle('tep-dash-toggle-backup', 'tep-dash-expand-backup', true);
+    wireDashSectionToggle('tep-dash-toggle-restore', 'tep-dash-expand-restore', false);
+    wireDashSectionToggle('tep-dash-toggle-cleanup', 'tep-dash-expand-cleanup', false);
+    wireDashSectionToggle('tep-dash-toggle-tests', 'tep-dash-expand-tests', false);
+    const goTestsBtn = root.querySelector('#tep-dash-go-tests');
+    if (goTestsBtn) {
+      goTestsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showTestsPanelFromDashboard();
+      });
+    }
+    const backToDashBtn = root.querySelector('#tep-dash-back-to-tools');
+    if (backToDashBtn) {
+      backToDashBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        showDashboardPanelFromTests();
+      });
+    }
+
     $('#tep-dash-refresh').addEventListener('click', () => { refreshDashboardEditor(); });
     $('#tep-dash-download').addEventListener('click', downloadDashboardBackup);
     const cleanupRefresh = root.querySelector('#tep-dash-cleanup-refresh');
