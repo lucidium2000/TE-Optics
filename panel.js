@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.27';
+  const TEP_VERSION = '2.28';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -587,13 +587,38 @@
   /** Map label/tag name -> Set(agentId) for v-agent groupings. */
   let agentLabelTagMap = new Map();
   let agentLabelTagLastError = '';
-  /** Latest rows from “Dashboard cleanup” list fetch ({ id, title, modifiedMs }). */
+  /** Latest rows from “Dashboard cleanup” list fetch ({ id, title, modifiedMs, isSharedWithCurrentAccount, isBuiltIn }). */
   let dashCleanupCatalog = [];
   let dashCleanupListEverLoaded = false;
   /** When true, higher `modifiedMs` appears first; when false, oldest first. */
   let dashCleanupSortNewestFirst = true;
-  /** When false (default), shared-with-account dashboards are omitted from the list. */
+  /** When false (default), shared-with-account and built-in dashboards are omitted from the list. */
   let dashCleanupShowShared = false;
+
+  function isDashCleanupSharedCategoryRow(row) {
+    if (!row) return false;
+    return !!row.isSharedWithCurrentAccount || !!row.isBuiltIn;
+  }
+
+  function dashCleanupSharedCategoryLabelTitle(row) {
+    if (!row) return '';
+    const sh = !!row.isSharedWithCurrentAccount;
+    const bi = !!row.isBuiltIn;
+    if (sh && bi) return 'Built-in and shared with this account — delete is not available for this copy';
+    if (bi) return 'Built-in dashboard — delete is not available for this copy';
+    if (sh) return 'Shared with this account — delete is not available for this copy';
+    return '';
+  }
+
+  function dashCleanupSharedCategoryCbTitle(row) {
+    if (!row) return '';
+    const sh = !!row.isSharedWithCurrentAccount;
+    const bi = !!row.isBuiltIn;
+    if (sh && bi) return 'Built-in / shared — not eligible for delete here';
+    if (bi) return 'Built-in — not eligible for delete here';
+    if (sh) return 'Shared with this account — not eligible for delete here';
+    return '';
+  }
 
   function getDashCleanupSearchQuery() {
     const el = root.querySelector('#tep-dash-cleanup-search');
@@ -608,7 +633,7 @@
   function getDashCleanupFilteredCatalog() {
     let rows = dashCleanupCatalog;
     if (!dashCleanupShowShared) {
-      rows = rows.filter((row) => !row.isSharedWithCurrentAccount);
+      rows = rows.filter((row) => !isDashCleanupSharedCategoryRow(row));
     }
     const q = getDashCleanupSearchQuery();
     const qLower = q.toLowerCase();
@@ -1699,7 +1724,7 @@
                 <input type="search" class="tep-input tep-dash-cleanup-search" id="tep-dash-cleanup-search" placeholder="Search names…" autocomplete="off" title="Filter the list by dashboard name" aria-label="Search dashboard names">
                 <div class="tep-dash-cleanup-actions">
                   <button type="button" class="tep-dash-toolbar-btn" id="tep-dash-cleanup-sort" title="Toggle sort by modified time">Newest</button>
-                  <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--toggle" id="tep-dash-cleanup-shared" title="Show or hide dashboards shared with this account" aria-pressed="false">Shared</button>
+                  <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--toggle" id="tep-dash-cleanup-shared" title="Show or hide shared and built-in dashboards" aria-pressed="false">Shared</button>
                   <button type="button" class="tep-dash-toolbar-btn" id="tep-dash-cleanup-select-none" title="Clear checkbox selection">Clear</button>
                   <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--danger" id="tep-dash-cleanup-delete" title="Delete selected dashboards">Delete</button>
                 </div>
@@ -2685,6 +2710,36 @@
   }
 
   /**
+   * True if TE marks this row as a built-in (system) dashboard — same UI category as cross-account shared.
+   */
+  function isBuiltInDashboardFromPayload(el) {
+    if (!el || typeof el !== 'object' || Array.isArray(el)) return false;
+    const objs = coalesceDashboardCatalogEntryObjects(el);
+    const boolKeys = [
+      'builtIn', 'isBuiltIn', 'builtin', 'isBuiltin', 'isSystem', 'systemDashboard',
+      'isTeBuiltIn', 'isStandardDashboard'
+    ];
+    for (const o of objs) {
+      for (const k of boolKeys) {
+        if (isTruthySharedFlag(o[k])) return true;
+      }
+    }
+    for (const o of objs) {
+      for (const k of [
+        'dashboardType', 'kind', 'type', 'source', 'origin', 'category', 'scope', 'provenance'
+      ]) {
+        const s = o[k];
+        if (typeof s !== 'string') continue;
+        const u = s.toUpperCase();
+        if (u === 'BUILTIN' || u === 'BUILT_IN' || u === 'SYSTEM' || u === 'SYSTEM_DEFAULT' || u === 'TE_BUILT_IN') {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Collect dashboard rows from list or aggregate JSON (namespace dash-api, /ajax/dashboards, etc.).
    * Skips obvious in-widget panel objects (widgets array without full dashboard shape).
    */
@@ -2705,14 +2760,16 @@
       const title = dashboardCatalogDisplayTitle(el);
       const modifiedMs = getDashboardRowSortTimeMs(el);
       const shared = isSharedWithCurrentAccountFromPayload(el);
+      const builtIn = isBuiltInDashboardFromPayload(el);
       if (!map.has(sid)) {
-        map.set(sid, { title, modifiedMs, isSharedWithCurrentAccount: shared });
+        map.set(sid, { title, modifiedMs, isSharedWithCurrentAccount: shared, isBuiltIn: builtIn });
       } else {
         const p = map.get(sid);
         map.set(sid, {
           title: p.title === '(untitled)' && title !== '(untitled)' ? title : p.title,
           modifiedMs: Math.max(p.modifiedMs || 0, modifiedMs || 0),
-          isSharedWithCurrentAccount: !!p.isSharedWithCurrentAccount || shared
+          isSharedWithCurrentAccount: !!p.isSharedWithCurrentAccount || shared,
+          isBuiltIn: !!p.isBuiltIn || builtIn
         });
       }
     }
@@ -2731,7 +2788,8 @@
       id,
       title: v.title,
       modifiedMs: v.modifiedMs || 0,
-      isSharedWithCurrentAccount: !!v.isSharedWithCurrentAccount
+      isSharedWithCurrentAccount: !!v.isSharedWithCurrentAccount,
+      isBuiltIn: !!v.isBuiltIn
     }));
   }
 
@@ -2759,14 +2817,16 @@
           if (!r.id) continue;
           const ms = typeof r.modifiedMs === 'number' ? r.modifiedMs : 0;
           const shared = !!r.isSharedWithCurrentAccount;
+          const builtIn = !!r.isBuiltIn;
           if (!merged.has(r.id)) {
-            merged.set(r.id, { title: r.title, modifiedMs: ms, isSharedWithCurrentAccount: shared });
+            merged.set(r.id, { title: r.title, modifiedMs: ms, isSharedWithCurrentAccount: shared, isBuiltIn: builtIn });
           } else {
             const p = merged.get(r.id);
             merged.set(r.id, {
               title: p.title === '(untitled)' && r.title !== '(untitled)' ? r.title : p.title,
               modifiedMs: Math.max(p.modifiedMs || 0, ms),
-              isSharedWithCurrentAccount: !!p.isSharedWithCurrentAccount || shared
+              isSharedWithCurrentAccount: !!p.isSharedWithCurrentAccount || shared,
+              isBuiltIn: !!p.isBuiltIn || builtIn
             });
           }
         }
@@ -2779,7 +2839,8 @@
       id,
       title: v.title,
       modifiedMs: v.modifiedMs || 0,
-      isSharedWithCurrentAccount: !!v.isSharedWithCurrentAccount
+      isSharedWithCurrentAccount: !!v.isSharedWithCurrentAccount,
+      isBuiltIn: !!v.isBuiltIn
     }));
   }
 
@@ -2814,8 +2875,8 @@
     root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => {
       const id = cb.dataset.dashCleanupId;
       const row = id != null ? dashCleanupCatalog.find((r) => String(r.id) === String(id)) : null;
-      const shared = row && row.isSharedWithCurrentAccount;
-      cb.disabled = !!busy || !!shared;
+      const restricted = row && isDashCleanupSharedCategoryRow(row);
+      cb.disabled = !!busy || !!restricted;
     });
   }
 
@@ -2831,8 +2892,8 @@
     btn.setAttribute('aria-pressed', dashCleanupShowShared ? 'true' : 'false');
     btn.classList.toggle('tep-dash-toolbar-btn--on', dashCleanupShowShared);
     btn.title = dashCleanupShowShared
-      ? 'Shared dashboards are shown (click to hide)'
-      : 'Shared dashboards are hidden (click to show)';
+      ? 'Shared and built-in dashboards are shown (click to hide)'
+      : 'Shared and built-in dashboards are hidden (click to show)';
   }
 
   function toggleDashCleanupShowShared() {
@@ -2903,9 +2964,9 @@
       const q = getDashCleanupSearchQuery();
       let msg = 'No dashboard names match this search — change the filter or clear Search names.';
       if (!q && dashCleanupCatalog.length && !dashCleanupShowShared) {
-        const allShared = dashCleanupCatalog.every((r) => r.isSharedWithCurrentAccount);
-        if (allShared) {
-          msg = 'All loaded dashboards are shared with this account — click Shared to show them.';
+        const allInCategory = dashCleanupCatalog.every((r) => isDashCleanupSharedCategoryRow(r));
+        if (allInCategory) {
+          msg = 'All loaded dashboards are shared or built-in — click Shared to show them.';
         } else {
           msg = 'Nothing to show — turn on Shared or adjust search.';
         }
@@ -2924,12 +2985,12 @@
     const rows = current ? [current, ...filtered.filter((r) => r !== current)] : filtered;
 
     for (const row of rows) {
-      const isShared = !!row.isSharedWithCurrentAccount;
+      const inSharedCategory = isDashCleanupSharedCategoryRow(row);
       const wrap = document.createElement('div');
-      wrap.className = 'tep-dash-cleanup-row' + (isShared ? ' tep-dash-cleanup-row--shared' : '');
+      wrap.className = 'tep-dash-cleanup-row' + (inSharedCategory ? ' tep-dash-cleanup-row--shared' : '');
       const label = document.createElement('label');
-      if (isShared) {
-        label.title = 'Shared with this account — delete is not available for this copy';
+      if (inSharedCategory) {
+        label.title = dashCleanupSharedCategoryLabelTitle(row);
       }
       const isCurrent = currentDashId && String(row.id) === String(currentDashId);
       if (isCurrent) {
@@ -2944,9 +3005,9 @@
       cb.type = 'checkbox';
       cb.className = 'tep-dash-cleanup-cb';
       cb.dataset.dashCleanupId = row.id;
-      if (isShared) {
+      if (inSharedCategory) {
         cb.disabled = true;
-        cb.title = 'Shared with this account — not eligible for delete here';
+        cb.title = dashCleanupSharedCategoryCbTitle(row);
       }
       const textCol = document.createElement('div');
       textCol.className = 'tep-dash-cleanup-titles';
@@ -2990,7 +3051,7 @@
           }
         });
         actions.appendChild(backupBtn);
-        if (!isShared) {
+        if (!inSharedCategory) {
           const delBtn = document.createElement('button');
           delBtn.type = 'button';
           delBtn.className = 'tep-btn tep-btn-danger tep-btn-sm';
@@ -3039,7 +3100,7 @@
       return;
     }
     const total = dashCleanupCatalog.length;
-    const sharedN = dashCleanupCatalog.filter((r) => r.isSharedWithCurrentAccount).length;
+    const sharedCategoryN = dashCleanupCatalog.filter((r) => isDashCleanupSharedCategoryRow(r)).length;
     const visible = getDashCleanupFilteredCatalog().length;
     const q = getDashCleanupSearchQuery();
     const parts = [];
@@ -3047,8 +3108,8 @@
       parts.push(`${visible} match name filter “${q}”`);
       parts.push(`${total} in catalog`);
     } else {
-      if (!dashCleanupShowShared && sharedN > 0) {
-        parts.push(`${visible} dashboard(s) · ${sharedN} shared hidden`);
+      if (!dashCleanupShowShared && sharedCategoryN > 0) {
+        parts.push(`${visible} dashboard(s) · ${sharedCategoryN} shared or built-in hidden`);
       } else {
         parts.push(`${visible} dashboard(s) in list`);
       }
@@ -3090,10 +3151,10 @@
     const selectedIds = boxes.map((b) => b.dataset.dashCleanupId).filter(Boolean);
     const deletableIds = selectedIds.filter((id) => {
       const row = dashCleanupCatalog.find((r) => String(r.id) === String(id));
-      return row && !row.isSharedWithCurrentAccount;
+      return row && !isDashCleanupSharedCategoryRow(row);
     });
     if (selectedIds.length && !deletableIds.length) {
-      toast('Selected dashboard(s) are shared with this account — remove from selection to delete others', 'err');
+      toast('Selected dashboard(s) are shared or built-in — remove from selection to delete others', 'err');
       return;
     }
     if (!deletableIds.length) {
@@ -4479,7 +4540,8 @@
     'Voip': 'voip', 'WebTransaction': 'web-transaction', 'Ftp': 'ftp',
     'Dnssec': 'dnssec', 'Bgp': 'bgp', 'Network': 'network',
     'HTTP': 'http-server', 'DNS': 'dns-server', 'Voice': 'voip',
-    'OneWayNetwork': 'oneway-network', 'Sip': 'sip-server'
+    'OneWayNetwork': 'oneway-network', 'Sip': 'sip-server',
+    'Agent to Server': 'network', 'agent to server': 'network'
   };
   const SLUG_REMAP = {
     'onewaynetwork': 'oneway-network',
@@ -4614,6 +4676,7 @@
   const TYPE_NORMALIZE = {
     'http-server': 'Http', 'Http': 'Http', 'HTTP': 'Http', 'http_server': 'Http',
     'agent-to-server': 'A2s', 'A2s': 'A2s', 'agent_to_server': 'A2s',
+    'Agent to Server': 'A2s', 'agent to server': 'A2s',
     'Network': 'A2s', 'network': 'A2s',
     'page-load': 'Page', 'Page': 'Page', 'page_load': 'Page',
     'BrowserBot': 'Page', 'browserbot': 'Page',
@@ -5056,6 +5119,124 @@
     const aid = t.aid;
     const testId = t.testId || t.id;
     return `/ajax/tests/${slug}/${aid}/${testId}`;
+  }
+
+  function getTestWriteBasePath(t) {
+    try {
+      const p = testApiUrl(t, { forWrite: true });
+      if (!p || !/^\/ajax\/tests\/[a-z0-9-]+$/.test(p)) return null;
+      return p;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getTestWriteSlug(t) {
+    const p = getTestWriteBasePath(t);
+    if (!p) return null;
+    const m = p.match(/^\/ajax\/tests\/([a-z0-9-]+)$/);
+    return m ? m[1] : null;
+  }
+
+  /** Same pattern as native UI: POST {write path}/create-instant?useOriginal=true with flagInstant: 1 */
+  function getTestInstantCreateUrl(t) {
+    const base = getTestWriteBasePath(t);
+    return base ? `${base}/create-instant?useOriginal=true` : null;
+  }
+
+  function canUseInstantTest(t) {
+    if (!t || isReadOnly(t)) return false;
+    const tid = t.testId != null ? t.testId : t.id;
+    if (tid == null || tid === '') return false;
+    return !!getTestInstantCreateUrl(t);
+  }
+
+  function buildTeInstantViewUrl(slug, testId, origin) {
+    const id = encodeURIComponent(String(testId));
+    let path;
+    /* TE opens instant results for Network *and* web (HTTP / page-load) under network-app-synthetics/views */
+    if (slug === 'dns-server' || slug === 'dns-trace') {
+      path = `/dns-app-synthetics/views/?testId=${id}`;
+    } else {
+      path = `/network-app-synthetics/views/?testId=${id}`;
+    }
+    const o = origin || (typeof location !== 'undefined' && location.origin) || 'https://app.thousandeyes.com';
+    try {
+      return new URL(path, o).href;
+    } catch (_) {
+      return `https://app.thousandeyes.com${path}`;
+    }
+  }
+
+  function pickInstantResultTestId(obj, sourceTestId) {
+    const src = sourceTestId != null ? String(sourceTestId) : '';
+    const scored = [];
+    (function walk(o, depth) {
+      if (depth > 12 || !o || typeof o !== 'object') return;
+      for (const [k, v] of Object.entries(o)) {
+        if (v != null && typeof v !== 'object' && /^\d{4,12}$/.test(String(v).trim())) {
+          const sv = String(v).trim();
+          const kl = k.toLowerCase();
+          let score = 0;
+          if (kl.includes('instant')) score += 100;
+          if (kl.includes('snapshot')) score += 80;
+          if ((kl.includes('new') || kl.includes('result')) && kl.includes('test')) score += 60;
+          if (kl === 'testid' || kl.endsWith('testid')) score += 40;
+          if (kl === 'id') score += 10;
+          scored.push({ sv, score, ne: sv !== src });
+        } else if (v && typeof v === 'object') {
+          walk(v, depth + 1);
+        }
+      }
+    })(obj, 0);
+    if (!scored.length) return null;
+    scored.sort((a, b) => {
+      if (a.ne !== b.ne) return a.ne ? -1 : 1;
+      return b.score - a.score;
+    });
+    return scored[0].sv;
+  }
+
+  function findFirstThousandEyesHttpUrlInValue(val, depth) {
+    depth = depth || 0;
+    if (depth > 12) return null;
+    if (typeof val === 'string') {
+      const m = val.match(/https:\/\/[^\s"'<>]+/i);
+      if (m && /thousandeyes\.com/i.test(m[0])) return m[0].replace(/[,;.)}\]]+$/, '');
+      return null;
+    }
+    if (!val || typeof val !== 'object') return null;
+    if (Array.isArray(val)) {
+      for (const x of val) {
+        const u = findFirstThousandEyesHttpUrlInValue(x, depth + 1);
+        if (u) return u;
+      }
+      return null;
+    }
+    for (const v of Object.values(val)) {
+      const u = findFirstThousandEyesHttpUrlInValue(v, depth + 1);
+      if (u) return u;
+    }
+    return null;
+  }
+
+  function extractInstantViewUrlFromCreateResponse(rawText, parsed, slug, sourceTestId) {
+    const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : 'https://app.thousandeyes.com';
+    if (parsed && typeof parsed === 'object') {
+      const direct = findFirstThousandEyesHttpUrlInValue(parsed);
+      if (direct) return direct;
+      const id = pickInstantResultTestId(parsed, sourceTestId);
+      if (id) return buildTeInstantViewUrl(slug, id, origin);
+    }
+    if (rawText && typeof rawText === 'string') {
+      const m = rawText.match(/https:\/\/[^\s"'<>]+thousandeyes\.com[^\s"'<>]*/i);
+      if (m) return m[0].replace(/[,;.)}\]]+$/, '');
+      const src = sourceTestId != null ? String(sourceTestId) : '';
+      const idMatches = [...rawText.matchAll(/"testId"\s*:\s*(\d{4,12})/gi)].map((x) => x[1]);
+      const alt = idMatches.find((id) => id !== src) || idMatches[0];
+      if (alt) return buildTeInstantViewUrl(slug, alt, origin);
+    }
+    return null;
   }
 
   async function fetchTestDetail(t) {
@@ -5585,6 +5766,13 @@
       </div>
       <div class="tep-edit-actions">
         <button type="button" class="tep-btn tep-btn-primary tep-btn-sm tep-save-edit">Save</button>
+        ${(() => {
+          const _inst = canUseInstantTest(t);
+          const _tit = _inst
+            ? 'POST …/ajax/tests/{type}/create-instant?useOriginal=true with flagInstant (same payload as Save); opens results when the response includes a URL or test id'
+            : 'Instant needs a saved test id and a known Save endpoint (see Manage list).';
+          return `<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-instant-edit"${_inst ? '' : ' disabled'} title="${tepEscapeHtmlText(_tit)}">Instant</button>`;
+        })()}
         <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-cancel-edit">Cancel</button>
         <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-clone-edit" title="Create a copy of this test (unsaved changes are not included)">Clone</button>
       </div>
@@ -5947,23 +6135,7 @@
       });
     }
 
-    form.querySelector('.tep-cancel-edit').addEventListener('click', () => {
-      const u = card.querySelector('.tep-test-units');
-      if (u) u.textContent = formatManageTestUnitsLine(t);
-      form.remove();
-      updateManageUnitsTotal();
-    });
-    form.querySelector('.tep-clone-edit').addEventListener('click', async () => {
-      const ok = await cloneTest(t);
-      if (ok) {
-        const u = card.querySelector('.tep-test-units');
-        if (u) u.textContent = formatManageTestUnitsLine(t);
-        form.remove();
-        updateManageUnitsTotal();
-      }
-    });
-    form.querySelector('.tep-save-edit').addEventListener('click', async () => {
-      const dismissProcessing = toastProcessing('Saving…');
+    function buildUpdatedTestFromEditForm() {
       const newName = form.querySelector('.tep-edit-name').value.trim();
       const newTarget = form.querySelector('.tep-edit-target').value.trim();
       const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
@@ -5975,14 +6147,12 @@
       })();
       const newEnabled = parseInt(form.querySelector('.tep-edit-enabled').value, 10);
 
-      // Build updated body — same path as HTTP/Page: enriched list/detail object, not a create body
       const updated = { ...t };
       Object.keys(updated).forEach(k => { if (k.startsWith('_')) delete updated[k]; });
       updated.name = newName;
       updated.flagEnabled = newEnabled;
       updated.flagIgnoreWarnings = 0;
 
-      // Set target
       if (updated.url && typeof updated.url === 'object') updated.url.url = newTarget;
       else if (updated.server !== undefined) {
         if (typeof updated.server === 'object' && updated.server !== null) {
@@ -6012,10 +6182,8 @@
         } else {
           updated.server = newTarget;
         }
-      }
-      else if (updated.domain !== undefined) updated.domain = newTarget;
+      } else if (updated.domain !== undefined) updated.domain = newTarget;
 
-      // Set ALL interval/freq fields to new value (not page load — that has separate HTTP vs browser)
       if (!isBrowserOrPageTest(t)) {
         for (const k of Object.keys(updated)) {
           if (/^(freq|interval)/i.test(k) && typeof updated[k] === 'number') {
@@ -6023,7 +6191,6 @@
           }
         }
       }
-      // Apply protocol settings for A2S/Network/Http/Page tests
       if (editProtoSel) {
         const pv = editProtoSel.value;
         const proto = pv.startsWith('TCP') ? 'TCP' : 'ICMP';
@@ -6060,7 +6227,6 @@
         if (/a2s|network|agent|oneway/i.test(ttD)) updated.dscp = updated.dscp || 0;
       }
       const tt = (t.testType || t.type || '').toLowerCase();
-      /* Native UI: Network tests use testType "Network" + freq + interval (not A2s / freqA2s). */
       if (shouldWriteNetworkTestShape(t)) {
         updated.testType = 'Network';
         updated.interval = newInterval;
@@ -6068,7 +6234,6 @@
         delete updated.freqA2s;
         if (updated.aid == null && t.aid != null) updated.aid = t.aid;
       } else if (isBrowserOrPageTest(t)) {
-        /* Page load: root interval; inner cadence is TE `subinterval` (must divide interval), also freqHttp. */
         const sub = coerceSubintervalToDividePageInterval(newInterval, newSubInterval);
         updated.interval = newInterval;
         updated.freqPage = newInterval;
@@ -6099,17 +6264,37 @@
         }
       }
 
-      // Set agents
       if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
       updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
 
       if (updated.testId == null && updated.id != null) updated.testId = updated.id;
+      return updated;
+    }
 
-      // Debug: log freq fields being sent
-      const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-      log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o,k)=>(o[k]=updated[k],o),{}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${testApiUrl(t, { forWrite: true })}`, 'tep-log-info');
-
+    form.querySelector('.tep-cancel-edit').addEventListener('click', () => {
+      const u = card.querySelector('.tep-test-units');
+      if (u) u.textContent = formatManageTestUnitsLine(t);
+      form.remove();
+      updateManageUnitsTotal();
+    });
+    form.querySelector('.tep-clone-edit').addEventListener('click', async () => {
+      const ok = await cloneTest(t);
+      if (ok) {
+        const u = card.querySelector('.tep-test-units');
+        if (u) u.textContent = formatManageTestUnitsLine(t);
+        form.remove();
+        updateManageUnitsTotal();
+      }
+    });
+    form.querySelector('.tep-save-edit').addEventListener('click', async () => {
+      const dismissProcessing = toastProcessing('Saving…');
       try {
+        const updated = buildUpdatedTestFromEditForm();
+        const newName = updated.name;
+        const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
+        const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
+        log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o, k) => (o[k] = updated[k], o), {}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${testApiUrl(t, { forWrite: true })}`, 'tep-log-info');
+
         const resp = await ajax(testApiUrl(t, { forWrite: true }), {
           method: 'POST',
           body: JSON.stringify(updated)
@@ -6131,8 +6316,75 @@
             toast(`Failed to save "${newName}": ${resp.status}`, 'err');
           }
         }
-      } catch (e) { dismissProcessing(); log(`  ✗ Error: ${e.message}`, 'tep-log-err'); toast(`Error saving "${newName}"`, 'err'); }
+      } catch (e) {
+        dismissProcessing();
+        const nm = (form.querySelector('.tep-edit-name') && form.querySelector('.tep-edit-name').value.trim()) || 'test';
+        log(`  ✗ Error: ${e.message}`, 'tep-log-err');
+        toast(`Error saving "${nm}"`, 'err');
+      }
     });
+
+    const instantBtn = form.querySelector('.tep-instant-edit');
+    if (instantBtn) {
+      instantBtn.addEventListener('click', async () => {
+        const dismissProcessing = toastProcessing('Instant test…');
+        try {
+          const updated = buildUpdatedTestFromEditForm();
+          const tid = updated.testId != null ? updated.testId : updated.id;
+          if (tid == null || tid === '') {
+            dismissProcessing();
+            toast('Instant requires a saved test (testId)', 'err');
+            return;
+          }
+          const instantPath = getTestInstantCreateUrl(t);
+          if (!instantPath) {
+            dismissProcessing();
+            toast('Instant is not available for this test type', 'err');
+            return;
+          }
+          updated.flagInstant = 1;
+          const slug = getTestWriteSlug(t) || 'network';
+          log(`Instant "${updated.name}" (source testId=${tid}) — POST ${instantPath}`, 'tep-log-info');
+          const resp = await ajax(instantPath, { method: 'POST', body: JSON.stringify(updated) });
+          dismissProcessing();
+          if (resp.ok) {
+            const rawText = await resp.text().catch(() => '');
+            let parsed = null;
+            try {
+              parsed = rawText ? JSON.parse(rawText) : null;
+            } catch (_) { /* non-JSON */ }
+            const viewUrl = extractInstantViewUrlFromCreateResponse(rawText, parsed, slug, tid);
+            let errHint = '';
+            if (parsed && typeof parsed === 'object' && parsed.error) errHint = ' — ' + String(parsed.error);
+            else if (parsed && typeof parsed === 'object' && parsed.message && !viewUrl) errHint = ' — ' + String(parsed.message);
+            if (viewUrl) {
+              log(`  ✓ create-instant accepted → ${viewUrl}`, 'tep-log-ok');
+              try {
+                window.open(viewUrl, '_blank', 'noopener,noreferrer');
+              } catch (_) { /* */ }
+              toast(`Instant test — opened results${errHint}`, 'ok');
+            } else {
+              log(`  ✓ create-instant accepted (no view URL parsed)${errHint}`, 'tep-log-ok');
+              if (rawText && rawText.length < 800) log(`  Response body: ${rawText}`, 'tep-log-info');
+              else if (rawText) log(`  Response body (truncated): ${rawText.slice(0, 400)}…`, 'tep-log-info');
+              toast(`Instant triggered — check log for response (could not build views URL)${errHint}`, 'ok');
+            }
+          } else {
+            const txt = await resp.text().catch(() => '');
+            log(`  ✗ create-instant ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+            if (isLikelyPermissionDenied(resp.status, txt)) {
+              notifyManageAccessDenied();
+            } else {
+              toast(`Instant failed: ${resp.status}`, 'err');
+            }
+          }
+        } catch (e) {
+          dismissProcessing();
+          log(`  ✗ Instant error: ${e.message}`, 'tep-log-err');
+          toast('Instant test request failed', 'err');
+        }
+      });
+    }
 
     card.appendChild(form);
   }
