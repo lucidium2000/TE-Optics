@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.26';
+  const TEP_VERSION = '2.27';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -592,6 +592,8 @@
   let dashCleanupListEverLoaded = false;
   /** When true, higher `modifiedMs` appears first; when false, oldest first. */
   let dashCleanupSortNewestFirst = true;
+  /** When false (default), shared-with-account dashboards are omitted from the list. */
+  let dashCleanupShowShared = false;
 
   function getDashCleanupSearchQuery() {
     const el = root.querySelector('#tep-dash-cleanup-search');
@@ -604,10 +606,14 @@
   }
 
   function getDashCleanupFilteredCatalog() {
+    let rows = dashCleanupCatalog;
+    if (!dashCleanupShowShared) {
+      rows = rows.filter((row) => !row.isSharedWithCurrentAccount);
+    }
     const q = getDashCleanupSearchQuery();
     const qLower = q.toLowerCase();
-    if (!qLower) return dashCleanupCatalog;
-    return dashCleanupCatalog.filter((row) => dashCleanupTitleMatchesQuery(row.title, qLower));
+    if (!qLower) return rows;
+    return rows.filter((row) => dashCleanupTitleMatchesQuery(row.title, qLower));
   }
 
   // ---------------------------------------------------------------------------
@@ -1016,8 +1022,32 @@
     }
     .tep-dash-cleanup-meta { font-size: 11px; color: #94a3b8; margin: 0 0 8px; line-height: 1.45; }
     .tep-dash-cleanup-toolbar { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; margin-top: 8px; overflow-x: auto; padding-bottom: 2px; }
+    .tep-dash-cleanup-actions {
+      display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px;
+    }
+    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn {
+      height: 32px; padding: 0 10px; margin: 0;
+      font-size: 11px; font-weight: 600; line-height: 1;
+      border-radius: 6px; border: 1px solid #475569;
+      background: #1e293b; color: #e2e8f0;
+      cursor: pointer; white-space: nowrap;
+      transition: background .12s, border-color .12s, color .12s;
+    }
+    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn:hover:not(:disabled) {
+      background: #334155; border-color: #64748b;
+    }
+    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn--danger {
+      background: #450a0a; border-color: #991b1b; color: #fecaca;
+    }
+    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn--danger:hover:not(:disabled) {
+      background: #7f1d1d; border-color: #b91c1c; color: #fef2f2;
+    }
+    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn--toggle.tep-dash-toolbar-btn--on {
+      background: #422006; border-color: #ca8a04; color: #facc15;
+    }
     .tep-dash-cleanup-search {
-      flex: 1 1 160px; min-width: 140px; max-width: 100%;
+      flex: 1 1 0; min-width: 100px; max-width: 100%;
       height: 32px; font-size: 12px; padding: 4px 10px;
     }
     .tep-link-btn {
@@ -1039,11 +1069,23 @@
     }
     .tep-dash-cleanup-row { padding: 8px 10px; border-bottom: 1px solid #1e293b; font-size: 12px; }
     .tep-dash-cleanup-row:last-child { border-bottom: none; }
+    .tep-dash-cleanup-row--shared {
+      background: rgba(250, 204, 21, 0.12);
+      box-shadow: inset 3px 0 0 0 #facc15;
+    }
+    .tep-dash-cleanup-row--shared .tep-dash-cleanup-name { color: #facc15; }
+    .tep-dash-cleanup-row--shared .tep-dash-cleanup-id { color: #a3a3a3; }
     .tep-dash-cleanup-row label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; width: 100%; }
     .tep-dash-cleanup-row .tep-dash-cleanup-cb { margin-top: 2px; flex-shrink: 0; accent-color: #3b82f6; }
+    .tep-dash-cleanup-row .tep-dash-cleanup-cb:disabled { cursor: not-allowed; opacity: 0.55; }
     .tep-dash-cleanup-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .tep-dash-cleanup-name { font-weight: 600; color: #e2e8f0; word-break: break-word; }
     .tep-dash-cleanup-id { font-size: 10px; color: #64748b; word-break: break-all; }
+    .tep-dash-cleanup-row-actions { display: inline-flex; gap: 6px; align-items: center; margin-left: 6px; }
+    .tep-dash-cleanup-row-actions .tep-btn {
+      font-size: 10px; padding: 3px 6px; border-radius: 6px; line-height: 1.1;
+    }
+    .tep-dash-cleanup-row-actions .tep-btn svg { display: block; }
     .tep-dash-page-pointer {
       display: inline-flex; align-items: center; flex-shrink: 0; color: #38bdf8; font-size: 15px; font-weight: 700;
       line-height: 1; user-select: none; margin: 0 6px 0 0;
@@ -1655,9 +1697,12 @@
               <p class="tep-dash-cleanup-meta" id="tep-dash-cleanup-meta">Not loaded yet.</p>
               <div class="tep-dash-cleanup-toolbar">
                 <input type="search" class="tep-input tep-dash-cleanup-search" id="tep-dash-cleanup-search" placeholder="Search names…" autocomplete="off" title="Filter the list by dashboard name" aria-label="Search dashboard names">
-                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-sort" title="Toggle list order">Sort: newest first</button>
-                <button type="button" class="tep-link-btn" id="tep-dash-cleanup-select-none" title="Clear selection">Clear</button>
-                <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-cleanup-delete">Delete selected…</button>
+                <div class="tep-dash-cleanup-actions">
+                  <button type="button" class="tep-dash-toolbar-btn" id="tep-dash-cleanup-sort" title="Toggle sort by modified time">Newest</button>
+                  <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--toggle" id="tep-dash-cleanup-shared" title="Show or hide dashboards shared with this account" aria-pressed="false">Shared</button>
+                  <button type="button" class="tep-dash-toolbar-btn" id="tep-dash-cleanup-select-none" title="Clear checkbox selection">Clear</button>
+                  <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--danger" id="tep-dash-cleanup-delete" title="Delete selected dashboards">Delete</button>
+                </div>
               </div>
               <div class="tep-dash-cleanup-list" id="tep-dash-cleanup-list"></div>
             </div>
@@ -2571,6 +2616,74 @@
     return 0;
   }
 
+  function isTruthySharedFlag(v) {
+    return v === true || v === 1 || (typeof v === 'string' && v.toLowerCase() === 'true');
+  }
+
+  /** Row / summary objects from dash-api list may nest flags under dashboard, meta, etc. */
+  function coalesceDashboardCatalogEntryObjects(el) {
+    const out = [];
+    if (!el || typeof el !== 'object' || Array.isArray(el)) return out;
+    out.push(el);
+    if (el.dashboard && typeof el.dashboard === 'object' && !Array.isArray(el.dashboard)) {
+      out.push(el.dashboard);
+    }
+    for (const k of [
+      'meta', 'metadata', 'summary', 'info', 'attributes', 'row', 'extra', 'extension',
+      'sharing', 'sharingInfo', 'shareInfo', 'view', 'properties', 'props', 'details', 'payload'
+    ]) {
+      const x = el[k];
+      if (x && typeof x === 'object' && !Array.isArray(x)) out.push(x);
+    }
+    return out;
+  }
+
+  /**
+   * True if this catalog row is a shared copy (read-only delete) for the current account.
+   * TE field names vary by endpoint; also infer from owner/source account !== current aid when present.
+   */
+  function isSharedWithCurrentAccountFromPayload(el) {
+    if (!el || typeof el !== 'object' || Array.isArray(el)) return false;
+    const objs = coalesceDashboardCatalogEntryObjects(el);
+    const boolKeys = [
+      'isSharedWithCurrentAccount',
+      'sharedWithCurrentAccount',
+      'isSharedToCurrentAccount',
+      'sharedToCurrentAccount',
+      'isSharedFromAnotherAccount',
+      'isCrossAccountShare',
+      'isReadOnlyShare',
+      'readOnlyShare',
+      'fromOtherAccount'
+    ];
+    for (const o of objs) {
+      for (const k of boolKeys) {
+        if (isTruthySharedFlag(o[k])) return true;
+      }
+      if (o.shared === true) return true;
+      for (const k of ['accessType', 'sharingMode', 'visibility', 'dashboardType', 'kind']) {
+        const s = o[k];
+        if (typeof s !== 'string') continue;
+        const u = s.toUpperCase();
+        if (u === 'READ_ONLY' || u === 'READONLY' || u === 'CROSS_ACCOUNT' || u === 'EXTERNAL' || u === 'SHARED') return true;
+        if (u.includes('SHARED') && !u.includes('NOT_SHARED') && !u.includes('NON_SHARED') && !u.includes('UNSHARED')) return true;
+      }
+    }
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid).trim() : '';
+    if (aid) {
+      const idKeys = ['owningAccountId', 'ownerAccountId', 'sourceAccountId', 'homeAccountId', 'originalAccountId', 'originAccountId'];
+      for (const o of objs) {
+        for (const k of idKeys) {
+          const v = o[k];
+          if (v == null) continue;
+          const sv = String(v).trim();
+          if (sv && sv !== aid) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /**
    * Collect dashboard rows from list or aggregate JSON (namespace dash-api, /ajax/dashboards, etc.).
    * Skips obvious in-widget panel objects (widgets array without full dashboard shape).
@@ -2591,13 +2704,15 @@
       if (!full && Array.isArray(el.widgets) && el.widgets.length && !el.template) return;
       const title = dashboardCatalogDisplayTitle(el);
       const modifiedMs = getDashboardRowSortTimeMs(el);
+      const shared = isSharedWithCurrentAccountFromPayload(el);
       if (!map.has(sid)) {
-        map.set(sid, { title, modifiedMs });
+        map.set(sid, { title, modifiedMs, isSharedWithCurrentAccount: shared });
       } else {
         const p = map.get(sid);
         map.set(sid, {
           title: p.title === '(untitled)' && title !== '(untitled)' ? title : p.title,
-          modifiedMs: Math.max(p.modifiedMs || 0, modifiedMs || 0)
+          modifiedMs: Math.max(p.modifiedMs || 0, modifiedMs || 0),
+          isSharedWithCurrentAccount: !!p.isSharedWithCurrentAccount || shared
         });
       }
     }
@@ -2612,7 +2727,12 @@
       for (const k of Object.keys(node)) visit(node[k], depth + 1);
     }
     visit(data, 0);
-    return [...map.entries()].map(([id, v]) => ({ id, title: v.title, modifiedMs: v.modifiedMs || 0 }));
+    return [...map.entries()].map(([id, v]) => ({
+      id,
+      title: v.title,
+      modifiedMs: v.modifiedMs || 0,
+      isSharedWithCurrentAccount: !!v.isSharedWithCurrentAccount
+    }));
   }
 
   async function fetchDashboardCatalogForCleanup() {
@@ -2638,13 +2758,15 @@
         for (const r of rows) {
           if (!r.id) continue;
           const ms = typeof r.modifiedMs === 'number' ? r.modifiedMs : 0;
+          const shared = !!r.isSharedWithCurrentAccount;
           if (!merged.has(r.id)) {
-            merged.set(r.id, { title: r.title, modifiedMs: ms });
+            merged.set(r.id, { title: r.title, modifiedMs: ms, isSharedWithCurrentAccount: shared });
           } else {
             const p = merged.get(r.id);
             merged.set(r.id, {
               title: p.title === '(untitled)' && r.title !== '(untitled)' ? r.title : p.title,
-              modifiedMs: Math.max(p.modifiedMs || 0, ms)
+              modifiedMs: Math.max(p.modifiedMs || 0, ms),
+              isSharedWithCurrentAccount: !!p.isSharedWithCurrentAccount || shared
             });
           }
         }
@@ -2653,7 +2775,12 @@
         log(`Dashboard cleanup list: ${url} → ${e.message}`, 'tep-log-err');
       }
     }
-    return [...merged.entries()].map(([id, v]) => ({ id, title: v.title, modifiedMs: v.modifiedMs || 0 }));
+    return [...merged.entries()].map(([id, v]) => ({
+      id,
+      title: v.title,
+      modifiedMs: v.modifiedMs || 0,
+      isSharedWithCurrentAccount: !!v.isSharedWithCurrentAccount
+    }));
   }
 
   async function tryDeleteDashboardById(dashboardId) {
@@ -2679,18 +2806,47 @@
   }
 
   function setDashCleanupUiBusy(busy) {
-    const ids = ['tep-dash-cleanup-search', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-delete', 'tep-dash-cleanup-select-none'];
+    const ids = ['tep-dash-cleanup-search', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-shared', 'tep-dash-cleanup-delete', 'tep-dash-cleanup-select-none'];
     for (const id of ids) {
       const el = root.querySelector('#' + id);
       if (el) el.disabled = !!busy;
     }
-    root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => { cb.disabled = !!busy; });
+    root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => {
+      const id = cb.dataset.dashCleanupId;
+      const row = id != null ? dashCleanupCatalog.find((r) => String(r.id) === String(id)) : null;
+      const shared = row && row.isSharedWithCurrentAccount;
+      cb.disabled = !!busy || !!shared;
+    });
   }
 
   function updateDashCleanupSortButton() {
     const btn = root.querySelector('#tep-dash-cleanup-sort');
     if (!btn) return;
-    btn.textContent = dashCleanupSortNewestFirst ? 'Sort: newest first' : 'Sort: oldest first';
+    btn.textContent = dashCleanupSortNewestFirst ? 'Newest' : 'Oldest';
+  }
+
+  function updateDashCleanupSharedButton() {
+    const btn = root.querySelector('#tep-dash-cleanup-shared');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', dashCleanupShowShared ? 'true' : 'false');
+    btn.classList.toggle('tep-dash-toolbar-btn--on', dashCleanupShowShared);
+    btn.title = dashCleanupShowShared
+      ? 'Shared dashboards are shown (click to hide)'
+      : 'Shared dashboards are hidden (click to show)';
+  }
+
+  function toggleDashCleanupShowShared() {
+    dashCleanupShowShared = !dashCleanupShowShared;
+    updateDashCleanupSharedButton();
+    syncDashCleanupMeta();
+    const checked = new Set(
+      [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')].map((b) => b.dataset.dashCleanupId).filter(Boolean)
+    );
+    renderDashCleanupList();
+    for (const cb of root.querySelectorAll('.tep-dash-cleanup-cb')) {
+      const id = cb.dataset.dashCleanupId;
+      if (id && checked.has(id)) cb.checked = true;
+    }
   }
 
   function applyDashCleanupSortOrder() {
@@ -2744,7 +2900,17 @@
       span.className = 'tep-log-info';
       span.style.display = 'block';
       span.style.padding = '10px 12px';
-      span.textContent = 'No dashboard names match this search — change the filter or clear Search names.';
+      const q = getDashCleanupSearchQuery();
+      let msg = 'No dashboard names match this search — change the filter or clear Search names.';
+      if (!q && dashCleanupCatalog.length && !dashCleanupShowShared) {
+        const allShared = dashCleanupCatalog.every((r) => r.isSharedWithCurrentAccount);
+        if (allShared) {
+          msg = 'All loaded dashboards are shared with this account — click Shared to show them.';
+        } else {
+          msg = 'Nothing to show — turn on Shared or adjust search.';
+        }
+      }
+      span.textContent = msg;
       host.appendChild(span);
       return;
     }
@@ -2758,10 +2924,15 @@
     const rows = current ? [current, ...filtered.filter((r) => r !== current)] : filtered;
 
     for (const row of rows) {
+      const isShared = !!row.isSharedWithCurrentAccount;
       const wrap = document.createElement('div');
-      wrap.className = 'tep-dash-cleanup-row';
+      wrap.className = 'tep-dash-cleanup-row' + (isShared ? ' tep-dash-cleanup-row--shared' : '');
       const label = document.createElement('label');
-      if (currentDashId && String(row.id) === String(currentDashId)) {
+      if (isShared) {
+        label.title = 'Shared with this account — delete is not available for this copy';
+      }
+      const isCurrent = currentDashId && String(row.id) === String(currentDashId);
+      if (isCurrent) {
         const ptr = document.createElement('span');
         ptr.className = 'tep-dash-page-pointer';
         ptr.title = 'This dashboard matches the one on the current ThousandEyes page (URL dashboardId) — points to the app content on the left';
@@ -2773,6 +2944,10 @@
       cb.type = 'checkbox';
       cb.className = 'tep-dash-cleanup-cb';
       cb.dataset.dashCleanupId = row.id;
+      if (isShared) {
+        cb.disabled = true;
+        cb.title = 'Shared with this account — not eligible for delete here';
+      }
       const textCol = document.createElement('div');
       textCol.className = 'tep-dash-cleanup-titles';
       const nameEl = document.createElement('a');
@@ -2794,6 +2969,62 @@
       textCol.appendChild(idEl);
       label.appendChild(cb);
       label.appendChild(textCol);
+      if (isCurrent) {
+        const actions = document.createElement('span');
+        actions.className = 'tep-dash-cleanup-row-actions';
+
+        const backupBtn = document.createElement('button');
+        backupBtn.type = 'button';
+        backupBtn.className = 'tep-btn tep-btn-secondary tep-btn-sm';
+        backupBtn.title = 'Open Backup and Restore';
+        backupBtn.textContent = 'Backup';
+        backupBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const toggle = root.querySelector('#tep-dash-toggle-backup-restore');
+          const expand = root.querySelector('#tep-dash-expand-backup-restore');
+          if (toggle && expand) {
+            expand.removeAttribute('hidden');
+            toggle.setAttribute('aria-expanded', 'true');
+            expand.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          }
+        });
+        actions.appendChild(backupBtn);
+        if (!isShared) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'tep-btn tep-btn-danger tep-btn-sm';
+          delBtn.title = 'Delete this dashboard';
+          delBtn.textContent = 'Delete';
+          delBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const id = String(row.id || '');
+            const name = String(row.title || 'Unnamed');
+            if (!id) return;
+            const ok = confirm(`Permanently delete this dashboard from ThousandEyes?\n\n${name}\n${id}\n\nThis cannot be undone.`);
+            if (!ok) return;
+            setDashCleanupUiBusy(true);
+            try {
+              const res = await tryDeleteDashboardById(id);
+              if (res && res.ok) {
+                dashCleanupCatalog = dashCleanupCatalog.filter((r) => String(r.id) !== id);
+                syncDashCleanupMeta();
+                renderDashCleanupList();
+                toast('Dashboard deleted', 'ok');
+              } else {
+                toast('Delete failed — see log', 'err');
+              }
+            } catch (err) {
+              toast('Delete failed', 'err');
+            } finally {
+              setDashCleanupUiBusy(false);
+            }
+          });
+          actions.appendChild(delBtn);
+        }
+        label.appendChild(actions);
+      }
       wrap.appendChild(label);
       host.appendChild(wrap);
     }
@@ -2808,14 +3039,22 @@
       return;
     }
     const total = dashCleanupCatalog.length;
+    const sharedN = dashCleanupCatalog.filter((r) => r.isSharedWithCurrentAccount).length;
+    const visible = getDashCleanupFilteredCatalog().length;
     const q = getDashCleanupSearchQuery();
+    const parts = [];
     if (q) {
-      const n = getDashCleanupFilteredCatalog().length;
-      const shown = n === total ? `${total} dashboard(s)` : `${n} of ${total} shown`;
-      meta.textContent = `${shown} · name filter “${q}” · aid=${aid}`;
+      parts.push(`${visible} match name filter “${q}”`);
+      parts.push(`${total} in catalog`);
     } else {
-      meta.textContent = `${total} dashboard(s) in list · aid=${aid}`;
+      if (!dashCleanupShowShared && sharedN > 0) {
+        parts.push(`${visible} dashboard(s) · ${sharedN} shared hidden`);
+      } else {
+        parts.push(`${visible} dashboard(s) in list`);
+      }
     }
+    parts.push(`aid=${aid}`);
+    meta.textContent = parts.join(' · ');
   }
 
   async function refreshDashboardCleanupList() {
@@ -2832,6 +3071,7 @@
       applyDashCleanupSortOrder();
       syncDashCleanupMeta();
       updateDashCleanupSortButton();
+      updateDashCleanupSharedButton();
       renderDashCleanupList();
       if (dashCleanupCatalog.length) toast(`Loaded ${dashCleanupCatalog.length} dashboard(s)`, 'ok');
       else toast('No dashboards found — check log', 'err');
@@ -2848,21 +3088,29 @@
   async function bulkDeleteSelectedDashboards() {
     const boxes = [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')];
     const selectedIds = boxes.map((b) => b.dataset.dashCleanupId).filter(Boolean);
-    if (!selectedIds.length) {
+    const deletableIds = selectedIds.filter((id) => {
+      const row = dashCleanupCatalog.find((r) => String(r.id) === String(id));
+      return row && !row.isSharedWithCurrentAccount;
+    });
+    if (selectedIds.length && !deletableIds.length) {
+      toast('Selected dashboard(s) are shared with this account — remove from selection to delete others', 'err');
+      return;
+    }
+    if (!deletableIds.length) {
       toast('Check one or more dashboards to delete', 'err');
       return;
     }
-    const lines = selectedIds.map((id) => {
-      const row = dashCleanupCatalog.find((r) => r.id === id);
+    const lines = deletableIds.map((id) => {
+      const row = dashCleanupCatalog.find((r) => String(r.id) === String(id));
       return ' · ' + (row ? row.title + ' — ' + id : id);
     });
     const preview = lines.length > 18 ? lines.slice(0, 18).join('\n') + '\n · … and ' + (lines.length - 18) + ' more' : lines.join('\n');
-    const msg = 'Permanently delete ' + selectedIds.length + ' dashboard(s) from ThousandEyes? This cannot be undone.\n\n' + preview;
+    const msg = 'Permanently delete ' + deletableIds.length + ' dashboard(s) from ThousandEyes? This cannot be undone.\n\n' + preview;
     if (!window.confirm(msg)) return;
     setDashCleanupUiBusy(true);
     let ok = 0;
     let fail = 0;
-    for (const id of selectedIds) {
+    for (const id of deletableIds) {
       const r = await tryDeleteDashboardById(id);
       if (r.ok) {
         ok++;
@@ -3413,6 +3661,8 @@
           log('Dashboard mode: aid still unknown — dashboard probes run without ?aid= (may 404).', 'tep-log-err');
         }
         applyDefaultAuthenticatedStatus();
+        // List fetch is cheap; start it before agents + JSON merge so Manage Dashboards fills sooner.
+        void refreshDashboardCleanupList();
         log('Dashboard mode: session OK; loading portal agents for restore…', 'tep-log-ok');
         try {
           await loadAgents();
@@ -3420,7 +3670,6 @@
           log('Dashboard mode: optional agent load failed — ' + e.message, 'tep-log-info');
         }
         refreshDashboardEditor();
-        void refreshDashboardCleanupList();
         startUsageSummaryPlanUnitsPoll();
       } else {
         setStatus('Authenticated — loading agents…', 'ok');
@@ -6779,6 +7028,8 @@
     $('#tep-dash-download').addEventListener('click', downloadDashboardBackup);
     const cleanupSort = root.querySelector('#tep-dash-cleanup-sort');
     if (cleanupSort) cleanupSort.addEventListener('click', () => { toggleDashCleanupSortOrder(); });
+    const cleanupShared = root.querySelector('#tep-dash-cleanup-shared');
+    if (cleanupShared) cleanupShared.addEventListener('click', () => { toggleDashCleanupShowShared(); });
     const cleanupSearch = root.querySelector('#tep-dash-cleanup-search');
     if (cleanupSearch) {
       const onSearch = () => {
@@ -6797,6 +7048,7 @@
     const cleanupDel = root.querySelector('#tep-dash-cleanup-delete');
     if (cleanupDel) cleanupDel.addEventListener('click', () => { bulkDeleteSelectedDashboards(); });
     updateDashCleanupSortButton();
+    updateDashCleanupSharedButton();
     syncDashCleanupMeta();
     renderDashCleanupList();
     $('#tep-dash-restore').addEventListener('click', () => { restoreDashboardFromEditor(); });
