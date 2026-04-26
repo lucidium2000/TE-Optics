@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.25</span>
+        TE Optics<span class="install-version" aria-label="Build">2.26</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.25';
+  const TEP_VERSION = '2.26';
   // If panel already exists, toggle visibility instead of creating a new one
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
@@ -1352,6 +1352,17 @@
     .tep-dash-json-details[open] > summary .tep-dash-json-chev { transform: rotate(90deg); }
     .tep-dash-json-sum-ok { color: #86efac !important; }
     .tep-dash-json-sum-err { color: #f87171 !important; }
+    .tep-dash-actions .tep-dash-refresh-btn {
+      border-radius: 999px;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      min-width: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 0;
+    }
     .tep-dash-json-sum-empty { color: #94a3b8 !important; font-weight: 500 !important; }
     .tep-dash-json-details-body { padding: 10px 12px 12px; }
     .tep-dash-restore-bar { margin-top: 12px; padding-top: 12px; border-top: 1px solid #334155; }
@@ -1379,13 +1390,26 @@
       border-top: 2px solid #475569;
     }
     .tep-dash-cleanup-meta { font-size: 11px; color: #94a3b8; margin: 0 0 8px; line-height: 1.45; }
-    .tep-dash-cleanup-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .tep-dash-cleanup-toolbar { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; margin-top: 8px; overflow-x: auto; padding-bottom: 2px; }
     .tep-dash-cleanup-search {
       flex: 1 1 160px; min-width: 140px; max-width: 100%;
       height: 32px; font-size: 12px; padding: 4px 10px;
     }
+    .tep-link-btn {
+      background: none;
+      border: none;
+      padding: 0 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #93c5fd;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .tep-link-btn:hover { color: #bfdbfe; }
+    .tep-link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .tep-dash-cleanup-list {
-      max-height: 240px; overflow-y: auto; margin-top: 8px; border: 1px solid #334155; border-radius: 8px;
+      max-height: 480px; overflow-y: auto; margin-top: 8px; border: 1px solid #334155; border-radius: 8px;
       background: #0f172a;
     }
     .tep-dash-cleanup-row { padding: 8px 10px; border-bottom: 1px solid #1e293b; font-size: 12px; }
@@ -1395,6 +1419,10 @@
     .tep-dash-cleanup-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .tep-dash-cleanup-name { font-weight: 600; color: #e2e8f0; word-break: break-word; }
     .tep-dash-cleanup-id { font-size: 10px; color: #64748b; word-break: break-all; }
+    .tep-dash-page-pointer {
+      display: inline-flex; align-items: center; flex-shrink: 0; color: #38bdf8; font-size: 15px; font-weight: 700;
+      line-height: 1; user-select: none; margin: 0 6px 0 0;
+    }
     .tep-dash-back-banner { margin-bottom: 10px; }
     .tep-actions { display: flex; gap: 8px; margin-top: 16px; }
 
@@ -1755,18 +1783,13 @@
     localStorage.setItem(TEP_WIDTH_KEY, panelWidth);
     constrainStyles.update(`
       html {
-        margin-right: ${panelWidth}px !important;
         overflow-x: hidden !important;
       }
       body {
+        margin-right: ${panelWidth}px !important;
         overflow-x: hidden !important;
         min-width: 0 !important;
         width: auto !important;
-      }
-      /* Force all TE content containers to respect available width */
-      body > *:not(#te-panel-root):not(#tep-resize-handle):not(script):not(style):not(link) {
-        max-width: calc(100vw - ${panelWidth}px) !important;
-        overflow-x: auto !important;
       }
     `);
   }
@@ -1953,8 +1976,6 @@
           </button>
           <div class="tep-create-expand" id="tep-dash-expand-backup-restore" hidden>
             <div class="tep-dash-card tep-dash-restore-card">
-            <div class="tep-dash-meta" id="tep-dash-meta">Nothing loaded yet — use Refresh.</div>
-            <p class="tep-dash-hint" style="margin:0 0 10px;">This JSON box is for both: <strong style="color:#e2e8f0;">Refresh</strong> loads the current dashboard for <strong style="color:#e2e8f0;">backup</strong> (then Backup to file). <strong style="color:#e2e8f0;">Import backup file</strong> or paste JSON to <strong style="color:#e2e8f0;">restore</strong> (set name and filter options, then restore).</p>
             <label class="tep-label" for="tep-dash-json">Dashboard JSON</label>
             <details class="tep-dash-json-details" id="tep-dash-json-details">
               <summary>
@@ -1965,10 +1986,15 @@
                 <textarea class="tep-textarea tep-dash-json" id="tep-dash-json" spellcheck="false" placeholder="{ }"></textarea>
               </div>
             </details>
-            <div class="tep-dash-row">
-              <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-refresh" title="Re-import the open dashboard from network capture">Refresh</button>
-            </div>
             <div class="tep-dash-actions">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon tep-dash-refresh-btn" id="tep-dash-refresh" title="Refresh dashboard JSON from network capture" aria-label="Refresh dashboard JSON">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
+                  <path d="M3 21v-5h5" />
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
+                  <path d="M21 3v5h-5" />
+                </svg>
+              </button>
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-download">Backup to file…</button>
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-restore-import-file-btn">Import backup file…</button>
               <input type="file" id="tep-dash-restore-import-file" accept="application/json,.json" style="display:none;">
@@ -2003,9 +2029,8 @@
               <p class="tep-dash-cleanup-meta" id="tep-dash-cleanup-meta">Not loaded yet.</p>
               <div class="tep-dash-cleanup-toolbar">
                 <input type="search" class="tep-input tep-dash-cleanup-search" id="tep-dash-cleanup-search" placeholder="Search names…" autocomplete="off" title="Filter the list by dashboard name" aria-label="Search dashboard names">
-                <button type="button" class="tep-btn tep-btn-primary tep-btn-sm" id="tep-dash-cleanup-refresh" title="Reload the dashboard list for this account group">Refresh</button>
                 <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-sort" title="Toggle list order">Sort: newest first</button>
-                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-cleanup-select-none">Select none</button>
+                <button type="button" class="tep-link-btn" id="tep-dash-cleanup-select-none" title="Clear selection">Clear</button>
                 <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-dash-cleanup-delete">Delete selected…</button>
               </div>
               <div class="tep-dash-cleanup-list" id="tep-dash-cleanup-list"></div>
@@ -2809,18 +2834,14 @@
   }
 
   async function refreshDashboardEditor() {
-    const meta = root.querySelector('#tep-dash-meta');
     const ta = root.querySelector('#tep-dash-json');
-    if (!meta || !ta) return;
-    meta.textContent = 'Refreshing…';
+    if (!ta) return;
     dashConsole('info', 'Dashboard JSON refresh clicked');
     const { json, source, score } = await mergeBestDashboardJson();
     if (json != null) {
       ta.value = JSON.stringify(json, null, 2);
-      meta.textContent = `Backup loaded · source ${source} (score ${score}) · ${new Date().toISOString()}`;
       setStatus('Dashboard JSON ready', 'ok');
     } else {
-      meta.textContent = 'Could not load a backup yet — interact with the dashboard in this tab, then try again. If it stays empty, open Advanced → copy diagnostics report.';
       setStatus('No dashboard JSON found yet', 'err');
       const nn = TEP_DASH_NONJSON_200.length;
       if (nn > 0 && nn !== dashNonJsonHintLastLoggedCount) {
@@ -3031,7 +3052,7 @@
   }
 
   function setDashCleanupUiBusy(busy) {
-    const ids = ['tep-dash-cleanup-search', 'tep-dash-cleanup-refresh', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-delete', 'tep-dash-cleanup-select-none'];
+    const ids = ['tep-dash-cleanup-search', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-delete', 'tep-dash-cleanup-select-none'];
     for (const id of ids) {
       const el = root.querySelector('#' + id);
       if (el) el.disabled = !!busy;
@@ -3100,19 +3121,45 @@
       host.appendChild(span);
       return;
     }
-    for (const row of filtered) {
+    let currentDashId = '';
+    try {
+      currentDashId = new URL(location.href).searchParams.get('dashboardId') || '';
+    } catch (_) {
+      currentDashId = '';
+    }
+    const current = currentDashId ? filtered.find((r) => String(r.id) === String(currentDashId)) : null;
+    const rows = current ? [current, ...filtered.filter((r) => r !== current)] : filtered;
+
+    for (const row of rows) {
       const wrap = document.createElement('div');
       wrap.className = 'tep-dash-cleanup-row';
       const label = document.createElement('label');
+      if (currentDashId && String(row.id) === String(currentDashId)) {
+        const ptr = document.createElement('span');
+        ptr.className = 'tep-dash-page-pointer';
+        ptr.title = 'This dashboard matches the one on the current ThousandEyes page (URL dashboardId) — points to the app content on the left';
+        ptr.setAttribute('aria-hidden', 'true');
+        ptr.innerHTML = '&#8592;';
+        label.appendChild(ptr);
+      }
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'tep-dash-cleanup-cb';
       cb.dataset.dashCleanupId = row.id;
       const textCol = document.createElement('div');
       textCol.className = 'tep-dash-cleanup-titles';
-      const nameEl = document.createElement('span');
+      const nameEl = document.createElement('a');
       nameEl.className = 'tep-dash-cleanup-name';
       nameEl.textContent = row.title;
+      try {
+        const u = new URL('/dashboard', location.origin);
+        u.searchParams.set('dashboardId', String(row.id));
+        nameEl.href = u.toString();
+      } catch (_) {
+        nameEl.href = '/dashboard?dashboardId=' + encodeURIComponent(String(row.id));
+      }
+      nameEl.target = '_blank';
+      nameEl.rel = 'noopener noreferrer';
       const idEl = document.createElement('span');
       idEl.className = 'tep-dash-cleanup-id';
       idEl.textContent = row.id;
@@ -7065,8 +7112,6 @@
 
     $('#tep-dash-refresh').addEventListener('click', () => { refreshDashboardEditor(); });
     $('#tep-dash-download').addEventListener('click', downloadDashboardBackup);
-    const cleanupRefresh = root.querySelector('#tep-dash-cleanup-refresh');
-    if (cleanupRefresh) cleanupRefresh.addEventListener('click', () => { refreshDashboardCleanupList(); });
     const cleanupSort = root.querySelector('#tep-dash-cleanup-sort');
     if (cleanupSort) cleanupSort.addEventListener('click', () => { toggleDashCleanupSortOrder(); });
     const cleanupSearch = root.querySelector('#tep-dash-cleanup-search');
@@ -7102,9 +7147,7 @@
       const r = new FileReader();
       r.onload = () => {
         const taj = root.querySelector('#tep-dash-json');
-        const meta = root.querySelector('#tep-dash-meta');
         if (taj) taj.value = r.result;
-        if (meta) meta.textContent = 'Imported file: ' + f.name;
         refreshDashboardJsonSummary();
       };
       r.readAsText(f);
