@@ -19,19 +19,28 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.28';
-  // If panel already exists, toggle visibility instead of creating a new one
+  const TEP_VERSION = '2.30';
+  // If a panel from this exact build is already injected, toggle its visibility.
+  // If a panel from an older build is still on the page (user re-installed the
+  // bookmarklet without refreshing the tab), tear it down so the new code can
+  // render a fresh panel — otherwise the user keeps seeing the previous version.
   const existingRoot = document.getElementById('te-panel-root');
   const existingToggle = document.getElementById('tep-toggle-btn');
-  if (existingRoot && existingToggle) {
+  const existingHandle = document.getElementById('tep-resize-handle');
+  const existingVersion = existingRoot ? existingRoot.getAttribute('data-tep-version') : null;
+  if (existingRoot && existingVersion !== TEP_VERSION) {
+    try { existingRoot.remove(); } catch (_) { /* */ }
+    if (existingToggle) { try { existingToggle.remove(); } catch (_) { /* */ } }
+    if (existingHandle) { try { existingHandle.remove(); } catch (_) { /* */ } }
+  } else if (existingRoot && existingToggle) {
     const isHidden = existingRoot.style.display === 'none';
     existingRoot.style.display = isHidden ? '' : 'none';
-    const handle = document.getElementById('tep-resize-handle');
-    if (handle) handle.style.display = isHidden ? '' : 'none';
+    if (existingHandle) existingHandle.style.display = isHidden ? '' : 'none';
     existingToggle.textContent = isHidden ? '✖' : '⚙️';
     return;
+  } else if (existingRoot) {
+    return;
   }
-  if (existingRoot) return;
 
   // ---------------------------------------------------------------------------
   // Dashboard route (/dashboard) — capture + helpers (no ajax() yet)
@@ -1437,6 +1446,7 @@
 
   const root = document.createElement('div');
   root.id = 'te-panel-root';
+  root.setAttribute('data-tep-version', TEP_VERSION);
 
   // Floating toggle button — persists even when panel is hidden
   const toggleBtn = document.createElement('div');
@@ -6535,16 +6545,58 @@
           const proto = pv.startsWith('TCP') ? 'TCP' : 'ICMP';
           const pm = pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO');
           const inSess = proto === 'TCP' ? (bulkInsessionCb.checked ? 1 : 0) : 0;
-          const updated = { ...t, flagIgnoreWarnings: 0 };
+
+          // Build the body with the same normalizations the single-test edit form
+          // applies — without this, bulk POST to /ajax/tests/network returns 400
+          // (stale port/target on ICMP switch, missing testType:'Network', missing
+          // dscp, freqA2s instead of freq, etc.).
+          const updated = { ...t };
+          Object.keys(updated).forEach(k => { if (k.startsWith('_')) delete updated[k]; });
+          updated.flagIgnoreWarnings = 0;
+
           updated.protocol = proto;
           updated.flagIcmp = proto === 'ICMP' ? 1 : 0;
           updated.probeMode = proto === 'TCP' ? pm : 'AUTO';
           updated.pathtraceInSession = inSess;
-          if (typeof updated.server === 'object' && updated.server) {
-            updated.server.port = updated.server.port || 443;
+
+          // ICMP must use port -1; TCP keeps the existing valid port or defaults to 443.
+          let existingPort = null;
+          if (typeof updated.server === 'object' && updated.server && updated.server.port != null) {
+            existingPort = Number(updated.server.port);
+          } else if (updated.port != null) {
+            existingPort = Number(updated.port);
           }
+          const newPort = proto === 'ICMP'
+            ? -1
+            : (Number.isFinite(existingPort) && existingPort > 0 ? existingPort : 443);
+          if (typeof updated.server === 'object' && updated.server) {
+            updated.server.port = newPort;
+          } else if (updated.port !== undefined) {
+            updated.port = newPort;
+          }
+
+          // A2s list rows must be re-shaped into the Network write contract.
+          if (shouldWriteNetworkTestShape(t)) {
+            updated.testType = 'Network';
+            const curInterval = getInterval(t) || updated.interval || updated.freq || updated.freqA2s || 120;
+            updated.interval = curInterval;
+            updated.freq = curInterval;
+            delete updated.freqA2s;
+            if (updated.aid == null && t.aid != null) updated.aid = t.aid;
+            if (updated.dscp == null) updated.dscp = 0;
+            syncNetworkTargetStrings(updated);
+          }
+
+          if (updated.agentSet && Array.isArray(updated.agentSet.vAgentIds)) {
+            updated.agentSet = {
+              ...updated.agentSet,
+              vAgentIds: updated.agentSet.vAgentIds.map(id => parseInt(id, 10) || id)
+            };
+          }
+          if (updated.testId == null && updated.id != null) updated.testId = updated.id;
+
           const writeUrl = testApiUrl(t, { forWrite: true });
-          log(`  DEBUG bulk protocol → ${writeUrl} type="${t.type}" testType="${t.testType}"`, 'tep-log-info');
+          log(`  DEBUG bulk protocol → ${writeUrl} type="${t.type}" testType="${t.testType}" → "${updated.testType || t.testType}" port=${newPort}`, 'tep-log-info');
           resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(updated) });
         } else if (action === 'delete') {
           resp = await ajax(testApiUrl(t), { method: 'DELETE' });
