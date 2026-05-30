@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.51';
+  const TEP_VERSION = '2.52';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1533,7 +1533,11 @@
   // Create resize gutter
   const resizeHandle = document.createElement('div');
   resizeHandle.id = 'tep-resize-handle';
-  document.body.appendChild(resizeHandle);
+  // Mounted on documentElement (not body) so dark mode's body filter
+  // doesn't change the handle's colour or break its fixed positioning.
+  // The same reasoning applies to #te-panel-root, #tep-toggle-btn, and
+  // #tep-dark-pop below.
+  document.documentElement.appendChild(resizeHandle);
 
   const root = document.createElement('div');
   root.id = 'te-panel-root';
@@ -1561,7 +1565,7 @@
       constrainStyles.update('');
     }
   });
-  document.body.appendChild(toggleBtn);
+  document.documentElement.appendChild(toggleBtn);
 
   const mainStyles = tepInjectCSS(STYLES);
 
@@ -1883,7 +1887,7 @@
     </div>
   `);
 
-  document.body.appendChild(root);
+  document.documentElement.appendChild(root);
 
   // ---------------------------------------------------------------------------
   // View tabs + panels (tests vs /dashboard)
@@ -7482,7 +7486,17 @@
     'soft-light', 'darken', 'lighten',
   ];
 
-  function applyHybrid({ topPx = 0, blendBg = '#ffffff', headerBg, tintBg = null, tintBlend = 'color' }) {
+  // v2.52: a fixed `hue-rotate(-180deg)` is applied to <body> as part of
+  // the dark mode pipeline. This shifts every colour halfway around the
+  // wheel BEFORE the difference + tint overlays compose, which is what
+  // makes status reds/greens land in a much more readable place after
+  // the rest of the engine runs. The TE Optics panel chrome
+  // (#te-panel-root, #tep-toggle-btn, #tep-resize-handle, #tep-dark-pop)
+  // is mounted on documentElement — outside body — so the filter never
+  // touches our own UI.
+  const DARK_BODY_FILTER = 'hue-rotate(-180deg)';
+
+  function applyHybrid({ topPx = 0, blendBg = '#ffffff', headerBg, tintBg = null, tintBlend = 'color' } = {}) {
     const ovDiff = makeOverlay({
       id: 'tep-dark-blend-overlay',
       topPx, background: blendBg, blendMode: 'difference', zIndex: 2147483645,
@@ -7496,8 +7510,15 @@
       });
     }
 
+    // Snapshot any pre-existing inline filter so cleanup can restore it
+    // exactly. Most TE pages have no inline body filter so this is empty,
+    // but a second bookmarklet pass or a future TE feature could set one
+    // and we shouldn't silently clobber it on toggle-off.
+    const prevBodyFilter = document.body.style.filter;
+    try { document.body.style.filter = DARK_BODY_FILTER; } catch (_) { /* */ }
+
     const css = [
-      '#te-panel-root, #tep-resize-handle, #tep-toggle-btn {' +
+      '#te-panel-root, #tep-resize-handle, #tep-toggle-btn, #tep-dark-pop {' +
       ' z-index: 2147483647 !important; isolation: isolate; }',
       `${HEADER_SELECTORS} {` +
       ' position: relative !important;' +
@@ -7509,6 +7530,7 @@
     return () => {
       try { ovDiff.remove(); } catch (_) { /* */ }
       if (ovTint) { try { ovTint.remove(); } catch (_) { /* */ } }
+      try { document.body.style.filter = prevBodyFilter; } catch (_) { /* */ }
       try { styleCleanup(); } catch (_) { /* */ }
     };
   }
@@ -8057,7 +8079,13 @@
     root.appendChild(topGrp);
     popRef.topToggle = topToggle;
 
-    document.body.appendChild(root);
+    // Popover lives on documentElement (not body) so the dark-mode body
+    // filter doesn't take it along — fixed positioning would otherwise
+    // anchor to body's content box instead of the viewport. (The panel,
+    // toggle button, and resize handle are also mounted on
+    // documentElement for the same reason; see their createElement
+    // call sites earlier in the file.)
+    document.documentElement.appendChild(root);
 
     // Event wiring. Slider `input` events fire continuously during a drag
     // and re-apply the variant live; `change` (pointer-up) persists into
@@ -8080,7 +8108,6 @@
     });
     tintToggle.addEventListener('change', () => applySlidersLive(true));
     tintBlendSelect.addEventListener('change', () => applySlidersLive(true));
-    // Header keep-untinted toggle: persist immediately on flip.
     topToggle.addEventListener('change', () => applySlidersLive(true));
 
     // Keep the popover from collapsing while the pointer is inside it.
