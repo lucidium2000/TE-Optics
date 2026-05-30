@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.30</span>
+        TE Optics<span class="install-version" aria-label="Build">2.51</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.30';
+  const TEP_VERSION = '2.51';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1113,12 +1113,103 @@
       border-color: rgba(56, 189, 248, 0.75);
       background: rgba(56, 189, 248, 0.22);
     }
-    .tep-dark-toggle {
-      background: none; border: 1px solid #475569; color: #94a3b8; font-size: 16px;
-      cursor: pointer; padding: 2px 6px; border-radius: 6px; line-height: 1;
+    .tep-dark-toggle, .tep-dark-reset {
+      background: none; border: 1px solid #475569; color: #94a3b8; font-size: 14px;
+      cursor: pointer; padding: 2px 8px; border-radius: 6px; line-height: 1;
+      min-width: 32px; text-align: center; font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
     .tep-dark-toggle:hover { color: #f1f5f9; border-color: #64748b; }
     .tep-dark-toggle.active { color: #facc15; border-color: #facc15; }
+    .tep-dark-reset { margin-left: 4px; }
+    .tep-dark-reset:hover { color: #fca5a5; border-color: #fca5a5; }
+
+    /* Dark-mode "metrics" popover (hover the moon to tweak each knob live). */
+    .tep-dark-pop {
+      position: fixed; z-index: 2147483647; isolation: isolate;
+      min-width: 320px; max-width: 360px; padding: 10px 12px;
+      background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      opacity: 0; transform: translateY(-4px); pointer-events: none;
+      transition: opacity 120ms ease, transform 120ms ease;
+    }
+    .tep-dark-pop.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .tep-dark-pop-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin: 0 0 8px; padding-bottom: 6px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .tep-dark-pop-title { font-weight: 600; color: #f1f5f9; }
+    .tep-dark-pop-hint  { color: #94a3b8; font-size: 11px; }
+    .tep-dark-pop-grp   { margin: 6px 0 4px; }
+    .tep-dark-pop-grp-head {
+      display: flex; align-items: center; gap: 6px;
+      margin: 0 0 4px; font-weight: 600; color: #cbd5e1;
+    }
+    .tep-dark-pop-swatch {
+      display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+      border: 1px solid #475569; background: transparent;
+      vertical-align: middle;
+    }
+    .tep-dark-pop-toggle {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: #94a3b8; cursor: pointer; user-select: none;
+      font-weight: normal; font-size: 11px;
+    }
+    .tep-dark-pop-toggle input { margin: 0; cursor: pointer; }
+    /* Extras container — holds the tint enable checkbox + blend-mode
+       picker on the right edge of the Tint group header. */
+    .tep-dark-pop-extras {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin-left: auto; font-weight: normal;
+    }
+    .tep-dark-pop-select {
+      background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+      border-radius: 4px; padding: 1px 4px; font: inherit;
+      font-size: 11px; line-height: 1.2; cursor: pointer;
+      font-variant-numeric: tabular-nums;
+    }
+    .tep-dark-pop-select:hover  { border-color: #475569; }
+    .tep-dark-pop-select:focus  { outline: none; border-color: #60a5fa; }
+    .tep-dark-pop-row {
+      display: grid; grid-template-columns: 14px 1fr 44px;
+      align-items: center; gap: 6px; padding: 1px 0;
+    }
+    .tep-dark-pop-row label { color: #94a3b8; }
+    .tep-dark-pop-row input[type="range"] {
+      width: 100%; accent-color: #60a5fa; cursor: pointer; margin: 0;
+    }
+    .tep-dark-pop-row .tep-dark-pop-val {
+      color: #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;
+      font-size: 11px;
+    }
+    /* HSL wheel picker (replaces H/S sliders for Blend and Tint). Polar
+       layout: angle = hue, radius = saturation. Lightness drives the
+       wheel's redraw (so what you see in the disc is what the engine
+       will produce). A separate L (and optional A) slider sits beside. */
+    .tep-dark-pop-wheel-row {
+      display: flex; gap: 10px; align-items: center; margin-top: 4px;
+    }
+    .tep-dark-pop-wheel-wrap {
+      position: relative; width: 100px; height: 100px; flex: 0 0 100px;
+    }
+    .tep-dark-pop-wheel {
+      display: block; width: 100px; height: 100px;
+      cursor: crosshair; border-radius: 50%;
+      background: #0b1220; touch-action: none;
+    }
+    .tep-dark-pop-wheel-marker {
+      position: absolute; width: 10px; height: 10px; border-radius: 50%;
+      background: transparent; border: 2px solid #fff;
+      box-shadow: 0 0 0 1px #000, 0 1px 4px rgba(0, 0, 0, 0.6);
+      transform: translate(-50%, -50%); pointer-events: none;
+    }
+    .tep-dark-pop-wheel-sidecol {
+      flex: 1 1 auto; min-width: 0;
+      display: flex; flex-direction: column; gap: 4px;
+    }
     .tep-close {
       background: none; border: none; color: #94a3b8; font-size: 20px;
       cursor: pointer; line-height: 1; padding: 0 4px;
@@ -1225,7 +1316,7 @@
     .tep-input { height: 38px; }
     .tep-select { appearance: auto; height: 38px; line-height: 18px; }
 
-    /* Agent list: persistent bar + inner scroll */
+    /* Agent list: persistent bar + one scroll (bar stays visible while list scrolls) */
     .tep-agents-box {
       display: flex;
       flex-direction: column;
@@ -1879,7 +1970,8 @@
         <span class="tep-title-version">v${TEP_VERSION}</span>
         <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>
       </h2>
-      <button class="tep-dark-toggle" id="tep-dark-toggle" title="Toggle dark mode on TE page">&#9789;</button>
+      <button class="tep-dark-toggle" id="tep-dark-toggle" title="Dark mode: click for a new random variant · Shift+click: previous in session history">&#9789;</button>
+      <button class="tep-dark-reset" id="tep-dark-reset" title="Reset / turn off dark mode" style="display:none;">&#9728;</button>
       <button class="tep-close" id="tep-close">&times;</button>
     </div>
     <div class="tep-status" id="tep-status">
@@ -1890,7 +1982,7 @@
     <!-- Top-level view switcher (filled by renderViewTabsInitial) -->
     <div class="tep-view-tabs" id="tep-view-tabs"></div>
 
-    <div class="tep-body" id="tep-body">
+      <div class="tep-body" id="tep-body">
       <!-- ============== MANAGE (default) + expandable CREATE ============== -->
       <div class="tep-view-panel active" id="tep-panel-manage">
         <div class="tep-dash-back-banner" id="tep-dash-tests-back-wrap" hidden>
@@ -1962,6 +2054,7 @@
             </select>
           </div>
         </div>
+
 
         <div class="tep-section-title">
           Agents
@@ -2087,7 +2180,7 @@
             </select>
 
             <div id="tep-dash-restore-agents-wrap" class="tep-dash-restore-agents-wrap" style="display:none;">
-              <p class="tep-dash-hint" id="tep-dash-restore-agent-note" style="margin:0 0 6px;">Every <code>filters</code> object in the dashboard JSON is deleted, and virtual-agent id fields (vAgentIds, agentSet, etc.) are cleared.</p>
+              <p class="tep-dash-hint" id="tep-dash-restore-agent-note" style="margin:0 0 6px;">Every widget filter value (in <code>filters</code> and <code>generalFilters</code>) is cleared, and virtual-agent id fields (vAgentIds, agentSet, etc.) are emptied. Dimension structure is preserved so TE accepts the restore.</p>
             </div>
 
             <div class="tep-dash-row" style="margin-top:14px;">
@@ -2366,6 +2459,7 @@
     toast('Access was denied. ' + TEP_STATUS_SUPERPOWERS, 'err');
   }
 
+  /** API writes (Create + Manage) often return 401/403 or a SOAP/HTML body for permission issues. */
   function isLikelyPermissionDenied(status, bodyText) {
     const st = Number(status);
     if (st === 401 || st === 403) return true;
@@ -3904,16 +3998,67 @@
     for (const k of Object.keys(obj)) rewriteAllVAgentLikeArrays(obj[k], ids, depth + 1);
   }
 
-  /** Walk the full dashboard JSON and delete every own `filters` property (widget map or array form). */
-  function stripAllWidgetFiltersFromDashboardJson(obj, depth) {
-    if (depth == null) depth = 0;
-    if (depth > 42 || obj === null || typeof obj !== 'object') return;
-    if (Array.isArray(obj)) {
-      for (let i = 0; i < obj.length; i++) stripAllWidgetFiltersFromDashboardJson(obj[i], depth + 1);
-      return;
-    }
-    if (Object.prototype.hasOwnProperty.call(obj, 'filters')) delete obj.filters;
-    for (const k of Object.keys(obj)) stripAllWidgetFiltersFromDashboardJson(obj[k], depth + 1);
+  /**
+   * Strip widget filters in the same shape TE itself produces when the user
+   * clears filters from the UI: for every dimension entry in `filters` /
+   * `generalFilters`, drop it unless the dimension ID appears as a string
+   * reference elsewhere in the dashboard (e.g. `groupCardsBy`, `cards`,
+   * `aggregateProperties`, `colProperty`, `rowProperty`, `metric`). Structural
+   * dimensions are kept with EMPTY values so TE re-accepts the payload
+   * without re-populating defaults.
+   *
+   * The previous implementation only deleted keys named `filters` and left
+   * `generalFilters` untouched. TE renders the filter chips from
+   * `generalFilters`, so the old filters survived a restore — the exact
+   * "filter categories still set" bug this routine is meant to prevent.
+   */
+  function stripAllWidgetFiltersFromDashboardJson(root) {
+    if (root === null || typeof root !== 'object') return;
+
+    // Pass 1: collect all string values that appear OUTSIDE filters/generalFilters
+    // value containers. Any dimension ID referenced this way is "structural".
+    const structural = new Set();
+    (function collect(v, insideFilterBlock) {
+      if (typeof v === 'string') {
+        if (!insideFilterBlock) structural.add(v);
+        return;
+      }
+      if (Array.isArray(v)) { for (const x of v) collect(x, insideFilterBlock); return; }
+      if (v && typeof v === 'object') {
+        for (const [k, sub] of Object.entries(v)) {
+          collect(sub, insideFilterBlock || k === 'filters' || k === 'generalFilters');
+        }
+      }
+    })(root, false);
+
+    // Pass 2: clear or drop dimensions in every filters/generalFilters object.
+    (function walk(v, depth) {
+      if (depth > 42 || v === null || typeof v !== 'object') return;
+      if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
+      if (v.filters && typeof v.filters === 'object' && !Array.isArray(v.filters)) {
+        for (const dim of Object.keys(v.filters)) {
+          if (structural.has(dim)) {
+            if (Array.isArray(v.filters[dim])) v.filters[dim] = [];
+          } else {
+            delete v.filters[dim];
+          }
+        }
+      }
+      if (v.generalFilters && typeof v.generalFilters === 'object' && !Array.isArray(v.generalFilters)) {
+        for (const dim of Object.keys(v.generalFilters)) {
+          if (structural.has(dim)) {
+            const entry = v.generalFilters[dim];
+            if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+              if (Array.isArray(entry.values)) entry.values = [];
+              if (Object.prototype.hasOwnProperty.call(entry, 'value')) entry.value = null;
+            }
+          } else {
+            delete v.generalFilters[dim];
+          }
+        }
+      }
+      for (const k of Object.keys(v)) walk(v[k], depth + 1);
+    })(root, 0);
   }
 
   function applyDashRestoreTitle(dash, titleTrim) {
@@ -3928,7 +4073,7 @@
     if (!dash || typeof dash !== 'object' || mode === 'keep') return;
     if (mode === 'strip') {
       rewriteAllVAgentLikeArrays(dash, [], 0);
-      stripAllWidgetFiltersFromDashboardJson(dash, 0);
+      stripAllWidgetFiltersFromDashboardJson(dash);
     }
   }
 
@@ -3941,7 +4086,7 @@
     const show = mode === 'strip';
     wrap.style.display = show ? '' : 'none';
     if (note && mode === 'strip') {
-      note.textContent = 'All widget `filters` keys are removed from the JSON, and virtual-agent fields are cleared.';
+      note.textContent = 'Widget filter values (filters and generalFilters) are cleared, and virtual-agent fields are emptied. Dimension structure is preserved so TE accepts the restore.';
     }
   }
 
@@ -4385,6 +4530,7 @@
     if (typeof v === 'string') {
       const s = v.trim();
       if (!s) return '';
+      // Prefer numeric-like ids, but keep raw if it matches an agent id later.
       return s;
     }
     return '';
@@ -4401,10 +4547,12 @@
       if (s && knownIds.has(s)) out.add(s);
       return;
     }
+    // Common keys we've seen in TE payloads for agent lists.
     const keys = ['agentIds', 'vAgentIds', 'agents', 'resources', 'resourceIds', 'members', 'entities', 'entityIds'];
     for (const k of keys) {
       if (node[k] != null) maybeCollectAgentIdsFromUnknownShape(node[k], knownIds, out, depth + 1);
     }
+    // If the tag object directly contains an agentId-like field, catch it too.
     for (const k of ['agentId', 'vAgentId', 'id']) {
       const s = asAgentIdString(node[k]);
       if (s && knownIds.has(s)) out.add(s);
@@ -4438,7 +4586,10 @@
       const map = new Map();
       for (const t of tags) {
         if (!t || typeof t !== 'object') continue;
+        // Some endpoints wrap as { tag: {...}, editor: {...} }.
         const tagObj = (t.tag && typeof t.tag === 'object') ? t.tag : t;
+        // Only treat v-agent tags/labels as agent group selectors.
+        // NOTE: do NOT use `tagObj.type` here; in tag payloads it's often "static"/"dynamic".
         const objType = String(tagObj.objectType || '').toLowerCase();
         const seemsAgentTag = !objType || objType === 'v-agent' || objType === 'v_agent' || objType === 'vagent';
         if (!seemsAgentTag) continue;
@@ -4446,6 +4597,7 @@
         const name = String(tagObj.key || tagObj.name || tagObj.tagName || tagObj.label || tagObj.title || '').trim();
         if (!name) continue;
         const ids = new Set();
+        // Prefer tag assignments list when present; this matches the Tags UI payloads.
         const assigns = Array.isArray(tagObj.assignments) ? tagObj.assignments : [];
         if (assigns.length) {
           for (const a of assigns) {
@@ -4470,10 +4622,12 @@
       agentTagLoaded = true;
     } finally {
       agentTagLoading = false;
+      // Ensure UI transitions away from "Loading…" no matter what.
       renderAgents(filterInput && filterInput.value ? filterInput.value : '');
     }
   }
 
+  /** Count selected agents by type (uses full `agents` list, not the current filter). */
   function getSelectionTypeBreakdown(selectionSet) {
     let ent = 0, cloud = 0;
     for (let i = 0; i < agents.length; i++) {
@@ -4485,6 +4639,11 @@
     return { ent, cloud, total: ent + cloud };
   }
 
+  /**
+   * Whether the selected rows/hints in the agent picker scroll are hidden.
+   * User toggles via the persistent "✓ Selected" bar (tepSelectedListCollapsed on the box).
+   * Otherwise: match focus to enterprise/cloud (hidden), or when nothing to show in selected.
+   */
   function isSelectedListCollapsedState(box, eff, br, selectedLen) {
     if (!box) return true;
     const d = box.dataset.tepSelectedListCollapsed;
@@ -4937,6 +5096,10 @@
     if (String(t.type || '').toLowerCase() === 'onewaynetwork') return true;
     return /^OneWayNetwork$/i.test(String(t.testType || ''));
   }
+  /**
+   * TE TestDirection: "to-target" | "from-target" | "bidirectional" (ajax may use testDirection, server/config nesting, or UPPER_SNAKE).
+   * We consider any non-empty `direction` first; empty `direction` must not hide a populated `testDirection`.
+   */
   function normalizeOneWayDirToken(v) {
     if (v == null) return '';
     if (typeof v === 'number' && Number.isFinite(v)) {
@@ -4978,6 +5141,7 @@
     if (l === 'to-target-from-target' || l === 'to_target_from_target' || l === 'from-to-target-and-back') return true;
     return /both\s*directions/i.test(s);
   }
+  /** True when the test is set to both-direction monitoring. */
   function isOneWayDirectionBidirectional(t) {
     if (!t) return false;
     if (t.bidirectional === 1 || t.bidirectional === true) return true;
@@ -4987,6 +5151,7 @@
     }
     return false;
   }
+  /** When unchecking "Bidirectional", keep one-way mode: from-target vs to-target (TE TestDirection). */
   function getOneWayDirectionValueForSave(t, bidirectionalChecked) {
     if (bidirectionalChecked) return 'bidirectional';
     for (const s of collectOneWayDirectionStrings(t)) {
@@ -5031,6 +5196,7 @@
     if (isOneWayNetworkTest(t)) return true;
     return /A2s|Network|Http|Page/i.test(t.testType || t.type || '');
   }
+  /** GET /ajax/tests/…/aid/testId — `api` has no detail to merge. */
   function canEnrich(t) {
     return (t.type || '').toLowerCase() !== 'api';
   }
@@ -5117,6 +5283,7 @@
       || 0;
   }
 
+  /** Native list/detail for Web Page Load uses testType "BrowserBot", interval + subinterval, freqHttp / freqBrowserbot. */
   function isBrowserOrPageTest(t) {
     if (!t) return false;
     const a = String(t.testType == null ? '' : t.testType);
@@ -5133,7 +5300,10 @@
     return ty === 'web-transaction' || ty === 'webtransaction' || ty === 'web-transactions';
   }
 
-  /** Web Page Load: `subinterval` (seconds) must evenly divide the root `interval` (TE API). */
+  /**
+   * For Web Page Load, TE stores the inner (HTTP) cadence in `subinterval` seconds. It
+   * must evenly divide the root `interval` (e.g. 10m page, 5m sub → 600 and 300).
+   */
   function coerceSubintervalToDividePageInterval(pageSec, desiredSubSec) {
     if (pageSec == null || !Number.isFinite(pageSec) || pageSec < 1) {
       return desiredSubSec;
@@ -5152,6 +5322,11 @@
     return pageSec;
   }
 
+  /**
+   * TE returns 400 "Subinterval must evenly divide the interval" if the body still
+   * carries a prior subinterval after interval/freq were changed. Align root and
+   * server.* subinterval when they no longer divide the new interval.
+   */
   function alignSubintervalToInterval(obj, newInterval) {
     if (obj == null || !Number.isFinite(newInterval) || newInterval < 1) return;
     const coerced = (cur) => {
@@ -5176,6 +5351,7 @@
     }
   }
 
+  /** Native TE agent→server edit POSTs use testType "Network", full server.* (incl. serverId), and freq+interval — not A2s/freqA2s. */
   function shouldWriteNetworkTestShape(t) {
     if (!t) return false;
     const ty = t.type;
@@ -5215,7 +5391,7 @@
     return seconds + 's';
   }
 
-  /** Page load: browser uses freqBrowserbot (or root interval / freqPage); inner layer uses `subinterval` (and freqHttp in some payloads). */
+  /** Page load: browser round-trip uses freqBrowserbot (or root interval / freqPage); inner layer uses `subinterval` (and freqHttp in some payloads). */
   function getPageLoadBrowserIntervalSec(t) {
     if (!t) return 0;
     if (t.freqBrowserbot != null && Number(t.freqBrowserbot) > 0) return Number(t.freqBrowserbot);
@@ -5254,6 +5430,7 @@
     return `${formatInterval(sec)}`;
   }
 
+  /** Splits interval line: duration tokens (e.g. 2mins, 5h) stay white; words like "page", "sub" use meta grey. */
   function formatTestIntervalLineHtml(line) {
     const s = String(line);
     if (s === '—') {
@@ -5350,6 +5527,8 @@
   function getThousandEysMilliSumPerRound(nC, nE, t) {
     if (isThousandEysTimeoutMilliTestType(t)) {
       const s = getThousandEysWebTimeoutSecForUnits(t);
+      /* 2:1 cloud vs 🏢 for most web tests. Web Page Load bills cloud at 2× that factor (2s per cloud
+       * agent vs 0.5s for enterprise) per TE usage — 6 cloud ×10s with harmonic interval matches 804 units. */
       if (isBrowserOrPageTest(t) || isWebTransactionTest(t)) {
         return nC * (2 * s) + nE * (0.5 * s);
       }
@@ -5391,7 +5570,7 @@
    * Web Page Load bills two cadences (browser + sub/HTTP). Effective interval is based on combined rate:
    * \(1/P + 1/S\) ⇒ equivalent seconds \(= 1/(1/P + 1/S) = P*S/(P+S)\).
    * Example: 2m/2m ⇒ 60s (double cost vs a single 2m cadence).
-   * Web Transaction: single interval only (falls through to opts/ getInterval).
+   * Web Transaction has a single test interval (no subinterval).
    */
   function getThousandEysBillingIntervalSec(t, opts) {
     if (isBrowserOrPageTest(t)) {
@@ -5774,6 +5953,7 @@
     bulkBar.classList.toggle('active', count > 0);
   }
 
+  /** `?testId=` (or `testid`) on the current app URL — that test is listed first in Manage when it appears in the filtered set. */
   function getUrlQueryTestIdFocus() {
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -5847,6 +6027,7 @@
     return !!(p && p.classList.contains('active'));
   }
 
+  /** Status bar: raw unit sum → Units for the filtered-total line only. */
   function formatManageFilterTotalUnits(sum) {
     if (!Number.isFinite(sum) || sum < 0) return '0 Units';
     if (sum === 0) return '0 Units';
@@ -7554,8 +7735,8 @@
   if (testNameInput) testNameInput.addEventListener('input', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const intervalSel = $('#tep-interval');
   if (intervalSel) intervalSel.addEventListener('change', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
-  const subIntervalCreateSel = $('#tep-subinterval');
-  if (subIntervalCreateSel) subIntervalCreateSel.addEventListener('change', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
+  const subIntervalSel = $('#tep-subinterval');
+  if (subIntervalSel) subIntervalSel.addEventListener('change', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const a2sPort = $('#tep-a2s-port');
   if (a2sPort) a2sPort.addEventListener('input', () => { clearCreateFailureStatus(); updateCreateUnitsEstimate(); });
   const a2sInsession = $('#tep-a2s-insession');
@@ -7570,33 +7751,962 @@
     syncTargetsCloneGutter();
   }
 
-  // Dark mode toggle for TE page
-  let darkStyles = null;
+  // Dark mode — RANDOM GENERATOR.
+  //
+  // Each click rolls a fresh variant of the user-confirmed structural recipe.
+  // Two compositing layers — no CSS filters, no stacked blends — keep TE's
+  // layout pristine while giving each variant a different look:
+  //
+  //   1. `mix-blend-mode: difference` overlay (near-white) — inverts TE's
+  //      native light backgrounds to dark. Header is CSS-hoisted above so
+  //      the title bar stays its forced dark slate-family colour. Body
+  //      surfaces get their darkness purely from blend inversion (no
+  //      surface CSS — that was the original bright-text-halo bug).
+  //
+  //   2. Tint overlay (vivid HSL, always applied) — `mix-blend-mode: color`
+  //      preserves backdrop luminance and replaces hue/saturation. Per spec:
+  //      "creates a color with the hue and saturation of the source colour
+  //      and the luminosity of the backdrop colour". So:
+  //        - dark backgrounds (luminance ≈ 0) stay dark
+  //        - light text / icons / badges take the tint hue at the same
+  //          lightness
+  //      This is the foreground-colour knob. Saturation 50–100 % gives a
+  //      mix of subtle and vivid; lightness 35–70 % keeps the result
+  //      readable on the inverted dark backdrop.
+  //
+  // Plus ~15 % chance of a 48/96 px native top strip for visual variety.
+  //
+  // Earlier experiments with body `filter: hue-rotate()`, secondary tint
+  // overlays, and non-luminance-preserving blend modes (overlay/soft-light)
+  // were removed in v2.39 because they broke TE's layout (filter creates
+  // stacking contexts that interfere with modals / popovers, and the
+  // non-luminance-preserving blends can lift dark backgrounds into visible
+  // mid-tones).
+  //
+  // Shift+click steps backward through in-session history (so you can A/B
+  // against the one you just rolled). The separate ☀ reset button clears
+  // state and turns dark mode off.
   const darkToggle = $('#tep-dark-toggle');
-  const TE_DARK_CSS = `
-    html { filter: invert(0.9) hue-rotate(180deg); }
-    img, svg, video, canvas, [class*="chart"], [class*="map"], [class*="graph"] {
-      filter: invert(1) hue-rotate(180deg);
+  const darkReset = $('#tep-dark-reset');
+
+  const HEADER_SELECTORS = [
+    'body > header', 'body > nav', '[role="banner"]',
+    '[class*="appHeader" i]', '[class*="app-header" i]',
+    '[class*="topbar" i]', '[class*="topBar" i]',
+    '[class*="navbar" i]', '[class*="nav-bar" i]',
+    '[id*="appHeader" i]', '[id*="topbar" i]',
+  ].join(', ');
+
+  function injectCssMode(css) {
+    const s = tepInjectCSS(css);
+    return () => { try { s.remove(); } catch (_) { /* */ } };
+  }
+
+  // Build a fixed-position fullscreen overlay div with a given blend mode.
+  // Used for both the difference (background) and color (tint) layers.
+  function makeOverlay({ id, topPx, background, blendMode, zIndex }) {
+    const ov = document.createElement('div');
+    ov.id = id;
+    ov.setAttribute('aria-hidden', 'true');
+    ov.style.cssText = [
+      'position: fixed',
+      'top: ' + topPx + 'px', 'left: 0', 'right: 0', 'bottom: 0',
+      'pointer-events: none',
+      'background: ' + background,
+      'mix-blend-mode: ' + blendMode,
+      'z-index: ' + zIndex,
+    ].join('; ') + ';';
+    document.documentElement.appendChild(ov);
+    return ov;
+  }
+
+  // Status-colour preservation (RED/GREEN semantic indicators) was tried
+  // in v2.42 (z-index hoist), v2.43 (CSS mask-image with data URL), and
+  // v2.44 (inline SVG <mask> via fragment URL). v2.42 was geometrically
+  // impossible (body descendants can't outrank an html-level overlay in
+  // stacking order); v2.43 was dropped by TE's strict-dynamic CSP; v2.44
+  // got past CSP but introduced visual regressions in the host page.
+  // Removed in v2.45 pending a different approach. The dark-mode engine
+  // is back to the v2.41 behaviour the user confirmed as the "best yet".
+
+  // Apply a hybrid variant. Two things are injected:
+  //   - difference overlay (always — drives dark backgrounds via inversion)
+  //   - color tint overlay  (always — shifts foreground hue/saturation)
+  //   + CSS for panel + header hoist
+  //
+  // Z-index plan (bottom to top):
+  //   2147483645 — difference overlay
+  //   2147483646 — color tint overlay
+  //   2147483647 — our panel + TE header (untouched by either blend)
+  // Allow-list of CSS blend modes the tint overlay supports. The list
+  // is curated for tint use (each one preserves enough page detail to
+  // remain usable as dark mode). `color` is the default — `screen` and
+  // `multiply` are the most useful for "bold" red/green dark modes
+  // since they push the result toward the overlay's hue at full
+  // saturation instead of being clamped by the inverted page's near-
+  // black luminance (which is what makes pure-saturated tints look
+  // pastel/washed-out under the default `color` blend).
+  // `saturation` and `luminosity` are the variety-preserving modes:
+  // `saturation` keeps each pixel's hue (only forces saturation), and
+  // `luminosity` keeps hue+sat (only forces brightness). `color` and
+  // `hue` collapse hue variety to one tint. `screen`/`multiply` push
+  // toward the overlay colour, useful for bold monochrome themes.
+  const TINT_BLEND_MODES = [
+    'color', 'saturation', 'luminosity', 'hue',
+    'screen', 'multiply', 'overlay', 'hard-light',
+    'soft-light', 'darken', 'lighten',
+  ];
+
+  function applyHybrid({ topPx = 0, blendBg = '#ffffff', headerBg, tintBg = null, tintBlend = 'color' }) {
+    const ovDiff = makeOverlay({
+      id: 'tep-dark-blend-overlay',
+      topPx, background: blendBg, blendMode: 'difference', zIndex: 2147483645,
+    });
+    let ovTint = null;
+    if (tintBg) {
+      const mode = TINT_BLEND_MODES.indexOf(tintBlend) >= 0 ? tintBlend : 'color';
+      ovTint = makeOverlay({
+        id: 'tep-dark-tint-overlay',
+        topPx, background: tintBg, blendMode: mode, zIndex: 2147483646,
+      });
     }
-    #te-panel-root, #tep-resize-handle {
-      filter: invert(1) hue-rotate(180deg);
-    }
-  `;
-  function toggleDarkMode() {
-    if (darkStyles) {
-      darkStyles.remove();
-      darkStyles = null;
-      darkToggle.classList.remove('active');
-      localStorage.removeItem('tep-dark-mode');
+
+    const css = [
+      '#te-panel-root, #tep-resize-handle, #tep-toggle-btn {' +
+      ' z-index: 2147483647 !important; isolation: isolate; }',
+      `${HEADER_SELECTORS} {` +
+      ' position: relative !important;' +
+      ' z-index: 2147483647 !important;' +
+      ' isolation: isolate !important;' +
+      ` background-color: ${headerBg} !important; }`,
+    ].join('\n');
+    const styleCleanup = injectCssMode(css);
+    return () => {
+      try { ovDiff.remove(); } catch (_) { /* */ }
+      if (ovTint) { try { ovTint.remove(); } catch (_) { /* */ } }
+      try { styleCleanup(); } catch (_) { /* */ }
+    };
+  }
+
+  // Generate a fresh random parameter set. Three random knobs:
+  //   - header HSL          : dark + low sat                (always)
+  //   - blend HSL           : near-white + low sat          (always)
+  //   - tint HSLA           : hue + tiered sat/alpha        (always)
+  //   - geometric top strip : 48 or 96 px native            (~15 % chance)
+  //
+  // Tint distribution is a TWO-TIER mixture so most rolls preserve TE's
+  // original neutral foreground while still surfacing bold colour pops:
+  //
+  //   - ~80 % subtle tier  : power-2.2 biased toward sat ≈ 0 and alpha ≈ 0
+  //                          → looks close to neutral light-grey with a
+  //                            faint hue. Joint expected effective
+  //                            saturation ≈ 10 %.
+  //   - ~20 % bold tier    : uniform sat 70–100 % AND alpha 0.65–1.0
+  //                          → guaranteed-visible colour. Uniform hue means
+  //                            every hue family (red, orange, yellow, green,
+  //                            blue, purple, pink) gets equal time at full
+  //                            intensity. Without this branch yellow / green
+  //                            / red at low intensity were perceptually
+  //                            indistinguishable from neutral grey, while
+  //                            cool hues (purple/blue) were still readable
+  //                            — biasing perception toward "mostly purples
+  //                            and pastels".
+  function randomDarkParams() {
+    const rnd = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+    // Sample u^p, mapped into [min, max]. Larger p biases more toward min.
+    const biased = (min, max, p) => min + Math.pow(Math.random(), p) * (max - min);
+
+    const headerHue = rnd(0, 359);
+    const headerSat = rnd(0, 30);
+    const headerLight = rnd(4, 14);
+    const blendHue = rnd(0, 359);
+    const blendSat = rnd(0, 25);
+    const blendLight = rnd(92, 98);
+
+    // ~15 % of rolls keep the top 56 px un-tinted so the native TE
+    // header stays visible — matches the popover Header toggle.
+    const topPx = Math.random() < 0.15 ? 56 : 0;
+
+    const tintHue = rnd(0, 359);
+    const tintLight = rnd(40, 70);
+    let tintSat, tintAlpha;
+    if (Math.random() < 0.20) {
+      // Bold tier — guaranteed-visible pop. Uniform on both knobs so every
+      // hue family appears at full intensity over enough rolls.
+      tintSat = rnd(70, 100);
+      tintAlpha = rnd(65, 100) / 100;
     } else {
-      darkStyles = tepInjectCSS(TE_DARK_CSS);
-      darkToggle.classList.add('active');
-      localStorage.setItem('tep-dark-mode', '1');
+      // Subtle tier — power-biased toward near-original colours.
+      tintSat = Math.floor(biased(15, 100, 2.2));
+      tintAlpha = biased(0.15, 1.00, 2.2);
+    }
+    const tintBg = `hsla(${tintHue}, ${tintSat}%, ${tintLight}%, ${tintAlpha.toFixed(2)})`;
+
+    return {
+      headerBg: `hsl(${headerHue}, ${headerSat}%, ${headerLight}%)`,
+      blendBg: `hsl(${blendHue}, ${blendSat}%, ${blendLight}%)`,
+      tintBg,
+      topPx,
+    };
+  }
+
+  const TEP_DARK_KEY = 'tep-dark-random';     // current random state (history + cursor)
+  const TEP_DARK_LEGACY_KEY = 'tep-dark-mode'; // pre-2.36 mode index, migrated then deleted
+  const DARK_HISTORY_MAX = 32;
+
+  let darkCleanup = null;
+  let darkHistory = [];   // array of params objects
+  let darkCursor = -1;    // index into darkHistory; -1 means dark mode off
+
+  function persistDarkState() {
+    if (darkCursor < 0 || darkHistory.length === 0) {
+      localStorage.removeItem(TEP_DARK_KEY);
+      return;
+    }
+    try {
+      localStorage.setItem(TEP_DARK_KEY, JSON.stringify({
+        history: darkHistory,
+        cursor: darkCursor,
+      }));
+    } catch (_) { /* quota / privacy mode — non-fatal */ }
+  }
+
+  function setReset(active) {
+    darkReset.style.display = active ? '' : 'none';
+    darkToggle.classList.toggle('active', active);
+  }
+
+  function applyDarkParams(params) {
+    if (typeof darkCleanup === 'function') { try { darkCleanup(); } catch (_) { /* */ } }
+    darkCleanup = null;
+    const cleanup = applyHybrid(params);
+    if (typeof cleanup === 'function') darkCleanup = cleanup;
+    setReset(true);
+    refreshDarkPopover(); // keep sliders / swatches in sync if popover is open
+    updateDarkToggleTitle();
+  }
+
+  function updateDarkToggleTitle() {
+    if (darkCursor < 0) {
+      darkToggle.title = 'Dark mode: click for a new random variant · Shift+click: previous · hover to tweak';
+      return;
+    }
+    const p = darkHistory[darkCursor];
+    if (!p) return;
+    const tintNote = p.tintBg
+      ? ` · tint ${p.tintBg}${p.tintBlend && p.tintBlend !== 'color' ? ` (${p.tintBlend})` : ''}`
+      : '';
+    const topNote = p.topPx ? ` · top ${p.topPx}px native` : '';
+    darkToggle.title = `Dark mode (random): blend ${p.blendBg}${tintNote}${topNote}` +
+      ` · Click: next random · Shift+click: previous (history ${darkCursor + 1}/${darkHistory.length}) · hover to tweak`;
+  }
+
+  function nextRandomDark() {
+    if (darkCursor < darkHistory.length - 1) {
+      // We're inside an existing forward-travelled history — replay next entry.
+      darkCursor++;
+    } else {
+      // At end (or empty): generate a new random and append.
+      const params = randomDarkParams();
+      darkHistory.push(params);
+      if (darkHistory.length > DARK_HISTORY_MAX) {
+        darkHistory.shift();
+        // cursor stays pointed at the (new) last entry
+        darkCursor = darkHistory.length - 1;
+      } else {
+        darkCursor++;
+      }
+    }
+    applyDarkParams(darkHistory[darkCursor]);
+    persistDarkState();
+  }
+
+  function prevRandomDark() {
+    if (darkCursor <= 0) return;
+    darkCursor--;
+    applyDarkParams(darkHistory[darkCursor]);
+    persistDarkState();
+  }
+
+  function resetDarkMode() {
+    if (typeof darkCleanup === 'function') { try { darkCleanup(); } catch (_) { /* */ } }
+    darkCleanup = null;
+    darkHistory = [];
+    darkCursor = -1;
+    setReset(false);
+    localStorage.removeItem(TEP_DARK_KEY);
+    localStorage.removeItem(TEP_DARK_LEGACY_KEY);
+    refreshDarkPopover();
+    updateDarkToggleTitle();
+  }
+
+  darkToggle.addEventListener('click', (ev) => {
+    if (ev.shiftKey) prevRandomDark();
+    else nextRandomDark();
+  });
+  darkReset.addEventListener('click', resetDarkMode);
+
+  // ─── Dark-mode tweak popover ──────────────────────────────────────────
+  //
+  // Hovering the moon button opens a small popover that exposes every knob
+  // that goes into a dark-mode variant (the same fields the old title-tip
+  // listed: header H/S/L, blend H/S/L, tint H/S/L/A, top-strip height).
+  // Sliders are live: every `input` event re-applies the variant so the
+  // page updates in real time. On `change` (pointer-up), the edit is
+  // persisted into the current history entry — so back/forward via shift-
+  // click sees the tuned theme, not the pre-edit roll.
+  //
+  // History semantics:
+  //   - Editing while dark mode is OFF: first slider drag turns it ON by
+  //     pushing a new history entry seeded with the slider values.
+  //   - Editing while dark mode is ON: the current history[darkCursor]
+  //     entry is replaced in place. Older history isn't disturbed.
+  //
+  // Defaults shown when dark mode is off are derived from the means of
+  // `randomDarkParams`'s ranges so the popover is immediately useful as a
+  // "design from scratch" surface.
+
+  // Parse an `hsl(h, s%, l%)` or `hsla(h, s%, l%, a)` string into numbers.
+  // Returns null if the string doesn't match — callers fall back to defaults.
+  function parseHslish(str) {
+    if (!str || typeof str !== 'string') return null;
+    const m = str.match(/hsla?\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*%\s*,\s*(-?\d+(?:\.\d+)?)\s*%\s*(?:,\s*(-?\d+(?:\.\d+)?))?\s*\)/i);
+    if (!m) return null;
+    return {
+      h: Math.round(+m[1]),
+      s: Math.round(+m[2]),
+      l: Math.round(+m[3]),
+      a: m[4] !== undefined ? +m[4] : 1,
+    };
+  }
+
+  // Build a params object the rest of the dark-mode engine understands.
+  // `headerBg` is passed through as an opaque string (the popover no
+  // longer exposes Header H/S/L controls — see v2.50 note).
+  function paramsFromSliders(s) {
+    return {
+      headerBg:  s.headerBg || 'hsl(220, 15%, 9%)',
+      blendBg:   `hsl(${s.blendH}, ${s.blendS}%, ${s.blendL}%)`,
+      tintBg:    s.tintOn
+        ? `hsla(${s.tintH}, ${s.tintS}%, ${s.tintL}%, ${(s.tintA / 100).toFixed(2)})`
+        : null,
+      tintBlend: s.tintBlend || 'color',
+      topPx:     s.topPx | 0,
+    };
+  }
+
+  // Read sliders out of a params object. Falls back to neutral defaults
+  // (mid-points of the random-generator ranges) for any field that can't
+  // be parsed or isn't set. `topPx` is now a simple boolean: any non-zero
+  // stored value flips the header toggle on (always normalised to 56 px).
+  function slidersFromParams(p) {
+    const blend  = parseHslish(p && p.blendBg)  || { h: 220, s: 12, l: 95 };
+    const tint   = parseHslish(p && p.tintBg)   || { h: 220, s: 50, l: 55, a: 0.30 };
+    return {
+      headerBg:  (p && p.headerBg) || 'hsl(220, 15%, 9%)',
+      blendH:    blend.h,  blendS:  blend.s,  blendL:  blend.l,
+      tintOn:    !!(p && p.tintBg),
+      tintH:     tint.h,   tintS:   tint.s,   tintL:   tint.l,
+      tintA:     Math.round((tint.a != null ? tint.a : 0.3) * 100),
+      tintBlend: (p && p.tintBlend) || 'color',
+      topPx:     (p && p.topPx) ? 56 : 0,
+    };
+  }
+
+  let darkPop = null;             // root <div> when built
+  let darkPopOpen = false;
+  let darkPopHideTimer = null;
+  // Slider element references, populated by buildDarkPopover().
+  const popRef = {};
+
+  function buildDarkPopover() {
+    if (darkPop) return darkPop;
+    const root = document.createElement('div');
+    root.className = 'tep-dark-pop';
+    root.id = 'tep-dark-pop';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-label', 'Dark mode controls');
+
+    // Head: title + small hint.
+    const head = document.createElement('div');
+    head.className = 'tep-dark-pop-head';
+    const title = document.createElement('div');
+    title.className = 'tep-dark-pop-title';
+    title.textContent = 'Dark mode · live tweak';
+    const hint = document.createElement('div');
+    hint.className = 'tep-dark-pop-hint';
+    hint.id = 'tep-dark-pop-hint';
+    hint.textContent = '';
+    head.appendChild(title);
+    head.appendChild(hint);
+    root.appendChild(head);
+
+    // Build a single slider row inside an arbitrary group container.
+    const buildSliderRow = (parent, c) => {
+      const row = document.createElement('div');
+      row.className = 'tep-dark-pop-row';
+      const rowLbl = document.createElement('label');
+      rowLbl.htmlFor = `tep-dark-pop-${c.key}`;
+      rowLbl.textContent = c.label;
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.id = `tep-dark-pop-${c.key}`;
+      slider.min = String(c.min);
+      slider.max = String(c.max);
+      slider.step = String(c.step || 1);
+      const val = document.createElement('span');
+      val.className = 'tep-dark-pop-val';
+      row.appendChild(rowLbl);
+      row.appendChild(slider);
+      row.appendChild(val);
+      parent.appendChild(row);
+      popRef[c.key] = {
+        type: 'slider', slider, val,
+        fmt: c.fmt || ((v) => String(v)),
+      };
+    };
+
+    // (The slider-only `addGroup` helper used to live here for the
+    // Header group, which was removed in v2.50. The Blend and Tint
+    // groups now both use `addWheelGroup` below.)
+
+    // Group builder for HSL wheel groups (Blend, Tint). H + S are picked
+    // by clicking/dragging in the wheel (angle = hue, radius = sat); L
+    // stays on a slider next to the wheel because radius is already
+    // taken. Tint additionally gets an A slider. The wheel is re-drawn
+    // whenever L changes so the colour you see in the disc is exactly
+    // what the engine will emit.
+    const addWheelGroup = (groupKey, groupLabel, swatchKey, extras, opts) => {
+      const grp = document.createElement('div');
+      grp.className = 'tep-dark-pop-grp';
+      const gh = document.createElement('div');
+      gh.className = 'tep-dark-pop-grp-head';
+      const sw = document.createElement('span');
+      sw.className = 'tep-dark-pop-swatch';
+      const lbl = document.createElement('span');
+      lbl.textContent = groupLabel;
+      gh.appendChild(sw);
+      gh.appendChild(lbl);
+      if (extras) gh.appendChild(extras);
+      grp.appendChild(gh);
+      popRef[swatchKey] = sw;
+
+      const wrowEl = document.createElement('div');
+      wrowEl.className = 'tep-dark-pop-wheel-row';
+      const wheelWrap = document.createElement('div');
+      wheelWrap.className = 'tep-dark-pop-wheel-wrap';
+      const canvas = document.createElement('canvas');
+      const SIZE = 100;
+      canvas.width = SIZE;
+      canvas.height = SIZE;
+      canvas.className = 'tep-dark-pop-wheel';
+      canvas.setAttribute('aria-label', `${groupLabel} hue/saturation wheel`);
+      const marker = document.createElement('div');
+      marker.className = 'tep-dark-pop-wheel-marker';
+      wheelWrap.appendChild(canvas);
+      wheelWrap.appendChild(marker);
+      wrowEl.appendChild(wheelWrap);
+
+      const sidecol = document.createElement('div');
+      sidecol.className = 'tep-dark-pop-wheel-sidecol';
+      buildSliderRow(sidecol, {
+        key: `${groupKey}L`, label: 'L', min: 0, max: 100,
+        fmt: (v) => `${v}%`,
+      });
+      if (opts && opts.hasAlpha) {
+        buildSliderRow(sidecol, {
+          key: `${groupKey}A`, label: 'A', min: 0, max: 100,
+          fmt: (v) => (v / 100).toFixed(2),
+        });
+      }
+      wrowEl.appendChild(sidecol);
+      grp.appendChild(wrowEl);
+      root.appendChild(grp);
+
+      // Wheel state (H ∈ [0,359], S ∈ [0,100]) is the source of truth;
+      // sliders read it via the get() accessor below.
+      let H = 0, S = 0;
+      const cx = SIZE / 2, cy = SIZE / 2;
+      // 2px inset gives the marker room to sit on the edge without being
+      // clipped by the disc's border-radius.
+      const radius = SIZE / 2 - 2;
+      const ctx = canvas.getContext('2d');
+
+      // Wheel orientation. Raw `atan2(dy, dx)` puts 0° east, which would
+      // place HSL hue 0 (red) on the right side of the disc — so a user
+      // clicking what looks like the "top" actually gets purple/blue, and
+      // the upper-right (which feels "reddish-warm") is hue ≈ 315 ≡
+      // magenta. Every consumer colour picker (macOS, Photoshop, web
+      // pickers) places red at the TOP with hue increasing clockwise.
+      // We match that by adding 90° to atan2 when computing hue, and by
+      // subtracting 90° when placing the marker for a given hue.
+      //
+      // Result (clockwise from top):
+      //   0°  top         red
+      //   60° upper-right yellow
+      //  120° lower-right green
+      //  180° bottom      cyan
+      //  240° lower-left  blue
+      //  300° upper-left  magenta
+
+      // Cache the last L so successive redraws with the same lightness
+      // (typical during a wheel-only drag, when only H/S change) are
+      // free — the disc pixels only depend on L.
+      let lastDrawnL = -1;
+      const redraw = () => {
+        const Lref = popRef[`${groupKey}L`];
+        const L = Lref ? +Lref.slider.value : 50;
+        if (L === lastDrawnL) return;
+        lastDrawnL = L;
+        const img = ctx.createImageData(SIZE, SIZE);
+        const data = img.data;
+        for (let y = 0; y < SIZE; y++) {
+          for (let x = 0; x < SIZE; x++) {
+            const dx = x - cx, dy = y - cy;
+            const r = Math.sqrt(dx * dx + dy * dy);
+            const idx = (y * SIZE + x) * 4;
+            if (r > radius) {
+              data[idx + 3] = 0;
+              continue;
+            }
+            const h = ((Math.atan2(dy, dx) * 180 / Math.PI) + 90 + 360) % 360;
+            const s = Math.min(1, r / radius);
+            const rgb = hslToRgb(h / 360, s, L / 100);
+            data[idx]     = rgb[0];
+            data[idx + 1] = rgb[1];
+            data[idx + 2] = rgb[2];
+            data[idx + 3] = 255;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+      };
+
+      const placeMarker = () => {
+        // Hue 0 sits at the top (−90° in screen coords) and increases
+        // clockwise, so the marker angle is H − 90°.
+        const a = ((H - 90) * Math.PI) / 180;
+        const r = (S / 100) * radius;
+        marker.style.left = `${cx + r * Math.cos(a)}px`;
+        marker.style.top  = `${cy + r * Math.sin(a)}px`;
+      };
+
+      // Translate a pointer event into H/S and re-apply live. Each tick
+      // also cancels the popover-hide timer so dragging outside the
+      // popover bounds (pointer capture keeps events flowing) doesn't
+      // make the popover collapse mid-drag.
+      const handlePointer = (ev) => {
+        cancelPopHide();
+        const rect = canvas.getBoundingClientRect();
+        // Account for any CSS scaling between the canvas pixel grid and
+        // its rendered size (we set both to 100, so 1:1 in practice).
+        const scaleX = SIZE / rect.width;
+        const scaleY = SIZE / rect.height;
+        const x = (ev.clientX - rect.left) * scaleX;
+        const y = (ev.clientY - rect.top)  * scaleY;
+        const dx = x - cx, dy = y - cy;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        // Same +90° offset as redraw() — keeps the click-to-hue mapping
+        // in lock-step with the painted disc.
+        H = Math.round(((Math.atan2(dy, dx) * 180 / Math.PI) + 90 + 360) % 360);
+        S = Math.min(100, Math.max(0, Math.round((r / radius) * 100)));
+        placeMarker();
+        applySlidersLive(false);
+      };
+
+      canvas.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* */ }
+        handlePointer(ev);
+      });
+      canvas.addEventListener('pointermove', (ev) => {
+        if (!canvas.hasPointerCapture || !canvas.hasPointerCapture(ev.pointerId)) return;
+        handlePointer(ev);
+      });
+      const releasePointer = (ev) => {
+        try { canvas.releasePointerCapture(ev.pointerId); } catch (_) { /* */ }
+        applySlidersLive(true);
+      };
+      canvas.addEventListener('pointerup', releasePointer);
+      canvas.addEventListener('pointercancel', releasePointer);
+
+      // L slider must trigger a wheel redraw too — hook into the unified
+      // input dispatch via the ref's `onInput` callback.
+      const lRef = popRef[`${groupKey}L`];
+      if (lRef) lRef.onInput = redraw;
+
+      popRef[`${groupKey}H`] = {
+        type: 'wheel',
+        get: () => H,
+        set: (v) => {
+          H = ((Math.round(+v) % 360) + 360) % 360;
+          placeMarker();
+        },
+      };
+      popRef[`${groupKey}S`] = {
+        type: 'wheel',
+        get: () => S,
+        set: (v) => {
+          S = Math.max(0, Math.min(100, Math.round(+v)));
+          placeMarker();
+        },
+      };
+      // Cache redraw on the swatch ref so writeSliders() can call it
+      // when L is set programmatically (history navigation, dice roll).
+      popRef[swatchKey].redrawWheel = redraw;
+
+      redraw();
+      placeMarker();
+      return grp;
+    };
+
+    // (The Header H/S/L group used to live here. Removed in v2.50 — on
+    // current TE pages the HEADER_SELECTORS hoist either doesn't match
+    // any element or its tint is masked by other native chrome, so the
+    // sliders had no visible effect. The engine still accepts a
+    // `headerBg` param and applies the CSS hoist if a header is found;
+    // the popover just doesn't expose it as a control any more. The
+    // value is carried through unchanged via the read/write helpers so
+    // dice-rolled history entries keep their stored colour.)
+    addWheelGroup('blend', 'Blend', 'blendSwatch', null, { hasAlpha: false });
+
+    // Tint group has TWO extras in the header: an on/off toggle, and a
+    // blend-mode picker (defaults to `color`). The blend-mode picker is
+    // what unlocks bold red/green dark modes — `color` is luminance-
+    // preserving (hence pastels) while `screen` / `multiply` push the
+    // result toward the overlay's full saturation.
+    const tintExtras = document.createElement('span');
+    tintExtras.className = 'tep-dark-pop-extras';
+
+    const tintToggleWrap = document.createElement('label');
+    tintToggleWrap.className = 'tep-dark-pop-toggle';
+    const tintToggle = document.createElement('input');
+    tintToggle.type = 'checkbox';
+    tintToggle.id = 'tep-dark-pop-tintOn';
+    const tintToggleLbl = document.createElement('span');
+    tintToggleLbl.textContent = 'enabled';
+    tintToggleWrap.appendChild(tintToggle);
+    tintToggleWrap.appendChild(tintToggleLbl);
+    tintExtras.appendChild(tintToggleWrap);
+
+    const tintBlendSelect = document.createElement('select');
+    tintBlendSelect.className = 'tep-dark-pop-select';
+    tintBlendSelect.id = 'tep-dark-pop-tintBlend';
+    tintBlendSelect.title = 'Tint blend mode — try `screen` or `multiply` for bold colour';
+    TINT_BLEND_MODES.forEach((m) => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      tintBlendSelect.appendChild(opt);
+    });
+    tintExtras.appendChild(tintBlendSelect);
+
+    addWheelGroup('tint', 'Tint', 'tintSwatch', tintExtras, { hasAlpha: true });
+    popRef.tintOn = tintToggle;
+    popRef.tintBlend = tintBlendSelect;
+
+    // Header: simple on/off toggle. When ON the overlays start 56 px
+    // below the viewport top, leaving the native TE banner untouched.
+    // (v2.46–v2.49 had segmented presets / a typed number field; the
+    // only height the user ever needs is the current TE banner, so a
+    // boolean toggle is enough.)
+    const topGrp = document.createElement('div');
+    topGrp.className = 'tep-dark-pop-grp';
+    const topHead = document.createElement('div');
+    topHead.className = 'tep-dark-pop-grp-head';
+    const topLbl = document.createElement('span');
+    topLbl.textContent = 'Header';
+    topHead.appendChild(topLbl);
+    const topToggleWrap = document.createElement('label');
+    topToggleWrap.className = 'tep-dark-pop-toggle';
+    topToggleWrap.style.marginLeft = 'auto';
+    const topToggle = document.createElement('input');
+    topToggle.type = 'checkbox';
+    topToggle.id = 'tep-dark-pop-topOn';
+    topToggle.title = 'Leave the top 56 px of the page un-tinted so the native TE header stays visible.';
+    const topToggleLbl = document.createElement('span');
+    topToggleLbl.textContent = 'keep 56 px untinted';
+    topToggleWrap.appendChild(topToggle);
+    topToggleWrap.appendChild(topToggleLbl);
+    topHead.appendChild(topToggleWrap);
+    topGrp.appendChild(topHead);
+    root.appendChild(topGrp);
+    popRef.topToggle = topToggle;
+
+    document.body.appendChild(root);
+
+    // Event wiring. Slider `input` events fire continuously during a drag
+    // and re-apply the variant live; `change` (pointer-up) persists into
+    // the current history entry. Refs with an `onInput` hook get it called
+    // first (used to redraw the colour wheel when its L slider moves).
+    const onSliderInput = (ref) => {
+      if (ref && ref.onInput) ref.onInput();
+      applySlidersLive(false);
+    };
+    const onSliderChange = (ref) => {
+      if (ref && ref.onChange) ref.onChange();
+      applySlidersLive(true);
+    };
+    Object.keys(popRef).forEach((k) => {
+      const ref = popRef[k];
+      if (ref && ref.type === 'slider' && ref.slider) {
+        ref.slider.addEventListener('input', () => onSliderInput(ref));
+        ref.slider.addEventListener('change', () => onSliderChange(ref));
+      }
+    });
+    tintToggle.addEventListener('change', () => applySlidersLive(true));
+    tintBlendSelect.addEventListener('change', () => applySlidersLive(true));
+    // Header keep-untinted toggle: persist immediately on flip.
+    topToggle.addEventListener('change', () => applySlidersLive(true));
+
+    // Keep the popover from collapsing while the pointer is inside it.
+    root.addEventListener('mouseenter', cancelPopHide);
+    root.addEventListener('mouseleave', schedulePopHide);
+
+    darkPop = root;
+    return root;
+  }
+
+  // HSL → RGB conversion. Inputs are normalised to [0, 1]; output is
+  // three 0–255 ints. Used only by the colour-wheel renderer; the engine
+  // itself stays in HSL strings end-to-end.
+  function hslToRgb(h, s, l) {
+    let r, g, b;
+    if (s === 0) {
+      r = g = b = l;
+    } else {
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      };
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1 / 3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1 / 3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+
+  // Type-aware accessor for the popRef map. Sliders expose `.slider`
+  // and wheel-backed H/S expose `.get/.set` — both go through here so
+  // readSliders/writeSliders stay declarative.
+  function getRefValue(key) {
+    const ref = popRef[key];
+    if (!ref) return 0;
+    if (ref.type === 'wheel') return ref.get();
+    if (ref.type === 'slider' && ref.slider) return +ref.slider.value;
+    return 0;
+  }
+  function setRefValue(key, val) {
+    const ref = popRef[key];
+    if (!ref) return;
+    if (ref.type === 'wheel') { ref.set(val); return; }
+    if (ref.type === 'slider' && ref.slider) {
+      ref.slider.value = String(val);
+      ref.val.textContent = ref.fmt(+ref.slider.value);
     }
   }
-  darkToggle.addEventListener('click', toggleDarkMode);
-  // Restore dark mode if it was on
-  if (localStorage.getItem('tep-dark-mode') === '1') toggleDarkMode();
+
+  // Pull the current values out of every wheel / slider / toggle / number
+  // input into a plain {slidersObj}. Mirrors the keys consumed by
+  // paramsFromSliders(). `headerBg` is carried through as an opaque
+  // passthrough so dice-rolled history entries keep their stored colour
+  // even though the popover no longer exposes Header H/S/L controls.
+  function readSliders() {
+    const v = getRefValue;
+    // Header toggle: when checked, leave the top 56 px un-tinted.
+    const topPx = (popRef.topToggle && popRef.topToggle.checked) ? 56 : 0;
+    const tintBlend = (popRef.tintBlend && popRef.tintBlend.value) || 'color';
+    // Preserve the current header colour without exposing it as a UI knob.
+    const headerBg = (darkCursor >= 0
+      && darkHistory[darkCursor]
+      && darkHistory[darkCursor].headerBg) || 'hsl(220, 15%, 9%)';
+    return {
+      headerBg,
+      blendH:    v('blendH'),  blendS:  v('blendS'),  blendL:  v('blendL'),
+      tintOn:    popRef.tintOn.checked,
+      tintH:     v('tintH'),   tintS:   v('tintS'),   tintL:   v('tintL'),
+      tintA:     v('tintA'),
+      tintBlend,
+      topPx,
+    };
+  }
+
+  // Push the given slider state into the DOM (sliders, value labels,
+  // wheels + markers, swatches, number input, tint enable + blend).
+  function writeSliders(s) {
+    setRefValue('blendH',  s.blendH);  setRefValue('blendS',  s.blendS);  setRefValue('blendL',  s.blendL);
+    setRefValue('tintH',   s.tintH);   setRefValue('tintS',   s.tintS);   setRefValue('tintL',   s.tintL);
+    setRefValue('tintA',   s.tintA);
+    popRef.tintOn.checked = !!s.tintOn;
+    if (popRef.tintBlend && s.tintBlend) {
+      popRef.tintBlend.value = TINT_BLEND_MODES.indexOf(s.tintBlend) >= 0 ? s.tintBlend : 'color';
+    }
+    if (popRef.topToggle) popRef.topToggle.checked = (s.topPx | 0) > 0;
+    // Swatches reflect the actual colours the engine will emit.
+    if (popRef.blendSwatch) popRef.blendSwatch.style.background = `hsl(${s.blendH}, ${s.blendS}%, ${s.blendL}%)`;
+    if (popRef.tintSwatch) {
+      popRef.tintSwatch.style.background = s.tintOn
+        ? `hsla(${s.tintH}, ${s.tintS}%, ${s.tintL}%, ${(s.tintA / 100).toFixed(2)})`
+        : 'transparent';
+    }
+    // Re-render wheels for the new L (the disc previews lightness).
+    if (popRef.blendSwatch && popRef.blendSwatch.redrawWheel) popRef.blendSwatch.redrawWheel();
+    if (popRef.tintSwatch  && popRef.tintSwatch.redrawWheel)  popRef.tintSwatch.redrawWheel();
+  }
+
+  // Drag → live re-apply. If `persist` is true, also write the values back
+  // into the current history slot (creating one if dark mode was off).
+  function applySlidersLive(persist) {
+    if (!darkPop) return;
+    const s = readSliders();
+    const params = paramsFromSliders(s);
+    // Refresh value labels + swatches for the current numbers (cheap).
+    writeSliders(s);
+
+    if (darkCursor < 0) {
+      // Dark mode was off: only commit on `change` so a hover-out without
+      // any meaningful drag doesn't accidentally enable dark mode.
+      if (!persist) return;
+      darkHistory.push(params);
+      if (darkHistory.length > DARK_HISTORY_MAX) darkHistory.shift();
+      darkCursor = darkHistory.length - 1;
+    } else {
+      darkHistory[darkCursor] = params;
+    }
+    applyDarkParamsInternal(params);
+    if (persist) persistDarkState();
+  }
+
+  // applyDarkParams without the popover-refresh recursion (writeSliders
+  // already wrote the latest values into the DOM, and refreshing again
+  // would just stomp anything the user is mid-dragging).
+  function applyDarkParamsInternal(params) {
+    if (typeof darkCleanup === 'function') { try { darkCleanup(); } catch (_) { /* */ } }
+    darkCleanup = null;
+    const cleanup = applyHybrid(params);
+    if (typeof cleanup === 'function') darkCleanup = cleanup;
+    setReset(true);
+    updateDarkToggleTitle();
+    const hintEl = document.getElementById('tep-dark-pop-hint');
+    if (hintEl) hintEl.textContent = darkCursor >= 0
+      ? `history ${darkCursor + 1}/${darkHistory.length}`
+      : '';
+  }
+
+  // Sync popover sliders from the current dark state. Called whenever
+  // applyDarkParams runs (random roll, history nav, reset).
+  function refreshDarkPopover() {
+    if (!darkPop) return;
+    const p = darkCursor >= 0 ? darkHistory[darkCursor] : null;
+    writeSliders(slidersFromParams(p));
+    const hintEl = document.getElementById('tep-dark-pop-hint');
+    if (hintEl) hintEl.textContent = darkCursor >= 0
+      ? `history ${darkCursor + 1}/${darkHistory.length}`
+      : 'dark mode off · drag a slider to enable';
+  }
+
+  // Position the popover so its top-right corner sits just below the
+  // toggle button, clamped to the viewport. Re-run on every show plus on
+  // window scroll/resize while open.
+  function positionDarkPopover() {
+    if (!darkPop || !darkPopOpen) return;
+    const btnRect = darkToggle.getBoundingClientRect();
+    // Measure after temporarily forcing layout — popover may not have
+    // been laid out yet on first open.
+    const popRect = darkPop.getBoundingClientRect();
+    const margin = 6;
+    // Default: anchor top-right of pop to bottom-right of button.
+    let top  = btnRect.bottom + margin;
+    let left = btnRect.right - popRect.width;
+    // Clamp into viewport.
+    const maxLeft = window.innerWidth  - popRect.width  - 4;
+    const maxTop  = window.innerHeight - popRect.height - 4;
+    if (left < 4) left = 4;
+    if (left > maxLeft) left = Math.max(4, maxLeft);
+    if (top > maxTop) {
+      // Not enough room below — flip above the button.
+      top = Math.max(4, btnRect.top - popRect.height - margin);
+    }
+    darkPop.style.top  = `${Math.round(top)}px`;
+    darkPop.style.left = `${Math.round(left)}px`;
+  }
+
+  function showDarkPopover() {
+    cancelPopHide();
+    const pop = buildDarkPopover();
+    refreshDarkPopover();
+    darkPopOpen = true;
+    pop.classList.add('open');
+    // Suppress the native title tooltip while the popover is visible so
+    // they don't stack on top of each other.
+    darkToggle.dataset.tepTitle = darkToggle.title || '';
+    darkToggle.title = '';
+    // Position once now, then again next frame after layout has settled.
+    positionDarkPopover();
+    requestAnimationFrame(positionDarkPopover);
+    window.addEventListener('scroll', positionDarkPopover, { capture: true, passive: true });
+    window.addEventListener('resize', positionDarkPopover, { passive: true });
+  }
+
+  function hideDarkPopover() {
+    if (!darkPop) return;
+    darkPopOpen = false;
+    darkPop.classList.remove('open');
+    if (darkToggle.dataset.tepTitle !== undefined) {
+      darkToggle.title = darkToggle.dataset.tepTitle;
+      delete darkToggle.dataset.tepTitle;
+    }
+    window.removeEventListener('scroll', positionDarkPopover, { capture: true });
+    window.removeEventListener('resize', positionDarkPopover);
+  }
+
+  function schedulePopHide() {
+    cancelPopHide();
+    darkPopHideTimer = setTimeout(hideDarkPopover, 220);
+  }
+  function cancelPopHide() {
+    if (darkPopHideTimer) { clearTimeout(darkPopHideTimer); darkPopHideTimer = null; }
+  }
+
+  darkToggle.addEventListener('mouseenter', showDarkPopover);
+  darkToggle.addEventListener('mouseleave', schedulePopHide);
+  darkToggle.addEventListener('focus', showDarkPopover);
+  darkToggle.addEventListener('blur', schedulePopHide);
+
+  // Restore: prefer a saved random-state blob; otherwise, if the user had any
+  // dark mode active in the pre-2.36 fixed-mode system, kick off a fresh
+  // random so dark mode stays "on" across the upgrade.
+  setReset(false);
+  const savedRandom = localStorage.getItem(TEP_DARK_KEY);
+  let restored = false;
+  if (savedRandom != null) {
+    try {
+      const parsed = JSON.parse(savedRandom);
+      if (parsed && Array.isArray(parsed.history) && parsed.history.length > 0
+          && Number.isFinite(parsed.cursor)) {
+        darkHistory = parsed.history
+          .filter(p => p && typeof p === 'object' && typeof p.headerBg === 'string' && typeof p.blendBg === 'string')
+          .slice(-DARK_HISTORY_MAX);
+        darkCursor = Math.max(0, Math.min(parsed.cursor, darkHistory.length - 1));
+        if (darkHistory.length > 0) {
+          applyDarkParams(darkHistory[darkCursor]);
+          restored = true;
+        }
+      }
+    } catch (_) { /* corrupt — fall through */ }
+  }
+  if (!restored) {
+    const savedLegacy = localStorage.getItem(TEP_DARK_LEGACY_KEY);
+    if (savedLegacy != null && savedLegacy !== '0') {
+      nextRandomDark();
+    }
+    localStorage.removeItem(TEP_DARK_LEGACY_KEY);
+  }
 
   // Manage panel listeners
   $('#tep-manage-load').addEventListener('click', loadTests);
@@ -7704,16 +8814,16 @@
       if (!f) return;
       const r = new FileReader();
       r.onload = () => {
-        const taj = root.querySelector('#tep-dash-json');
-        if (taj) taj.value = r.result;
+        const ta = root.querySelector('#tep-dash-json');
+        if (ta) ta.value = r.result;
         refreshDashboardJsonSummary();
       };
       r.readAsText(f);
       e.target.value = '';
     });
-    const sharedDashJsonTa2 = root.querySelector('#tep-dash-json');
-    if (sharedDashJsonTa2) {
-      sharedDashJsonTa2.addEventListener('input', () => { refreshDashboardJsonSummary(); });
+    const sharedDashJsonTa = root.querySelector('#tep-dash-json');
+    if (sharedDashJsonTa) {
+      sharedDashJsonTa.addEventListener('input', () => { refreshDashboardJsonSummary(); });
     }
 
     const sniffCb = $('#tep-dash-sniff-ajax');
@@ -7773,7 +8883,6 @@
   // ---------------------------------------------------------------------------
   initAuth();
 })();
-
 </script>
 
   <script>
