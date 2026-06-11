@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.52</span>
+        TE Optics<span class="install-version" aria-label="Build">2.53</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.52';
+  const TEP_VERSION = '2.53';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3949,6 +3949,41 @@
     return c;
   }
 
+  /**
+   * dash-api returns 400 with `ValidGlobalFilterId.com.thousandeyes.dash.models.dashboard.Dashboard.globalFilterId`
+   * when the dashboard JSON references a saved filter id that doesn't
+   * exist in the target account. Match on the validator code (which
+   * dash-api logs verbatim in the `codes` array) and the human-readable
+   * field name. Both signals appear in the body in practice; matching
+   * either survives format drift.
+   */
+  function isInvalidGlobalFilterIdError(status, text) {
+    if (status !== 400) return false;
+    const s = String(text || '');
+    if (/ValidGlobalFilterId/i.test(s)) return true;
+    if (/globalFilterId/i.test(s) && /(rejected|invalid|not\s*found|does\s*not\s*exist)/i.test(s)) return true;
+    return false;
+  }
+
+  /**
+   * Mutates `obj` in place, removing every `globalFilterId` key it finds
+   * (top-level or nested override). Returns true if at least one key was
+   * removed so the caller can decide whether retrying makes sense.
+   */
+  function stripGlobalFilterIdEverywhere(obj) {
+    let removed = false;
+    (function walk(v, depth) {
+      if (depth > 42 || v === null || typeof v !== 'object') return;
+      if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
+      if (Object.prototype.hasOwnProperty.call(v, 'globalFilterId')) {
+        delete v.globalFilterId;
+        removed = true;
+      }
+      for (const k of Object.keys(v)) walk(v[k], depth + 1);
+    })(obj, 0);
+    return removed;
+  }
+
   function normalizeDashboardVAgentIdList(ids) {
     return (ids || []).map((x) => (typeof x === 'number' ? x : (Number.isFinite(Number(x)) ? Number(x) : x)));
   }
@@ -4005,22 +4040,33 @@
   /**
    * Strip widget filters in the same shape TE itself produces when the user
    * clears filters from the UI: for every dimension entry in `filters` /
-   * `generalFilters`, drop it unless the dimension ID appears as a string
-   * reference elsewhere in the dashboard (e.g. `groupCardsBy`, `cards`,
-   * `aggregateProperties`, `colProperty`, `rowProperty`, `metric`). Structural
-   * dimensions are kept with EMPTY values so TE re-accepts the payload
-   * without re-populating defaults.
+   * `generalFilters` / `globalFilters`, drop it unless the dimension ID
+   * appears as a string reference elsewhere in the dashboard (e.g.
+   * `groupCardsBy`, `cards`, `aggregateProperties`, `colProperty`,
+   * `rowProperty`, `metric`). Structural dimensions are kept with EMPTY
+   * values so TE re-accepts the payload without re-populating defaults.
+   *
+   * Also removes any `globalFilterId` reference. That field points to a
+   * SAVED filter that lives in the source account; on a cross-account
+   * restore (or after the saved filter is deleted) dash-api rejects the
+   * whole payload with `ValidGlobalFilterId`. The strip semantic is
+   * "this restore should not depend on account-scoped saved state", so
+   * the reference goes regardless.
    *
    * The previous implementation only deleted keys named `filters` and left
    * `generalFilters` untouched. TE renders the filter chips from
    * `generalFilters`, so the old filters survived a restore — the exact
    * "filter categories still set" bug this routine is meant to prevent.
+   * v2.53 extends the same treatment to `globalFilters` and adds the
+   * `globalFilterId` purge described above.
    */
   function stripAllWidgetFiltersFromDashboardJson(root) {
     if (root === null || typeof root !== 'object') return;
 
-    // Pass 1: collect all string values that appear OUTSIDE filters/generalFilters
-    // value containers. Any dimension ID referenced this way is "structural".
+    // Pass 1: collect all string values that appear OUTSIDE filter value
+    // containers. Any dimension ID referenced this way is "structural".
+    // `globalFilters` is treated the same as `filters` / `generalFilters`
+    // so a dimension id appearing inside it isn't accidentally rescued.
     const structural = new Set();
     (function collect(v, insideFilterBlock) {
       if (typeof v === 'string') {
@@ -4030,37 +4076,43 @@
       if (Array.isArray(v)) { for (const x of v) collect(x, insideFilterBlock); return; }
       if (v && typeof v === 'object') {
         for (const [k, sub] of Object.entries(v)) {
-          collect(sub, insideFilterBlock || k === 'filters' || k === 'generalFilters');
+          collect(sub, insideFilterBlock || k === 'filters' || k === 'generalFilters' || k === 'globalFilters');
         }
       }
     })(root, false);
 
-    // Pass 2: clear or drop dimensions in every filters/generalFilters object.
+    // Helper: clear/drop dimensions inside a {dim -> values|entry} map.
+    const scrubMap = (m, normalizeEntry) => {
+      if (!m || typeof m !== 'object' || Array.isArray(m)) return;
+      for (const dim of Object.keys(m)) {
+        if (structural.has(dim)) {
+          normalizeEntry(m, dim);
+        } else {
+          delete m[dim];
+        }
+      }
+    };
+    const emptyValuesEntry = (m, dim) => {
+      const entry = m[dim];
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        if (Array.isArray(entry.values)) entry.values = [];
+        if (Object.prototype.hasOwnProperty.call(entry, 'value')) entry.value = null;
+      }
+    };
+    const emptyArrayEntry = (m, dim) => {
+      if (Array.isArray(m[dim])) m[dim] = [];
+    };
+
+    // Pass 2: scrub every filter container we know about, and remove any
+    // `globalFilterId` reference (top-level or nested override) so dash-api
+    // doesn't fail validation on the saved-filter id.
     (function walk(v, depth) {
       if (depth > 42 || v === null || typeof v !== 'object') return;
       if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
-      if (v.filters && typeof v.filters === 'object' && !Array.isArray(v.filters)) {
-        for (const dim of Object.keys(v.filters)) {
-          if (structural.has(dim)) {
-            if (Array.isArray(v.filters[dim])) v.filters[dim] = [];
-          } else {
-            delete v.filters[dim];
-          }
-        }
-      }
-      if (v.generalFilters && typeof v.generalFilters === 'object' && !Array.isArray(v.generalFilters)) {
-        for (const dim of Object.keys(v.generalFilters)) {
-          if (structural.has(dim)) {
-            const entry = v.generalFilters[dim];
-            if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-              if (Array.isArray(entry.values)) entry.values = [];
-              if (Object.prototype.hasOwnProperty.call(entry, 'value')) entry.value = null;
-            }
-          } else {
-            delete v.generalFilters[dim];
-          }
-        }
-      }
+      if (v.filters        && typeof v.filters        === 'object') scrubMap(v.filters,        emptyArrayEntry);
+      if (v.generalFilters && typeof v.generalFilters === 'object') scrubMap(v.generalFilters, emptyValuesEntry);
+      if (v.globalFilters  && typeof v.globalFilters  === 'object') scrubMap(v.globalFilters,  emptyValuesEntry);
+      if (Object.prototype.hasOwnProperty.call(v, 'globalFilterId')) delete v.globalFilterId;
       for (const k of Object.keys(v)) walk(v[k], depth + 1);
     })(root, 0);
   }
@@ -4090,7 +4142,7 @@
     const show = mode === 'strip';
     wrap.style.display = show ? '' : 'none';
     if (note && mode === 'strip') {
-      note.textContent = 'Widget filter values (filters and generalFilters) are cleared, and virtual-agent fields are emptied. Dimension structure is preserved so TE accepts the restore.';
+      note.textContent = 'Widget filter values (filters, generalFilters, globalFilters), the dashboard\u2019s saved-filter reference (globalFilterId), and virtual-agent fields are cleared. Dimension structure is preserved so TE accepts the restore.';
     }
   }
 
@@ -4162,6 +4214,11 @@
           log('Restore: skipped invalid payload candidate', 'tep-log-err');
           continue;
         }
+        // Per-candidate one-shot retry flag: if dash-api rejects on
+        // ValidGlobalFilterId we strip the field and re-send once. After
+        // the strip the field can't come back, so there's no infinite
+        // loop risk even if a second 400 fires for an unrelated reason.
+        let gfStripDone = false;
         for (let bump = 0; bump <= DASH_RESTORE_NAME_CONFLICT_MAX; bump++) {
           try {
             const payload = JSON.stringify(obj);
@@ -4178,6 +4235,14 @@
               const nextLabel = obj.title != null ? obj.title : (obj.name != null ? obj.name : '');
               log(`Restore: duplicate name/title (${resp.status}) → retry with "${nextLabel}"`, 'tep-log-info');
               continue;
+            }
+            if (!gfStripDone && isInvalidGlobalFilterIdError(resp.status, text)) {
+              const removed = stripGlobalFilterIdEverywhere(obj);
+              gfStripDone = true;
+              if (removed) {
+                log(`Restore: ValidGlobalFilterId (${resp.status}) → stripping globalFilterId and retrying`, 'tep-log-info');
+                continue;
+              }
             }
             log(`Restore ${method} ${url} → ${resp.status} ${text.slice(0, 280)}`, 'tep-log-info');
             break;
