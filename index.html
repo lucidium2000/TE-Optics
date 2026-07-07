@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.53</span>
+        TE Optics<span class="install-version" aria-label="Build">2.55</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.53';
+  const TEP_VERSION = '2.55';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2104,6 +2104,55 @@
               <path d="M3 21v-5h5" />
             </svg>
           </button>
+        </div>
+        <div class="tep-create-block" id="tep-tests-block-backup-restore">
+          <button type="button" class="tep-create-toggle" id="tep-tests-toggle-backup-restore" aria-expanded="false" aria-controls="tep-tests-expand-backup-restore">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Backup and Restore
+          </button>
+          <div class="tep-create-expand" id="tep-tests-expand-backup-restore" hidden>
+            <div class="tep-dash-card tep-dash-restore-card">
+            <label class="tep-label" for="tep-tests-json">Tests JSON <span id="tep-tests-json-count" class="tep-dash-hint" style="font-weight:normal;"></span></label>
+            <details class="tep-dash-json-details" id="tep-tests-json-details">
+              <summary>
+                <span class="tep-dash-json-sum tep-dash-json-sum-empty" id="tep-tests-json-summary">No JSON yet — click Refresh to load selected tests (or all)</span>
+                <span class="tep-dash-json-chev" aria-hidden="true">&#9654;</span>
+              </summary>
+              <div class="tep-dash-json-details-body">
+                <textarea class="tep-textarea tep-dash-json" id="tep-tests-json" spellcheck="false" placeholder="[ ]"></textarea>
+              </div>
+            </details>
+            <div class="tep-dash-actions">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon tep-dash-refresh-btn" id="tep-tests-refresh" title="Refresh JSON from selected tests (or all tests if none are checked)" aria-label="Refresh tests JSON">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
+                  <path d="M3 21v-5h5" />
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
+                  <path d="M21 3v5h-5" />
+                </svg>
+              </button>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tests-download">Backup to file&hellip;</button>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tests-restore-import-file-btn">Import backup file&hellip;</button>
+              <input type="file" id="tep-tests-restore-import-file" accept="application/json,.json" style="display:none;">
+            </div>
+
+            <label class="tep-label" for="tep-tests-restore-title-prefix">Test name prefix (optional)</label>
+            <input type="text" class="tep-input" id="tep-tests-restore-title-prefix" placeholder="e.g. “Restored — ” &mdash; prepended to every restored test&rsquo;s name" autocomplete="off">
+
+            <label class="tep-label" for="tep-tests-restore-agent-mode">Agents, alerts, labels on restore</label>
+            <select class="tep-select" id="tep-tests-restore-agent-mode" style="width:100%;">
+              <option value="keep" selected>Keep as in JSON</option>
+              <option value="strip">Strip account-specific references (recommended for cross-account)</option>
+            </select>
+
+            <div id="tep-tests-restore-agents-wrap" class="tep-dash-restore-agents-wrap" style="display:none;">
+              <p class="tep-dash-hint" id="tep-tests-restore-agent-note" style="margin:0 0 6px;">Per-test IDs (<code>testId</code>, timestamps), agent references (<code>agents</code>, <code>agentIds</code>, <code>vAgentIds</code>, <code>agentSet</code>, <code>physicalAgentIds</code>, <code>agentInterfaces</code>), labels (<code>labelsIds</code>, <code>tagIds</code>), and alert bindings (<code>alerts</code>, <code>alertSuppressionWindowIds</code>, <code>flagAlertsEnabled</code>) are cleared per test. You may need to re-select agents in each restored test.</p>
+            </div>
+
+            <div class="tep-dash-row" style="margin-top:14px;">
+              <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-tests-restore" style="flex:1;">Restore tests to ThousandEyes&hellip;</button>
+            </div>
+            </div>
+          </div>
         </div>
         <div class="tep-bulk-bar" id="tep-bulk-bar">
           <span id="tep-bulk-count">0 selected</span>
@@ -5263,6 +5312,7 @@
   }
   function isNetworkStyleProtocolFormTest(t) {
     if (isOneWayNetworkTest(t)) return true;
+    if (isWebTransactionTest(t)) return true;
     return /A2s|Network|Http|Page/i.test(t.testType || t.type || '');
   }
   /** GET /ajax/tests/…/aid/testId — `api` has no detail to merge. */
@@ -5712,6 +5762,7 @@
     /* TE REST slug for agent→server tests is `network`, not `agent-to-server` (save would 404/500). */
     if (slug === 'agent-to-server') slug = 'network';
     if (slug === 'onewaynetwork' || slugLower === 'onewaynetwork') slug = 'oneway-network';
+    if (slug === 'web-transactions' || slugLower === 'web-transactions') slug = 'web-transaction';
     if (forWrite) return `/ajax/tests/${slug}`;
     const aid = t.aid;
     const testId = t.testId || t.id;
@@ -7126,8 +7177,12 @@
           alignSubintervalToInterval(updated, newInterval);
           resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
         } else if (action === 'protocol') {
-          const tt = (t.testType || t.type || '').toLowerCase();
-          if (!/a2s|network|http|page|onewaynetwork|oneway/i.test(tt)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
+          if (!isNetworkStyleProtocolFormTest(t)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
+          try {
+            if (!t._agentsLoaded) await fetchTestDetail(t);
+          } catch (e) {
+            log(`  WARN: could not load detail for "${t.name}" — using list data (${e.message})`, 'tep-log-info');
+          }
           const pv = bulkProtocol.value;
           const proto = pv.startsWith('TCP') ? 'TCP' : 'ICMP';
           const pm = pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO');
@@ -7158,7 +7213,7 @@
             : (Number.isFinite(existingPort) && existingPort > 0 ? existingPort : 443);
           if (typeof updated.server === 'object' && updated.server) {
             updated.server.port = newPort;
-          } else if (updated.port !== undefined) {
+          } else {
             updated.port = newPort;
           }
 
@@ -7557,6 +7612,339 @@
     if (createUnitsFocused) updateManageUnitsTotal();
   }
 
+  // ─── Tests: Backup / Restore ─────────────────────────────────────────
+  // Cloned from the dashboard flow (see #tep-dash-block-backup-restore and
+  // restoreDashboardFromEditor). Differences from dashboards:
+  //   1. Tests are always a LIST. The backup source is either the rows
+  //      checked in #tep-bulk-bar (selectedTestIds), or — if nothing is
+  //      checked — the full loaded list. JSON is emitted as an array even
+  //      for a single test so restore always parses the same shape.
+  //   2. Each test type has its own POST endpoint (/ajax/tests/{slug}).
+  //      testApiUrl(t, {forWrite:true}) picks the slug for us.
+  //   3. Restore always creates NEW tests (per user's selected semantic).
+  //      TE assigns a fresh testId; on duplicate name the bump loop keeps
+  //      going until the collision is resolved, matching the dashboard's
+  //      DASH_RESTORE_NAME_CONFLICT_MAX behaviour.
+
+  const TESTS_RESTORE_NAME_CONFLICT_MAX = 24;
+
+  // Fields we ALWAYS drop from a test object on restore. TE assigns fresh
+  // IDs on create, and every timestamp is server-managed — leaving them in
+  // either 400s the write or, worse, gets silently ignored and confuses
+  // downstream diffs. We keep them in the BACKUP FILE so the file still
+  // tells you which test came from which id/when.
+  const TESTS_STRIP_ALWAYS_KEYS = [
+    'testId', 'id',
+    'createDate', 'createdDate', 'createTime',
+    'modifiedDate', 'lastModified', 'dateModified', 'dateCreated', 'modifiedTime',
+  ];
+
+  // Account-scoped references cleared when the user picks strip mode.
+  // Same spirit as the dashboard strip: nothing here can survive a cross-
+  // account restore, and even same-account restores may want to detach
+  // labels/alerts to avoid firing on a duplicate.
+  const TESTS_STRIP_ACCOUNT_KEYS = [
+    // agents (multiple representations across list vs detail payloads)
+    'agents', 'agentIds', 'vAgentIds', 'physicalAgentIds', 'agentInterfaces',
+    'agentSet',
+    // labels / tags
+    'labelsIds', 'tagIds',
+    // alerts + notifications
+    'alerts', 'alertSuppressionWindowIds', 'flagAlertsEnabled',
+    // private monitors + account bindings + auth
+    'privateMonitorSet', 'accountBindings', 'proxyId', 'vaultSecrets', 'oAuth',
+  ];
+
+  // Mutates `t` in place. Removes panel internals (leading-underscore keys)
+  // and TESTS_STRIP_ALWAYS_KEYS; if `stripAccount` is true also removes the
+  // TESTS_STRIP_ACCOUNT_KEYS set. `agentSet` gets a belt-and-braces empty
+  // sweep in case a future caller passes stripAccount=false but the object
+  // has already been mutated elsewhere.
+  function stripTestForRestore(t, stripAccount) {
+    if (!t || typeof t !== 'object') return;
+    for (const k of Object.keys(t)) {
+      if (k.startsWith('_')) delete t[k];
+    }
+    for (const k of TESTS_STRIP_ALWAYS_KEYS) delete t[k];
+    if (!stripAccount) return;
+    for (const k of TESTS_STRIP_ACCOUNT_KEYS) delete t[k];
+    if (t.agentSet && typeof t.agentSet === 'object' && !Array.isArray(t.agentSet)) {
+      if (Array.isArray(t.agentSet.vAgentIds)) t.agentSet.vAgentIds = [];
+      if (Array.isArray(t.agentSet.agentIds))  t.agentSet.agentIds  = [];
+      if (Array.isArray(t.agentSet.agents))    t.agentSet.agents    = [];
+    }
+  }
+
+  // Accept anything vaguely resembling a tests backup: a single test, an
+  // array of tests, or wrappers like {tests:[…]} / {data:[…]}. Always
+  // returns an array (possibly empty) of objects that look like tests.
+  function normalizeTestsRestoreRoot(body) {
+    const walk = (v, depth) => {
+      if (depth > 6 || v == null) return null;
+      if (Array.isArray(v)) return v.filter((x) => x && typeof x === 'object' && !Array.isArray(x));
+      if (typeof v !== 'object') return null;
+      // Direct test-shape: has any of the identity signals TE uses.
+      if (v.testType || v.type || (v.testName != null && (v.testId != null || v.id != null))) return [v];
+      for (const k of ['tests', 'data', 'results', 'items', 'payload', 'result']) {
+        if (v[k] != null) {
+          const nested = walk(v[k], depth + 1);
+          if (nested && nested.length) return nested;
+        }
+      }
+      return null;
+    };
+    const out = walk(body, 0);
+    return out || [];
+  }
+
+  // If the user typed a string containing `{name}` we do substitution;
+  // otherwise the string is treated as a plain prefix. Common recipes:
+  //   "Restored — "            → "Restored — {orig}"
+  //   "{name} (from prod)"     → "{orig} (from prod)"
+  //   "cross-acct-{name}"      → "cross-acct-{orig}"
+  function applyTestsRestoreNameAdorner(t, prefix) {
+    if (!prefix || typeof prefix !== 'string' || !t || typeof t !== 'object') return;
+    const field = typeof t.testName === 'string' ? 'testName'
+                : typeof t.name === 'string'     ? 'name'
+                : 'testName';
+    const current = t[field] != null ? String(t[field]) : '';
+    if (/\{name\}/i.test(prefix)) {
+      t[field] = prefix.replace(/\{name\}/gi, current);
+    } else {
+      t[field] = prefix + current;
+    }
+  }
+
+  // Append " (2)" or bump " (N)" on the test name field. Fired when the
+  // POST returns a duplicate-name error so the retry lands. Direct clone
+  // of bumpDashboardTitleField's logic, adapted for testName/name.
+  function bumpTestNameField(t) {
+    if (!t || typeof t !== 'object') return;
+    const field = typeof t.testName === 'string' ? 'testName'
+                : typeof t.name === 'string'     ? 'name'
+                : 'testName';
+    const cur = t[field] != null ? String(t[field]) : 'Restored test';
+    const m = cur.match(/^(.+?)\s*\((\d+)\)\s*$/);
+    if (m) {
+      const n = parseInt(m[2], 10);
+      t[field] = `${m[1].trim()} (${Number.isFinite(n) ? n + 1 : 2})`;
+    } else {
+      t[field] = `${cur} (2)`;
+    }
+  }
+
+  // Which tests should the "Refresh" button back up? Selected rows via the
+  // bulk bar, or — when the selection is empty — every loaded test.
+  function collectTestsForBackup() {
+    const idSet = selectedTestIds instanceof Set ? selectedTestIds : new Set();
+    if (idSet.size === 0) return allTests.slice();
+    return allTests.filter((t) => idSet.has(String(t.testId || t.id)));
+  }
+
+  // Sync the collapsed JSON summary + parenthetical count. Mirrors the
+  // dashboard's refreshDashboardJsonSummary but for an array payload.
+  function refreshTestsJsonSummary() {
+    const ta = $('#tep-tests-json');
+    const summary = $('#tep-tests-json-summary');
+    const countEl = $('#tep-tests-json-count');
+    if (!ta || !summary) return;
+    const raw = ta.value || '';
+    const t = raw.trim();
+    if (!t) {
+      summary.textContent = 'No JSON yet — click Refresh to load selected tests (or all)';
+      summary.className = 'tep-dash-json-sum tep-dash-json-sum-empty';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(t); } catch (e) {
+      summary.textContent = `JSON parse error: ${e.message}`;
+      summary.className = 'tep-dash-json-sum tep-dash-json-sum-err';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    const arr = normalizeTestsRestoreRoot(parsed);
+    const n = arr.length;
+    const names = arr.slice(0, 3).map((x) => x.testName || x.name || '(unnamed)').join(', ');
+    summary.textContent = `${n} test${n === 1 ? '' : 's'}${names ? ` — ${names}${n > 3 ? ', …' : ''}` : ''}`;
+    summary.className = 'tep-dash-json-sum tep-dash-json-sum-ok';
+    if (countEl) countEl.textContent = `(${n} test${n === 1 ? '' : 's'})`;
+  }
+
+  async function refreshTestsEditor() {
+    const ta = $('#tep-tests-json');
+    if (!ta) return;
+    const source = collectTestsForBackup();
+    if (!source.length) {
+      toast('No tests to back up — the list is empty', 'err');
+      setStatus('No tests loaded', 'err');
+      return;
+    }
+    setStatus(`Fetching detail for ${source.length} test${source.length === 1 ? '' : 's'}…`);
+    log(`Tests backup: fetching detail for ${source.length} test(s)`, 'tep-log-info');
+    // fetchTestDetail mutates the entry in `allTests` in place. We clone
+    // afterwards so any strip we do on the backup copy doesn't leak into
+    // live state used by other panel features (Edit modal etc.).
+    const errors = [];
+    for (const t of source) {
+      try {
+        if (!t._agentsLoaded) await fetchTestDetail(t);
+      } catch (e) {
+        errors.push({ id: t.testId || t.id, err: e.message });
+      }
+    }
+    if (errors.length) {
+      log(`Tests backup: ${errors.length} detail fetch(es) failed (see below)`, 'tep-log-err');
+      for (const e of errors) log(`  · testId=${e.id}: ${e.err}`, 'tep-log-err');
+    }
+    const copies = source.map((t) => {
+      const c = cloneJsonDeep(t);
+      // Panel internals are noise in a backup file. Identity/timestamps are
+      // stripped on RESTORE (not here) so the file remains a faithful
+      // historical snapshot of the account state at backup time.
+      for (const k of Object.keys(c)) { if (k.startsWith('_')) delete c[k]; }
+      return c;
+    });
+    ta.value = JSON.stringify(copies, null, 2);
+    refreshTestsJsonSummary();
+    setStatus(`Tests JSON ready — ${copies.length} test${copies.length === 1 ? '' : 's'}`, 'ok');
+    log(`Tests backup: ${copies.length} test(s) serialized to editor`, 'tep-log-ok');
+  }
+
+  function suggestTestsBackupFileName() {
+    const iso = new Date().toISOString().slice(0, 10);
+    return `te-tests-backup-${iso}.json`;
+  }
+
+  function downloadTestsBackup() {
+    const ta = $('#tep-tests-json');
+    const raw = ta ? (ta.value || '') : '';
+    if (!raw.trim()) {
+      toast('Nothing to save — click Refresh first', 'err');
+      return;
+    }
+    const suggested = suggestTestsBackupFileName();
+    const name = window.prompt('Download filename:', suggested) || suggested;
+    const blob = new Blob([raw], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { a.remove(); } catch (_) { /* */ }
+      try { URL.revokeObjectURL(url); } catch (_) { /* */ }
+    }, 500);
+    toast('Download started', 'ok');
+  }
+
+  function syncTestsRestoreAgentUi() {
+    const modeEl = $('#tep-tests-restore-agent-mode');
+    const wrap = $('#tep-tests-restore-agents-wrap');
+    if (!modeEl || !wrap) return;
+    wrap.style.display = modeEl.value === 'strip' ? '' : 'none';
+  }
+
+  async function restoreTestsFromEditor() {
+    const ta = $('#tep-tests-json');
+    if (!ta || !ta.value.trim()) {
+      toast('Load, import, or paste tests JSON in the box first', 'err');
+      return;
+    }
+    const modeEl = $('#tep-tests-restore-agent-mode');
+    const prefixEl = $('#tep-tests-restore-title-prefix');
+    const mode = (modeEl && modeEl.value) || 'keep';
+    const prefix = prefixEl && prefixEl.value ? prefixEl.value : '';
+    let body;
+    try { body = JSON.parse(ta.value); } catch (e) {
+      toast('Invalid JSON: ' + e.message, 'err');
+      return;
+    }
+    const arr = normalizeTestsRestoreRoot(body);
+    if (!arr.length) {
+      toast('Could not find any test objects in JSON', 'err');
+      log('Tests restore: normalizeTestsRestoreRoot returned no tests. Paste an array of test config objects, or a single test object.', 'tep-log-err');
+      return;
+    }
+    const stripAccount = mode === 'strip';
+    let confirmMsg = `Restore ${arr.length} test${arr.length === 1 ? '' : 's'} to ThousandEyes? `;
+    if (prefix) confirmMsg += `Names will be prefixed with "${prefix}". `;
+    confirmMsg += stripAccount
+      ? 'Agent references, labels, and alerts will be cleared per test — you may need to re-select agents. '
+      : 'Agent/label/alert bindings from the JSON are kept (may fail cross-account). ';
+    confirmMsg += 'Continue?';
+    if (!confirm(confirmMsg)) return;
+
+    log(`Tests restore: applying options — mode=${mode}` + (prefix ? `, prefix "${prefix}"` : ''), 'tep-log-info');
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    let okCount = 0;
+    let failCount = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const src = arr[i];
+      // Deep-clone so strip / name bumps don't mutate the caller's JSON
+      // (users often paste, click Restore, then edit and click again).
+      const obj = cloneJsonDeep(src);
+      // Force `aid` to the current account. The source aid — if any —
+      // points at the wrong account when this is a cross-account restore.
+      if (aid) obj.aid = aid;
+      stripTestForRestore(obj, stripAccount);
+      applyTestsRestoreNameAdorner(obj, prefix);
+      const label = obj.testName || obj.name || `test #${i + 1}`;
+      // testApiUrl needs `type` to resolve the write slug. Fall back to
+      // testType (the canonical label) if `type` is missing/renamed.
+      if (!obj.type && obj.testType) obj.type = obj.testType;
+      if (!obj.type) {
+        log(`Tests restore: skipped "${label}" — no type/testType field`, 'tep-log-err');
+        failCount++;
+        continue;
+      }
+      let writeUrl;
+      try {
+        writeUrl = testApiUrl({ type: obj.type, aid }, { forWrite: true });
+      } catch (e) {
+        log(`Tests restore: skipped "${label}" — could not resolve write URL: ${e.message}`, 'tep-log-err');
+        failCount++;
+        continue;
+      }
+      let done = false;
+      for (let bump = 0; bump <= TESTS_RESTORE_NAME_CONFLICT_MAX; bump++) {
+        try {
+          const resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(obj) });
+          const text = await resp.text();
+          if (resp.ok || resp.status === 201) {
+            okCount++;
+            const finalName = obj.testName || obj.name || label;
+            log(`Tests restore OK: "${finalName}" → POST ${writeUrl}` + (bump ? ` (after ${bump} name bump${bump === 1 ? '' : 's'})` : ''), 'tep-log-ok');
+            done = true;
+            break;
+          }
+          if (bump < TESTS_RESTORE_NAME_CONFLICT_MAX && isLikelyDuplicateTestNameError(resp.status, text)) {
+            bumpTestNameField(obj);
+            const nextLabel = obj.testName || obj.name || label;
+            log(`Tests restore: duplicate name (${resp.status}) → retry with "${nextLabel}"`, 'tep-log-info');
+            continue;
+          }
+          log(`Tests restore FAIL "${label}" POST ${writeUrl} → ${resp.status} ${text.slice(0, 280)}`, 'tep-log-err');
+          failCount++;
+          break;
+        } catch (e) {
+          log(`Tests restore FAIL "${label}" POST ${writeUrl} → ${e.message}`, 'tep-log-err');
+          failCount++;
+          break;
+        }
+      }
+      if (!done && !failCount) failCount++; // safety net; loop shouldn't reach this
+    }
+    const summary = `Tests restore: ${okCount} succeeded, ${failCount} failed`;
+    log(summary, failCount ? 'tep-log-err' : 'tep-log-ok');
+    toast(summary, failCount ? 'err' : 'ok');
+    if (okCount > 0) {
+      // Refresh so newly-created tests appear immediately in the list.
+      try { await loadTests(); } catch (_) { /* */ }
+    }
+  }
+
   async function createTests() {
     const nameTemplate = $('#tep-testname').value.trim();
     const targets = $('#tep-targets').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
@@ -7778,6 +8166,70 @@
         manageToggle.setAttribute('aria-expanded', 'false');
       }
     });
+  }
+  // Tests: Backup / Restore accordion wiring. Mirrors the dashboard block
+  // wiring (see #tep-dash-toggle-backup-restore at bottom of file).
+  {
+    const testsBrToggle = $('#tep-tests-toggle-backup-restore');
+    const testsBrExpand = $('#tep-tests-expand-backup-restore');
+    if (testsBrToggle && testsBrExpand) {
+      testsBrToggle.addEventListener('click', () => {
+        const isHidden = testsBrExpand.hasAttribute('hidden');
+        if (isHidden) {
+          testsBrExpand.removeAttribute('hidden');
+          testsBrToggle.setAttribute('aria-expanded', 'true');
+          // Populate the summary line the first time it's opened so the
+          // user sees state (empty vs N tests) without clicking Refresh.
+          try { refreshTestsJsonSummary(); } catch (_) { /* */ }
+        } else {
+          testsBrExpand.setAttribute('hidden', '');
+          testsBrToggle.setAttribute('aria-expanded', 'false');
+        }
+      });
+    }
+    const testsRefreshBtn = $('#tep-tests-refresh');
+    if (testsRefreshBtn) {
+      testsRefreshBtn.addEventListener('click', () => {
+        // Fire-and-forget; refreshTestsEditor manages its own toasts/logs.
+        refreshTestsEditor().catch((e) => log(`Tests backup: ${e.message}`, 'tep-log-err'));
+      });
+    }
+    const testsDownloadBtn = $('#tep-tests-download');
+    if (testsDownloadBtn) testsDownloadBtn.addEventListener('click', downloadTestsBackup);
+    const testsImportBtn = $('#tep-tests-restore-import-file-btn');
+    const testsImportInput = $('#tep-tests-restore-import-file');
+    if (testsImportBtn && testsImportInput) {
+      testsImportBtn.addEventListener('click', () => { try { testsImportInput.click(); } catch (_) { /* */ } });
+      testsImportInput.addEventListener('change', (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const r = new FileReader();
+        r.onload = () => {
+          const ta = $('#tep-tests-json');
+          if (ta) {
+            ta.value = String(r.result || '');
+            refreshTestsJsonSummary();
+            toast(`Imported ${file.name}`, 'ok');
+          }
+          try { testsImportInput.value = ''; } catch (_) { /* */ }
+        };
+        r.onerror = () => {
+          toast('Failed to read file', 'err');
+          try { testsImportInput.value = ''; } catch (_) { /* */ }
+        };
+        r.readAsText(file);
+      });
+    }
+    const testsJsonTa = $('#tep-tests-json');
+    if (testsJsonTa) testsJsonTa.addEventListener('input', refreshTestsJsonSummary);
+    const testsRestoreMode = $('#tep-tests-restore-agent-mode');
+    if (testsRestoreMode) testsRestoreMode.addEventListener('change', syncTestsRestoreAgentUi);
+    const testsRestoreBtn = $('#tep-tests-restore');
+    if (testsRestoreBtn) {
+      testsRestoreBtn.addEventListener('click', () => {
+        restoreTestsFromEditor().catch((e) => log(`Tests restore: ${e.message}`, 'tep-log-err'));
+      });
+    }
   }
   $('#tep-create').addEventListener('click', createTests);
   {
@@ -8975,7 +9427,6 @@
   // ---------------------------------------------------------------------------
   initAuth();
 })();
-
 </script>
 
   <script>
