@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.55</span>
+        TE Optics<span class="install-version" aria-label="Build">2.56</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.55';
+  const TEP_VERSION = '2.56';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1765,7 +1765,30 @@
     .tep-type-page { background: #3b1f5e; color: #c084fc; }
     .tep-type-dns { background: #3b3510; color: #facc15; }
     .tep-type-other { background: #334155; color: #94a3b8; }
-    .tep-test-actions { display: flex; gap: 4px; align-items: center; }
+    .tep-test-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; position: relative; }
+    .tep-test-actions .tep-test-actions-expanded {
+      display: none; gap: 4px; align-items: center; flex-wrap: wrap;
+    }
+    .tep-test-card.is-editing .tep-test-actions-expanded { display: flex; }
+    .tep-test-actions .tep-test-action-text {
+      font-size: 11px; padding: 2px 6px; line-height: 1.3;
+    }
+    .tep-convert-menu {
+      position: fixed; z-index: 2147483646;
+      background: #1e293b; border: 1px solid #475569; border-radius: 8px;
+      padding: 6px; min-width: 168px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+    .tep-convert-menu-hint {
+      font-size: 10px; color: #94a3b8; padding: 4px 8px 6px; line-height: 1.35;
+      border-bottom: 1px solid #334155; margin-bottom: 4px;
+    }
+    .tep-convert-menu-item {
+      display: block; width: 100%; text-align: left;
+      background: transparent; border: none; border-radius: 4px;
+      color: #e2e8f0; font-size: 12px; padding: 6px 8px; cursor: pointer;
+    }
+    .tep-convert-menu-item:hover { background: #334155; color: #fff; }
     .tep-test-actions button {
       background: #334155; border: 1px solid #475569; color: #94a3b8;
       font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
@@ -4064,6 +4087,30 @@
     if (Number.isFinite(n)) set.delete(n);
   }
 
+  /** Canonical vAgentIds for API POST — one integer per selected agent (Set stores string+number duplicates). */
+  function selectionSetToVAgentIds(selectionSet) {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      if (!restoreAgentSelectionSetHas(selectionSet, a.agentId)) continue;
+      const n = Number(a.agentId);
+      const key = Number.isFinite(n) ? String(n) : String(a.agentId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(Number.isFinite(n) ? n : a.agentId);
+    }
+    if (!out.length && selectionSet && selectionSet.size) {
+      for (const raw of selectionSet) {
+        const n = parseInt(raw, 10);
+        if (!Number.isFinite(n) || seen.has(String(n))) continue;
+        seen.add(String(n));
+        out.push(n);
+      }
+    }
+    return out;
+  }
+
   /** Rewrite vAgentIds / agentSet / agentIds under obj (recursive). ids=[] clears; non-empty replaces every matching array. */
   function rewriteAllVAgentLikeArrays(obj, ids, depth) {
     if (depth == null) depth = 0;
@@ -5205,6 +5252,110 @@
     'dns trace': 'dns-trace',
     'DNS Trace': 'dns-trace'
   };
+
+  const CREATE_TYPE_LABELS = {
+    'http-server': 'HTTP Server',
+    'agent-to-server': 'Agent→Server',
+    'page-load': 'Page Load'
+  };
+
+  function resolveCreateSlugFromTest(t) {
+    if (!t) return null;
+    if (isBrowserOrPageTest(t)) return 'page-load';
+    const tt = String(t.testType || '').toLowerCase();
+    const ty = String(t.type || '').toLowerCase();
+    if (tt === 'http' || ty === 'http-server' || ty === 'http') return 'http-server';
+    if (tt === 'a2s' || tt === 'network' || ty === 'network' || ty === 'agent-to-server') return 'agent-to-server';
+    return null;
+  }
+
+  function canConvertTest(t) {
+    return resolveCreateSlugFromTest(t) != null;
+  }
+
+  let convertMenuEl = null;
+  let convertMenuAnchor = null;
+
+  function closeConvertMenu() {
+    if (convertMenuEl) {
+      if (convertMenuEl._tepConvertCleanup) convertMenuEl._tepConvertCleanup();
+      convertMenuEl.remove();
+      convertMenuEl = null;
+      convertMenuAnchor = null;
+    }
+  }
+
+  function openConvertTypeMenu(anchorBtn, t, card) {
+    if (convertMenuEl && convertMenuAnchor === anchorBtn) {
+      closeConvertMenu();
+      return;
+    }
+    closeConvertMenu();
+    const srcSlug = resolveCreateSlugFromTest(t);
+    if (!srcSlug) {
+      toast('This test type cannot be converted.', 'err');
+      return;
+    }
+    const targets = ['http-server', 'agent-to-server', 'page-load'].filter((s) => s !== srcSlug);
+    if (!targets.length) return;
+
+    const actionsWrap = anchorBtn.closest('.tep-test-actions');
+    if (!actionsWrap) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'tep-convert-menu';
+    menu.setAttribute('role', 'menu');
+    menu.style.visibility = 'hidden';
+    const hint = document.createElement('div');
+    hint.className = 'tep-convert-menu-hint';
+    hint.textContent = 'Creates a new test and deletes this one.';
+    menu.appendChild(hint);
+    targets.forEach((slug) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'tep-convert-menu-item';
+      item.setAttribute('role', 'menuitem');
+      item.textContent = CREATE_TYPE_LABELS[slug] || slug;
+      item.addEventListener('mousedown', (e) => e.stopPropagation());
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        closeConvertMenu();
+        void convertTestToType(t, slug, card);
+      });
+      menu.appendChild(item);
+    });
+
+    root.appendChild(menu);
+    convertMenuEl = menu;
+    convertMenuAnchor = anchorBtn;
+
+    requestAnimationFrame(() => {
+      const rect = anchorBtn.getBoundingClientRect();
+      const w = menu.offsetWidth || 168;
+      menu.style.top = `${rect.bottom + 4}px`;
+      menu.style.left = `${Math.max(8, Math.min(rect.right - w, window.innerWidth - w - 8))}px`;
+      menu.style.visibility = 'visible';
+    });
+
+    const onDoc = (e) => {
+      if (menu.contains(e.target) || anchorBtn.contains(e.target)) return;
+      closeConvertMenu();
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeConvertMenu();
+    };
+    const armOutsideClose = () => {
+      document.addEventListener('click', onDoc, true);
+      document.addEventListener('keydown', onKey, true);
+      menu._tepConvertCleanup = () => {
+        document.removeEventListener('click', onDoc, true);
+        document.removeEventListener('keydown', onKey, true);
+      };
+    };
+    setTimeout(armOutsideClose, 100);
+  }
+
   const NO_API_SLUGS = new Set(['api']);
   function isReadOnly(t) {
     return NO_API_SLUGS.has((t.type || '').toLowerCase());
@@ -6209,6 +6360,7 @@
   }
 
   function renderTests() {
+    closeConvertMenu();
     const filtered = getFilteredTests();
     testCountEl.textContent = `Showing ${filtered.length} of ${allTests.length} test(s)`;
 
@@ -6248,9 +6400,14 @@
           <a class="tep-test-card-name tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'}</a>
           <div class="tep-test-actions">
             ${isReadOnly(t) ? '<span style="font-size:10px;color:#64748b;">read-only</span>' : `
-            <button type="button" class="tep-test-action-icon" data-action="edit" title="Edit" aria-label="Edit">
+            <div class="tep-test-actions-expanded">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="clone" title="Create a new test with the same settings (unsaved edits are not included)">Clone</button>
+              ${canConvertTest(t) ? '<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="convert" title="Convert to another test type">Convert</button>' : ''}
+            </div>
+            <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.77 3.77z" />
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
             </svg>
             </button>
             <button type="button" class="tep-btn-danger tep-test-action-icon" data-action="delete" title="Delete" aria-label="Delete">
@@ -6293,6 +6450,14 @@
           }
           dismissLoad();
           toggleEditForm(card, t);
+        } else if (action === 'clone') {
+          e.stopPropagation();
+          e.preventDefault();
+          await cloneTest(t);
+        } else if (action === 'convert') {
+          e.stopPropagation();
+          e.preventDefault();
+          openConvertTypeMenu(btn, t, card);
         } else if (action === 'toggle') {
           await toggleTest(t, card);
         } else if (action === 'delete') {
@@ -6306,12 +6471,21 @@
   }
 
   function toggleEditForm(card, t) {
+    closeConvertMenu();
     const existing = card.querySelector('.tep-edit-form');
     if (existing) {
       existing.remove();
+      card.classList.remove('is-editing');
       updateManageUnitsTotal();
       return;
     }
+    // Only one expanded settings panel at a time
+    testListEl.querySelectorAll('.tep-test-card.is-editing').forEach((c) => {
+      c.classList.remove('is-editing');
+      const f = c.querySelector('.tep-edit-form');
+      if (f) f.remove();
+    });
+    card.classList.add('is-editing');
 
     const target = getTarget(t);
     const interval = getInterval(t);
@@ -6422,7 +6596,6 @@
           return `<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-instant-edit"${_inst ? '' : ' disabled'} title="${tepEscapeHtmlText(_tit)}">Instant</button>`;
         })()}
         <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-cancel-edit">Cancel</button>
-        <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-clone-edit" title="Create a copy of this test (unsaved changes are not included)">Clone</button>
       </div>
     `;
 
@@ -6922,17 +7095,9 @@
     form.querySelector('.tep-cancel-edit').addEventListener('click', () => {
       const u = card.querySelector('.tep-test-units');
       if (u) u.textContent = formatManageTestUnitsLine(t);
+      card.classList.remove('is-editing');
       form.remove();
       updateManageUnitsTotal();
-    });
-    form.querySelector('.tep-clone-edit').addEventListener('click', async () => {
-      const ok = await cloneTest(t);
-      if (ok) {
-        const u = card.querySelector('.tep-test-units');
-        if (u) u.textContent = formatManageTestUnitsLine(t);
-        form.remove();
-        updateManageUnitsTotal();
-      }
     });
     form.querySelector('.tep-save-edit').addEventListener('click', async () => {
       const dismissProcessing = toastProcessing('Saving…');
@@ -6953,6 +7118,7 @@
           toast(`Test "${newName}" saved successfully.`, 'ok');
           Object.assign(t, updated);
           updateManageUnitsTotal();
+          card.classList.remove('is-editing');
           form.remove();
           loadTests();
         } else {
@@ -7041,11 +7207,20 @@
     const newName = prompt('Name for cloned test:', (t.name || '') + ' (copy)');
     if (!newName) return false;
 
-    const cloned = { ...t };
+    try {
+      await fetchTestDetail(t);
+    } catch (e) {
+      log(`Clone: could not load test detail — ${e.message}`, 'tep-log-info');
+    }
+
+    const cloned = cloneJsonDeep(t);
     delete cloned.testId;
     delete cloned.id;
     delete cloned.createTime;
     delete cloned.modifiedTime;
+    delete cloned._agentsLoaded;
+    delete cloned._fetchStatus;
+    delete cloned._fetchError;
     cloned.name = newName;
 
     try {
@@ -7460,18 +7635,30 @@
     // Strip protocol and path — TE expects a plain hostname or IP
     let host = target.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
     let port = opts.port || 443;
-    // If host contains :port, extract it (overrides default/opts only if present in target)
-    const colonIdx = host.lastIndexOf(':');
-    if (colonIdx > 0 && !host.includes('[')) {
-      const maybePort = parseInt(host.substring(colonIdx + 1), 10);
-      if (maybePort > 0 && maybePort < 65536) { port = maybePort; host = host.substring(0, colonIdx); }
+    if (proto !== 'ICMP') {
+      const colonIdx = host.lastIndexOf(':');
+      if (colonIdx > 0 && !host.includes('[')) {
+        const maybePort = parseInt(host.substring(colonIdx + 1), 10);
+        if (maybePort > 0 && maybePort < 65536) { port = maybePort; host = host.substring(0, colonIdx); }
+      }
     }
-    return {
+    const server = { serverName: host };
+    if (proto === 'ICMP') {
+      // Stored ICMP tests use port:-1 + target "host ICMP" (+ readableTarget /
+      // targetServer mirrors). Create must not send serverId; port omitted alone
+      // 500s, port:-1 without target 500s, real port → 400.
+      const icmpTarget = `${host} ICMP`;
+      server.port = -1;
+      server.target = icmpTarget;
+    } else {
+      server.port = port;
+    }
+    const body = {
       ...baseBody(name, vAgentIds, aid),
       freqA2s: interval,
       interval: interval,
       freq: interval,
-      server: { serverName: host, port: port },
+      server,
       protocol: proto,
       dscp: 0,
       testType: 'A2s',
@@ -7482,6 +7669,12 @@
       pathtraceInSession: proto === 'TCP' ? inSession : 0,
       probeMode: proto === 'TCP' ? probeMode : 'AUTO'
     };
+    if (proto === 'ICMP') {
+      const icmpTarget = `${host} ICMP`;
+      body.readableTarget = icmpTarget;
+      body.targetServer = { serverName: host, port: -1, target: icmpTarget };
+    }
+    return body;
   }
 
   function buildPageLoadBody(name, target, pageInterval, vAgentIds, aid, opts) {
@@ -7538,6 +7731,174 @@
     'page-load':       { apiPath: 'page-load',       buildBody: buildPageLoadBody }
   };
 
+  function targetForCreateSlug(slug, rawTarget) {
+    let t = String(rawTarget || '').trim();
+    if (!t) return t;
+    if (slug === 'agent-to-server') {
+      return t.replace(/^https?:\/\//i, '').replace(/[\/\?#].*$/, '').trim();
+    }
+    if (slug === 'http-server' || slug === 'page-load') {
+      if (!/^https?:\/\//i.test(t)) return `https://${t}`;
+      return t;
+    }
+    return t;
+  }
+
+  function protoOptsFromTestDetail(t) {
+    const isIcmp = isNetworkTestIcmp(t);
+    const pv = isIcmp ? 'ICMP' : (t.probeMode === 'SYN' ? 'TCP-SYN' : 'TCP-SACK');
+    let port = 443;
+    if (!isIcmp) {
+      const rawPort = (typeof t.server === 'object' && t.server && t.server.port != null) ? t.server.port : t.port;
+      const pNum = parseInt(rawPort, 10);
+      if (Number.isFinite(pNum) && pNum >= 1 && pNum <= 65535) port = pNum;
+    }
+    return {
+      protocol: pv.startsWith('TCP') ? 'TCP' : 'ICMP',
+      port: isIcmp ? undefined : port,
+      probeMode: pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO'),
+      pathtraceInSession: t.pathtraceInSession != null ? t.pathtraceInSession : 1
+    };
+  }
+
+  function applySharedTestSettingsFromDetail(body, detail) {
+    if (!body || !detail) return body;
+    if (detail.description != null) body.description = detail.description;
+    if (detail.flagEnabled != null) body.flagEnabled = detail.flagEnabled;
+    if (detail.flagAlertsEnabled != null) body.flagAlertsEnabled = detail.flagAlertsEnabled;
+    if (Array.isArray(detail.alerts)) body.alerts = detail.alerts;
+    if (Array.isArray(detail.alertSuppressionWindowIds)) {
+      body.alertSuppressionWindowIds = detail.alertSuppressionWindowIds;
+    }
+    if (detail.labelsIds !== undefined) body.labelsIds = detail.labelsIds;
+    if (Array.isArray(detail.tagIds)) body.tagIds = detail.tagIds;
+    return body;
+  }
+
+  function bumpTestNameInBody(body) {
+    if (!body || typeof body !== 'object') return;
+    const cur = body.name || body.testName || '';
+    const m = String(cur).match(/^(.*?)(?:\s*\((\d+)\))?$/);
+    const base = (m && m[1] != null ? m[1] : cur).trim() || 'Test';
+    const n = m && m[2] != null ? (parseInt(m[2], 10) + 1) : 2;
+    const next = `${base} (${n})`;
+    body.name = next;
+    if (body.testName != null) body.testName = next;
+  }
+
+  function buildCreateBodyFromTestDetail(detail, targetSlug) {
+    const typeInfo = TE_TYPE_MAP[targetSlug];
+    if (!typeInfo || !detail) return null;
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const vAgentIds = getTestAgentIds(detail).map((id) => parseInt(id, 10) || id);
+    const interval = getInterval(detail) || 120;
+    const target = targetForCreateSlug(targetSlug, getTarget(detail));
+    const protoOpts = protoOptsFromTestDetail(detail);
+    let body;
+    if (targetSlug === 'page-load') {
+      const subInterval = getPageLoadSubintervalSec(detail) || interval;
+      body = typeInfo.buildBody(detail.name || 'Converted test', target, interval, vAgentIds, aid, {
+        ...protoOpts, subInterval, httpInterval: subInterval
+      });
+    } else {
+      body = typeInfo.buildBody(detail.name || 'Converted test', target, interval, vAgentIds, aid, protoOpts);
+    }
+    return applySharedTestSettingsFromDetail(body, detail);
+  }
+
+  async function convertTestToType(t, targetSlug, card) {
+    const srcSlug = resolveCreateSlugFromTest(t);
+    if (!srcSlug) {
+      toast('This test type cannot be converted.', 'err');
+      return;
+    }
+    if (srcSlug === targetSlug) return;
+    const srcLabel = CREATE_TYPE_LABELS[srcSlug] || srcSlug;
+    const targetLabel = CREATE_TYPE_LABELS[targetSlug] || targetSlug;
+    const msg = `Convert "${t.name}" from ${srcLabel} to ${targetLabel}?\n\nThis will CREATE a new ${targetLabel} test using this test's settings, then DELETE the original test. This cannot be undone.\n\nContinue?`;
+    if (!confirm(msg)) return;
+
+    try {
+      await fetchTestDetail(t);
+    } catch (e) {
+      log(`Convert: could not load test detail — ${e.message}`, 'tep-log-err');
+      toast('Could not load full test settings', 'err');
+      return;
+    }
+
+    const typeInfo = TE_TYPE_MAP[targetSlug];
+    if (!typeInfo) {
+      toast('Unknown target test type', 'err');
+      return;
+    }
+
+    const vAgentIds = getTestAgentIds(t);
+    if (!vAgentIds.length) {
+      toast('This test has no agents — assign agents before converting.', 'err');
+      return;
+    }
+
+    let body = buildCreateBodyFromTestDetail(t, targetSlug);
+    if (!body) {
+      toast('Could not build converted test payload', 'err');
+      return;
+    }
+
+    const dismiss = toastProcessing(`Converting to ${targetLabel}…`);
+    log(`Convert "${t.name}" → ${targetLabel}`, 'tep-log-info');
+
+    try {
+      let created = false;
+      for (let bump = 0; bump <= 24; bump++) {
+        const resp = await ajax(`/ajax/tests/${typeInfo.apiPath}`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        const text = await resp.text().catch(() => '');
+        if (resp.ok || resp.status === 201) {
+          created = true;
+          log(`  ✓ Created "${body.name}" as ${targetLabel}`, 'tep-log-ok');
+          break;
+        }
+        if (bump < 24 && isLikelyDuplicateTestNameError(resp.status, text)) {
+          bumpTestNameInBody(body);
+          log(`  Name conflict — retrying as "${body.name}"`, 'tep-log-info');
+          continue;
+        }
+        dismiss();
+        log(`  ✗ Create failed ${resp.status}: ${text.substring(0, 300)}`, 'tep-log-err');
+        toast(`Convert failed: ${resp.status}`, 'err');
+        return;
+      }
+      if (!created) {
+        dismiss();
+        return;
+      }
+
+      const delResp = await ajax(testApiUrl(t), { method: 'DELETE' });
+      dismiss();
+      if (delResp.ok) {
+        log(`  ✓ Deleted original "${t.name}"`, 'tep-log-ok');
+        toast(`Converted to ${targetLabel}. Original test deleted.`, 'ok');
+        if (card) {
+          card.classList.remove('is-editing');
+          const f = card.querySelector('.tep-edit-form');
+          if (f) f.remove();
+        }
+        loadTests();
+      } else {
+        const txt = await delResp.text().catch(() => '');
+        log(`  WARN: new test created but delete failed ${delResp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
+        toast(`New ${targetLabel} test created, but could not delete original (${delResp.status})`, 'err');
+        loadTests();
+      }
+    } catch (e) {
+      dismiss();
+      log(`  ✗ Convert error: ${e.message}`, 'tep-log-err');
+      toast('Convert failed', 'err');
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Create tests via TE internal AJAX API
   // ---------------------------------------------------------------------------
@@ -7591,7 +7952,7 @@
     const pv = $('#tep-a2s-protocol').value;
     const protoOpts = {
       protocol: pv && pv.startsWith('TCP') ? 'TCP' : 'ICMP',
-      port: parseInt($('#tep-a2s-port').value, 10) || 443,
+      port: pv && pv.startsWith('TCP') ? (parseInt($('#tep-a2s-port').value, 10) || 443) : undefined,
       probeMode: pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO'),
       pathtraceInSession: $('#tep-a2s-insession').checked ? 1 : 0,
       subInterval,
@@ -7599,7 +7960,7 @@
     };
 
     const aid = (teInitData && teInitData._currentAid) ? teInitData._currentAid : '';
-    const vAgentIds = [...selectedAgentIds];
+    const vAgentIds = selectionSetToVAgentIds(selectedAgentIds);
     const pseudo = typeInfo.buildBody('__units__', firstTarget, interval, vAgentIds, aid, protoOpts);
     const raw = computeThousandEyesAccountUnitsRaw(pseudo, {
       agentIdSet: selectedAgentIds,
@@ -7953,7 +8314,7 @@
     const subInterval = (currentType === 'page-load' && subIntervalEl)
       ? (parseInt(subIntervalEl.value, 10) || pageOrTestInterval)
       : pageOrTestInterval;
-    const vAgentIds = [...selectedAgentIds];
+    const vAgentIds = selectionSetToVAgentIds(selectedAgentIds);
     const aid = teInitData._currentAid || '';
 
     if (!targets.length) { log('No targets specified.', 'tep-log-err'); return; }
@@ -7979,7 +8340,7 @@
       const pv = $('#tep-a2s-protocol').value;
       const protoOpts = {
         protocol: pv.startsWith('TCP') ? 'TCP' : 'ICMP',
-        port: parseInt($('#tep-a2s-port').value, 10) || 443,
+        port: pv.startsWith('TCP') ? (parseInt($('#tep-a2s-port').value, 10) || 443) : undefined,
         probeMode: pv === 'TCP-SYN' ? 'SYN' : (pv === 'TCP-SACK' ? 'SACK' : 'AUTO'),
         pathtraceInSession: $('#tep-a2s-insession').checked ? 1 : 0
       };
@@ -8011,7 +8372,7 @@
       }
 
       log(`Creating ${currentType} test: "${testName}"…`, 'tep-log-info');
-      log(`DEBUG POST /ajax/tests/${typeInfo.apiPath} body: ${JSON.stringify({server: body.server, serverName: body.serverName, port: body.port, protocol: body.protocol, testType: body.testType, freqA2s: body.freqA2s, name: body.name})}`, 'tep-log-info');
+      log(`DEBUG POST /ajax/tests/${typeInfo.apiPath} agents=${vAgentIds.length} body: ${JSON.stringify(body)}`, 'tep-log-info');
 
       try {
         const resp = await ajax(`/ajax/tests/${typeInfo.apiPath}`, {
