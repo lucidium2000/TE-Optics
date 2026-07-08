@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.56';
+  const TEP_VERSION = '2.57';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -54,8 +54,19 @@
     }
   }
 
+  function isEndpointToolsPage() {
+    try {
+      const p = window.location.pathname || '';
+      return p === '/endpoint' || p.startsWith('/endpoint/');
+    } catch (_) {
+      return false;
+    }
+  }
+
   /** On /dashboard, true when the user opened the standard tests (manage) view from dashboard tools. */
   let tepFromDashTests = false;
+  /** On /endpoint, true when the user opened the standard tests (manage) view from endpoint tools. */
+  let tepFromEndpointTests = false;
 
   const TEP_DASH_CAPTURE = { entries: [], max: 24 };
   /** @type {{ path: string, status: number, ct: string, snippet: string, t: number }[]} */
@@ -580,6 +591,391 @@
   installDashboardNetworkCapture();
 
   // ---------------------------------------------------------------------------
+  // Endpoint route (/endpoint) — network sniff for API discovery
+  // ---------------------------------------------------------------------------
+  const TEP_EP_AJAX_SNIFF = [];
+  const TEP_EP_SNIFF_BODIES = [];
+  const TEP_EP_NONJSON_200 = [];
+  const TEP_EP_HOOK_ALL = [];
+  const TEP_EP_REQUEST_SNIFF = [];
+  const TEP_EP_AJAX_SNIFF_MAX = 120;
+  const TEP_EP_SNIFF_BODY_MAX = 24;
+  const TEP_EP_NONJSON_MAX = 40;
+  const TEP_EP_HOOK_ALL_MAX = 160;
+  const TEP_EP_REQUEST_SNIFF_MAX = 48;
+  const TEP_EP_SNIFF_MIN_SCORE = 10;
+
+  function epConsole(level, msg, detail) {
+    const fn = (console[level] || console.log).bind(console);
+    try {
+      if (detail !== undefined) fn('[TE Optics endpoint]', msg, detail);
+      else fn('[TE Optics endpoint]', msg);
+    } catch (_) { /* */ }
+  }
+
+  function epPanelLog(msg, cls) {
+    try {
+      const el = document.getElementById('tep-log');
+      if (!el) return;
+      const span = document.createElement('span');
+      span.className = cls || 'tep-log-info';
+      span.textContent = msg + '\n';
+      el.appendChild(span);
+      el.scrollTop = el.scrollHeight;
+    } catch (_) { /* */ }
+  }
+
+  function isSniffableEndpointNetworkPath(pathKey) {
+    const p = (pathKey || '').toLowerCase();
+    if (!p) return false;
+    if (p.includes('/namespace/endpoint-api')) return true;
+    if (p.includes('/namespace/endpoint/')) return true;
+    if (p.includes('/namespace/product-led-growth-api')) return true;
+    if (p.includes('/namespace/cdev-api')) return true;
+    if (p.includes('test-config')) return true;
+    if (p.includes('/ajax/') && p.includes('endpoint')) return true;
+    if (p.includes('/ajax/') && p.includes('synthetic')) return true;
+    return false;
+  }
+
+  function pushEpAjaxSniff(row) {
+    TEP_EP_AJAX_SNIFF.unshift(row);
+    if (TEP_EP_AJAX_SNIFF.length > TEP_EP_AJAX_SNIFF_MAX) {
+      TEP_EP_AJAX_SNIFF.length = TEP_EP_AJAX_SNIFF_MAX;
+    }
+  }
+
+  function pushEpHookAll(row) {
+    TEP_EP_HOOK_ALL.unshift(row);
+    if (TEP_EP_HOOK_ALL.length > TEP_EP_HOOK_ALL_MAX) {
+      TEP_EP_HOOK_ALL.length = TEP_EP_HOOK_ALL_MAX;
+    }
+  }
+
+  function pushEpRequestSniff(row) {
+    TEP_EP_REQUEST_SNIFF.unshift(row);
+    if (TEP_EP_REQUEST_SNIFF.length > TEP_EP_REQUEST_SNIFF_MAX) {
+      TEP_EP_REQUEST_SNIFF.length = TEP_EP_REQUEST_SNIFF_MAX;
+    }
+  }
+
+  function recordEpNonJson200(path, status, ct, snippet, via, method) {
+    TEP_EP_NONJSON_200.unshift({
+      path,
+      status,
+      ct: ct || '',
+      snippet: (snippet || '').slice(0, 500),
+      via: via || '',
+      method: method || '',
+      t: Date.now()
+    });
+    if (TEP_EP_NONJSON_200.length > TEP_EP_NONJSON_MAX) {
+      TEP_EP_NONJSON_200.length = TEP_EP_NONJSON_MAX;
+    }
+  }
+
+  function scoreEndpointTestPayload(obj, depth) {
+    if (depth == null) depth = 0;
+    if (depth > 3) return -1;
+    if (!obj || typeof obj !== 'object') return -1;
+    if (Array.isArray(obj)) {
+      if (!obj.length) return -1;
+      let best = 4;
+      for (const el of obj.slice(0, 8)) {
+        if (el && typeof el === 'object') {
+          const s = scoreEndpointTestPayload(el, depth + 1);
+          if (s > best) best = s;
+        }
+      }
+      return best;
+    }
+    let s = 0;
+    if (obj.testType === 'Http' || obj.testType === 'Network') s += 40;
+    if (obj.testCategory === 'SCHEDULED_TEST' || obj.testCategory === 'DYNAMIC_APP_TEST') s += 25;
+    if (obj.endpointTests && typeof obj.endpointTests === 'object') s += 50;
+    if (obj.machineConfig && typeof obj.machineConfig === 'object') s += 20;
+    if (obj.networkConfig && typeof obj.networkConfig === 'object') s += 15;
+    if (obj.httpConfig && typeof obj.httpConfig === 'object') s += 15;
+    if (obj.testConfig && typeof obj.testConfig === 'object') s += 30;
+    if (obj.testId != null || obj.id != null) s += 12;
+    if (typeof obj.name === 'string' && obj.name.length) s += 6;
+    if (typeof obj.testName === 'string' && obj.testName.length) s += 6;
+    if (Array.isArray(obj.tests) && obj.tests.length) s += 20 + Math.min(obj.tests.length, 10);
+    if (Array.isArray(obj.testConfigs) && obj.testConfigs.length) s += 25;
+    if (Array.isArray(obj.items) && obj.items.length) s += 12;
+    if (Array.isArray(obj.content) && obj.content.length) s += 10;
+    if (obj.tcpProbeMode != null || (obj.networkConfig && obj.networkConfig.tcpProbeMode != null)) s += 8;
+    for (const wrap of ['data', 'payload', 'result', 'response']) {
+      const inner = obj[wrap];
+      if (inner && typeof inner === 'object') {
+        const innerScore = scoreEndpointTestPayload(inner, depth + 1);
+        if (innerScore > s) s = innerScore;
+      }
+    }
+    return s;
+  }
+
+  function maybeRecordEpSniffBody(path, data, via, method, status) {
+    const score = scoreEndpointTestPayload(data);
+    if (score < TEP_EP_SNIFF_MIN_SCORE) return;
+    TEP_EP_SNIFF_BODIES.unshift({
+      path,
+      data,
+      score,
+      via,
+      method: method || '',
+      status: status || 0,
+      t: Date.now()
+    });
+    if (TEP_EP_SNIFF_BODIES.length > TEP_EP_SNIFF_BODY_MAX) {
+      TEP_EP_SNIFF_BODIES.length = TEP_EP_SNIFF_BODY_MAX;
+    }
+    epConsole('info', 'stored endpoint-like JSON', { path, score, via, method, keys: topLevelKeysLabel(data) });
+    epPanelLog(`Endpoint sniff: test-like JSON score ${score} — ${method || '?'} ${status || '?'} ${path} [${topLevelKeysLabel(data)}]`, 'tep-log-ok');
+  }
+
+  function logEndpointHookNonOk(via, pathKey, status, ct, bodySlice, method) {
+    const detail = {
+      path: pathKey,
+      status,
+      method: method || '',
+      ct: ct || '',
+      body: (bodySlice || '').slice(0, 400)
+    };
+    pushEpHookAll({ ...detail, via, t: Date.now() });
+    if (status === 404) {
+      detail.why = 'No resource at this URL for your session — note method + path for Manage/Backup wiring.';
+      epConsole('info', `${via} → 404`, detail);
+    } else if (status === 400 || status === 422) {
+      detail.why = 'Validation error — body often explains required fields (probe mode, machineConfig, etc.).';
+      epConsole('warn', `${via} → ${status}`, detail);
+    } else {
+      epConsole('warn', `${via} non-OK`, detail);
+    }
+    epPanelLog(`Endpoint sniff: ${method || '?'} ${status} ${pathKey}`, status >= 400 ? 'tep-log-err' : 'tep-log-info');
+  }
+
+  function recordEndpointSniffResponse(pathKey, status, ct, bodyText, via, method) {
+    const sniffOn = window.__TEP_OPTICS_EP_SNIFF_AJAX__ !== false;
+    if (!sniffOn || !isSniffableEndpointNetworkPath(pathKey)) return;
+    const data = tryParseJsonText(bodyText);
+    if (status >= 200 && status < 300 && data != null) {
+      pushEpAjaxSniff({
+        path: pathKey,
+        status,
+        method: method || '',
+        keys: topLevelKeysLabel(data),
+        score: scoreEndpointTestPayload(data),
+        t: Date.now()
+      });
+      maybeRecordEpSniffBody(pathKey, data, via, method, status);
+      epConsole('info', 'JSON', { path: pathKey, status, method, keys: topLevelKeysLabel(data) });
+      epPanelLog(`Endpoint sniff: ${method || '?'} ${status} ${pathKey} [${topLevelKeysLabel(data)}]`, 'tep-log-info');
+    } else if (status >= 200 && status < 300) {
+      recordEpNonJson200(pathKey, status, ct, bodyText, via, method);
+      epConsole('info', 'non-JSON 200', { path: pathKey, method, ct, preview: (bodyText || '').slice(0, 120) });
+    } else {
+      logEndpointHookNonOk(via, pathKey, status, ct, bodyText, method);
+    }
+    syncEpSniffMeta();
+  }
+
+  function installEndpointNetworkCapture() {
+    if (!isEndpointToolsPage()) return;
+    if (window.__TEP_OPTICS_EP_CAPTURE__) return;
+    window.__TEP_OPTICS_EP_CAPTURE__ = true;
+
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function (...args) {
+      let method = 'GET';
+      let reqUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
+      if (args[0] instanceof Request) {
+        reqUrl = args[0].url;
+        method = (args[0].method || 'GET').toUpperCase();
+      } else if (args[1] && args[1].method) {
+        method = String(args[1].method).toUpperCase();
+      }
+      const res = await origFetch(...args);
+      try {
+        const pathKey = pathOnlyFromUrl(reqUrl || '');
+        if (isSniffableEndpointNetworkPath(pathKey)) {
+          const clone = res.clone();
+          const ct = (clone.headers && clone.headers.get && clone.headers.get('content-type')) || '';
+          const bodyText = await clone.text();
+          recordEndpointSniffResponse(pathKey, res.status, ct, bodyText, 'fetch', method);
+        }
+      } catch (e) {
+        epConsole('warn', 'fetch hook parse error', e && e.message ? e.message : String(e));
+      }
+      return res;
+    };
+
+    const XHROpen = XMLHttpRequest.prototype.open;
+    const XHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, url, ...rest) {
+      try {
+        this.__tep_req_url = typeof url === 'string' ? url : String(url);
+        this.__tep_req_method = (m || 'GET').toUpperCase();
+      } catch (_) {
+        this.__tep_req_url = '';
+        this.__tep_req_method = 'GET';
+      }
+      return XHROpen.call(this, m, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body && typeof body === 'string' && this.__tep_req_method && /^(POST|PUT|PATCH)$/i.test(this.__tep_req_method)) {
+        try {
+          const pathKey = pathOnlyFromUrl(this.__tep_req_url || '');
+          if (isSniffableEndpointNetworkPath(pathKey)) {
+            pushEpRequestSniff({
+              path: pathKey,
+              method: this.__tep_req_method,
+              body: body.slice(0, 12000),
+              t: Date.now()
+            });
+            epConsole('info', 'XHR request body', {
+              path: pathKey,
+              method: this.__tep_req_method,
+              preview: body.slice(0, 280)
+            });
+          }
+        } catch (_) { /* */ }
+      }
+      this.addEventListener('load', function () {
+        try {
+          const reqUrl = this.__tep_req_url || '';
+          const pathKey = pathOnlyFromUrl(reqUrl);
+          const method = this.__tep_req_method || 'GET';
+          const ct = this.getResponseHeader('content-type') || '';
+          const st = this.status;
+          if (!isSniffableEndpointNetworkPath(pathKey)) return;
+          recordEndpointSniffResponse(pathKey, st, ct, String(this.responseText || ''), 'xhr', method);
+        } catch (e) {
+          epConsole('warn', 'XHR hook error', e && e.message ? e.message : String(e));
+        }
+      });
+      return XHRSend.call(this, body);
+    };
+
+    epConsole('info', 'endpoint network hooks active — use Endpoint → Diagnostics; filter console for "[TE Optics endpoint]"', {
+      sniffOn: window.__TEP_OPTICS_EP_SNIFF_AJAX__ !== false
+    });
+  }
+
+  function buildEndpointDebugReport() {
+    const lines = [];
+    lines.push('=== TE Optics endpoint API diagnostics ===');
+    lines.push('generatedAt: ' + new Date().toISOString());
+    lines.push('href: ' + (typeof location !== 'undefined' ? location.href : ''));
+    lines.push('pathname: ' + (typeof location !== 'undefined' ? location.pathname : ''));
+    lines.push('search: ' + (typeof location !== 'undefined' ? location.search : ''));
+    lines.push('endpointSniffOn: ' + String(window.__TEP_OPTICS_EP_SNIFF_AJAX__ !== false));
+    lines.push('csrfHeader: ' + (csrfToken ? csrfToken.headerName + ' set' : '(none)'));
+    lines.push('');
+    lines.push('--- Captured request bodies (POST/PUT/PATCH on sniff paths) ---');
+    for (const r of TEP_EP_REQUEST_SNIFF) {
+      lines.push(JSON.stringify({
+        path: r.path,
+        method: r.method,
+        bodyPreview: (r.body || '').slice(0, 2000),
+        t: r.t
+      }));
+    }
+    lines.push('');
+    lines.push('--- Sniffed JSON (endpoint / product-led-growth / test-config paths) ---');
+    for (const s of TEP_EP_AJAX_SNIFF) {
+      lines.push(JSON.stringify(s));
+    }
+    lines.push('');
+    lines.push('--- HTTP 200 non-JSON on sniff paths ---');
+    for (const n of TEP_EP_NONJSON_200) {
+      lines.push(JSON.stringify(n));
+    }
+    lines.push('');
+    lines.push('--- Non-OK or notable hook events ---');
+    for (const h of TEP_EP_HOOK_ALL) {
+      lines.push(JSON.stringify(h));
+    }
+    lines.push('');
+    lines.push('--- Bodies scored as endpoint-test-like (score>=' + TEP_EP_SNIFF_MIN_SCORE + ', JSON not included) ---');
+    for (const b of TEP_EP_SNIFF_BODIES) {
+      lines.push(JSON.stringify({
+        path: b.path,
+        score: b.score,
+        via: b.via,
+        method: b.method,
+        status: b.status,
+        keys: topLevelKeysLabel(b.data),
+        t: b.t
+      }));
+    }
+    lines.push('');
+    lines.push('--- Resource timing: recent endpoint-ish same-origin URLs ---');
+    try {
+      const entries = performance.getEntriesByType('resource');
+      const hits = [];
+      for (const e of entries) {
+        if (!e.name || typeof e.name !== 'string') continue;
+        const low = e.name.toLowerCase();
+        if (!low.includes('endpoint') && !low.includes('product-led-growth') && !low.includes('test-config') && !low.includes('cdev-api')) continue;
+        try {
+          const u = new URL(e.name, window.location.origin);
+          hits.push(u.pathname + u.search);
+        } catch (_) {
+          hits.push(e.name);
+        }
+      }
+      hits.slice(-40).forEach((p) => lines.push(p));
+    } catch (_) {
+      lines.push('(performance API unavailable)');
+    }
+    lines.push('');
+    lines.push('Known APIs:');
+    lines.push('  POST /namespace/endpoint-api/test-configs-service/v1/test-configs/search');
+    lines.push('  POST /namespace/endpoint-api/test-configs-service/v1/test-configs/bulk-save');
+    lines.push('  POST /namespace/endpoint-api/test-configs-service/v1/test-configs/bulk-delete');
+    lines.push('  POST /namespace/product-led-growth-api/ajax/tests/templates/custom/deploy?module=ENDPOINT');
+    return lines.join('\n');
+  }
+
+  function syncEpSniffMeta() {
+    const meta = document.getElementById('tep-ep-sniff-meta');
+    if (!meta) return;
+    const n = TEP_EP_AJAX_SNIFF.length;
+    const b = TEP_EP_SNIFF_BODIES.length;
+    if (!n && !b) {
+      meta.textContent = 'Sniff history empty — interact with the Endpoint UI to capture URLs.';
+      return;
+    }
+    let line = `${n} JSON response(s) recorded`;
+    if (b) line += `, ${b} test-like body/bodies scored`;
+    const top = TEP_EP_AJAX_SNIFF[0];
+    if (top) line += ` — latest: ${top.method || 'GET'} ${top.status} ${top.path}`;
+    meta.textContent = line;
+  }
+
+  function clearEpSniffHistory() {
+    TEP_EP_AJAX_SNIFF.length = 0;
+    TEP_EP_SNIFF_BODIES.length = 0;
+    TEP_EP_NONJSON_200.length = 0;
+    TEP_EP_HOOK_ALL.length = 0;
+    TEP_EP_REQUEST_SNIFF.length = 0;
+    syncEpSniffMeta();
+    try {
+      const el = document.getElementById('tep-log');
+      if (el) {
+        const span = document.createElement('span');
+        span.className = 'tep-log-info';
+        span.textContent = 'Endpoint sniff history cleared.\n';
+        el.appendChild(span);
+        el.scrollTop = el.scrollHeight;
+      }
+    } catch (_) { /* */ }
+  }
+
+  installEndpointNetworkCapture();
+
+  // ---------------------------------------------------------------------------
   // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
   // ---------------------------------------------------------------------------
   let csrfToken = null;
@@ -599,8 +995,7 @@
   /** Latest rows from “Dashboard cleanup” list fetch ({ id, title, modifiedMs, isSharedWithCurrentAccount, isBuiltIn }). */
   let dashCleanupCatalog = [];
   let dashCleanupListEverLoaded = false;
-  /** When true, higher `modifiedMs` appears first; when false, oldest first. */
-  let dashCleanupSortNewestFirst = true;
+  let selectedDashCleanupIds = new Set();
   /** When false (default), shared-with-account and built-in dashboards are omitted from the list. */
   let dashCleanupShowShared = false;
 
@@ -1140,40 +1535,37 @@
     .tep-dash-restore-agents-wrap {
       margin-top: 10px; padding: 10px; background: #0f172a; border-radius: 8px; border: 1px solid #334155;
     }
-    .tep-dash-cleanup {
-      margin-top: 22px;
-      padding-top: 20px;
-      border-top: 2px solid #475569;
+    .tep-br-pick { margin-top: 12px; }
+    .tep-br-pick-head {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px;
     }
-    .tep-dash-cleanup-meta { font-size: 11px; color: #94a3b8; margin: 0 0 8px; line-height: 1.45; }
-    .tep-dash-cleanup-toolbar { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; margin-top: 8px; overflow-x: auto; padding-bottom: 2px; }
-    .tep-dash-cleanup-actions {
-      display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px;
+    .tep-br-pick-head .tep-label { margin: 0; }
+    .tep-br-pick-count { font-size: 11px; color: #64748b; font-weight: 500; white-space: nowrap; }
+    .tep-br-pick-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+    .tep-br-pick-list {
+      max-height: 168px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px;
+      background: #0f172a; padding: 6px 8px;
     }
-    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn {
-      height: 32px; padding: 0 10px; margin: 0;
-      font-size: 11px; font-weight: 600; line-height: 1;
-      border-radius: 6px; border: 1px solid #475569;
-      background: #1e293b; color: #e2e8f0;
-      cursor: pointer; white-space: nowrap;
-      transition: background .12s, border-color .12s, color .12s;
+    .tep-br-pick-row {
+      display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 11px; color: #e2e8f0;
+      cursor: pointer; user-select: none;
     }
-    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn:hover:not(:disabled) {
-      background: #334155; border-color: #64748b;
+    .tep-br-pick-row input { accent-color: #3b82f6; flex-shrink: 0; cursor: pointer; }
+    .tep-br-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-br-pick-meta { flex-shrink: 0; font-size: 10px; color: #64748b; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-test-card.tep-test-card--dynamic {
+      border-color: #5b21b6;
+      box-shadow: inset 3px 0 0 0 #a78bfa;
     }
-    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn--danger {
-      background: #450a0a; border-color: #991b1b; color: #fecaca;
+    .tep-test-card.tep-test-card--shared {
+      border-color: #854d0e;
+      background: #1a1f2e;
+      box-shadow: inset 3px 0 0 0 #facc15;
     }
-    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn--danger:hover:not(:disabled) {
-      background: #7f1d1d; border-color: #b91c1c; color: #fef2f2;
-    }
-    .tep-dash-cleanup-toolbar .tep-dash-toolbar-btn--toggle.tep-dash-toolbar-btn--on {
-      background: #422006; border-color: #ca8a04; color: #facc15;
-    }
-    .tep-dash-cleanup-search {
-      flex: 1 1 0; min-width: 100px; max-width: 100%;
-      height: 32px; font-size: 12px; padding: 4px 10px;
+    .tep-test-card.tep-test-card--shared .tep-test-card-name { color: #facc15; }
+    .tep-dash-type-dot {
+      width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+      background: #60a5fa;
     }
     .tep-link-btn {
       background: none;
@@ -1188,33 +1580,6 @@
     }
     .tep-link-btn:hover { color: #bfdbfe; }
     .tep-link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .tep-dash-cleanup-list {
-      max-height: 480px; overflow-y: auto; margin-top: 8px; border: 1px solid #334155; border-radius: 8px;
-      background: #0f172a;
-    }
-    .tep-dash-cleanup-row { padding: 8px 10px; border-bottom: 1px solid #1e293b; font-size: 12px; }
-    .tep-dash-cleanup-row:last-child { border-bottom: none; }
-    .tep-dash-cleanup-row--shared {
-      background: rgba(250, 204, 21, 0.12);
-      box-shadow: inset 3px 0 0 0 #facc15;
-    }
-    .tep-dash-cleanup-row--shared .tep-dash-cleanup-name { color: #facc15; }
-    .tep-dash-cleanup-row--shared .tep-dash-cleanup-id { color: #a3a3a3; }
-    .tep-dash-cleanup-row label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; width: 100%; }
-    .tep-dash-cleanup-row .tep-dash-cleanup-cb { margin-top: 2px; flex-shrink: 0; accent-color: #3b82f6; }
-    .tep-dash-cleanup-row .tep-dash-cleanup-cb:disabled { cursor: not-allowed; opacity: 0.55; }
-    .tep-dash-cleanup-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-    .tep-dash-cleanup-name { font-weight: 600; color: #e2e8f0; word-break: break-word; }
-    .tep-dash-cleanup-id { font-size: 10px; color: #64748b; word-break: break-all; }
-    .tep-dash-cleanup-row-actions { display: inline-flex; gap: 6px; align-items: center; margin-left: 6px; }
-    .tep-dash-cleanup-row-actions .tep-btn {
-      font-size: 10px; padding: 3px 6px; border-radius: 6px; line-height: 1.1;
-    }
-    .tep-dash-cleanup-row-actions .tep-btn svg { display: block; }
-    .tep-dash-page-pointer {
-      display: inline-flex; align-items: center; flex-shrink: 0; color: #38bdf8; font-size: 15px; font-weight: 700;
-      line-height: 1; user-select: none; margin: 0 6px 0 0;
-    }
     .tep-dash-back-banner { margin-bottom: 10px; }
     .tep-actions { display: flex; gap: 8px; margin-top: 16px; }
 
@@ -1301,6 +1666,9 @@
     }
     .tep-tab:hover { background: #334155; color: #e2e8f0; }
     .tep-tab.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+    .tep-tab.tep-tab-restore.active { background: #b45309; border-color: #b45309; color: #fff; }
+    .tep-tab.tep-tab-restore:hover { background: #92400e; color: #fef3c7; }
+    #tep-restore-panel { margin-top: 4px; }
 
     /* Section toggles */
     .tep-section-title {
@@ -1640,6 +2008,9 @@
         <div class="tep-dash-back-banner" id="tep-dash-tests-back-wrap" hidden>
           <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-back-to-tools" style="width:100%;">← Dashboard tools</button>
         </div>
+        <div class="tep-dash-back-banner" id="tep-endpoint-tests-back-wrap" hidden>
+          <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-endpoint-back-to-tools" style="width:100%;">← Endpoint tools</button>
+        </div>
         <div class="tep-create-block">
           <button type="button" class="tep-create-toggle" id="tep-create-toggle" aria-expanded="false" aria-controls="tep-panel-create">
             <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Create test
@@ -1649,8 +2020,11 @@
           <div class="tep-tab active" data-type="http-server">HTTP Server</div>
           <div class="tep-tab" data-type="agent-to-server">Agent&rarr;Server</div>
           <div class="tep-tab" data-type="page-load">Page Load</div>
+          <div class="tep-tab tep-tab-restore" data-type="restore" title="Restore tests from a backup file">Restore</div>
         </div>
+        <input type="file" id="tep-restore-import-file" accept="application/json,.json" style="display:none;">
 
+        <div id="tep-create-form">
         <div class="tep-label-row">
           <label class="tep-label">Test Name (use {target} as placeholder for bulk)</label>
           <span class="tep-units tep-create-units-est" id="tep-create-units" aria-live="polite"></span>
@@ -1723,6 +2097,38 @@
         <div class="tep-actions">
           <button class="tep-btn tep-btn-primary" id="tep-create">Create Tests</button>
         </div>
+        </div>
+
+        <div id="tep-restore-panel" hidden>
+          <p class="tep-dash-hint" id="tep-restore-file-hint" style="margin:0 0 10px;">Choose a backup JSON file to see tests you can restore.</p>
+          <div class="tep-dash-row" style="margin-bottom:12px;">
+            <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-restore-choose-file">Choose backup file&hellip;</button>
+          </div>
+          <div class="tep-br-pick" id="tep-restore-pick-wrap" hidden>
+            <div class="tep-br-pick-head">
+              <label class="tep-label tep-br-pick-label">Tests to restore</label>
+              <span class="tep-br-pick-count" id="tep-restore-pick-count">0 selected</span>
+            </div>
+            <div class="tep-br-pick-toolbar">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-restore-pick-all">All</button>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-restore-pick-none">None</button>
+            </div>
+            <div class="tep-br-pick-list" id="tep-restore-pick-list"></div>
+          </div>
+          <label class="tep-label" for="tep-restore-title-prefix">Test name prefix (optional)</label>
+          <input type="text" class="tep-input" id="tep-restore-title-prefix" placeholder="e.g. “Restored — ” &mdash; prepended to every restored test&rsquo;s name" autocomplete="off">
+          <label class="tep-label" for="tep-restore-agent-mode">Agents, alerts, labels on restore</label>
+          <select class="tep-select" id="tep-restore-agent-mode" style="width:100%;">
+            <option value="keep" selected>Keep as in JSON</option>
+            <option value="strip">Strip account-specific references (recommended for cross-account)</option>
+          </select>
+          <div id="tep-restore-agents-wrap" class="tep-dash-restore-agents-wrap" style="display:none;">
+            <p class="tep-dash-hint" style="margin:0;">Per-test IDs, agent references, labels, and alert bindings are cleared. You may need to re-select agents in each restored test.</p>
+          </div>
+          <div class="tep-dash-row" style="margin-top:14px;">
+            <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-restore-run" style="flex:1;" disabled>Restore tests to ThousandEyes&hellip;</button>
+          </div>
+        </div>
           </div>
         </div>
         <div class="tep-manage-block">
@@ -1753,55 +2159,6 @@
             </svg>
           </button>
         </div>
-        <div class="tep-create-block" id="tep-tests-block-backup-restore">
-          <button type="button" class="tep-create-toggle" id="tep-tests-toggle-backup-restore" aria-expanded="false" aria-controls="tep-tests-expand-backup-restore">
-            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Backup and Restore
-          </button>
-          <div class="tep-create-expand" id="tep-tests-expand-backup-restore" hidden>
-            <div class="tep-dash-card tep-dash-restore-card">
-            <label class="tep-label" for="tep-tests-json">Tests JSON <span id="tep-tests-json-count" class="tep-dash-hint" style="font-weight:normal;"></span></label>
-            <details class="tep-dash-json-details" id="tep-tests-json-details">
-              <summary>
-                <span class="tep-dash-json-sum tep-dash-json-sum-empty" id="tep-tests-json-summary">No JSON yet — click Refresh to load selected tests (or all)</span>
-                <span class="tep-dash-json-chev" aria-hidden="true">&#9654;</span>
-              </summary>
-              <div class="tep-dash-json-details-body">
-                <textarea class="tep-textarea tep-dash-json" id="tep-tests-json" spellcheck="false" placeholder="[ ]"></textarea>
-              </div>
-            </details>
-            <div class="tep-dash-actions">
-              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon tep-dash-refresh-btn" id="tep-tests-refresh" title="Refresh JSON from selected tests (or all tests if none are checked)" aria-label="Refresh tests JSON">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
-                  <path d="M3 21v-5h5" />
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
-                  <path d="M21 3v5h-5" />
-                </svg>
-              </button>
-              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tests-download">Backup to file&hellip;</button>
-              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tests-restore-import-file-btn">Import backup file&hellip;</button>
-              <input type="file" id="tep-tests-restore-import-file" accept="application/json,.json" style="display:none;">
-            </div>
-
-            <label class="tep-label" for="tep-tests-restore-title-prefix">Test name prefix (optional)</label>
-            <input type="text" class="tep-input" id="tep-tests-restore-title-prefix" placeholder="e.g. “Restored — ” &mdash; prepended to every restored test&rsquo;s name" autocomplete="off">
-
-            <label class="tep-label" for="tep-tests-restore-agent-mode">Agents, alerts, labels on restore</label>
-            <select class="tep-select" id="tep-tests-restore-agent-mode" style="width:100%;">
-              <option value="keep" selected>Keep as in JSON</option>
-              <option value="strip">Strip account-specific references (recommended for cross-account)</option>
-            </select>
-
-            <div id="tep-tests-restore-agents-wrap" class="tep-dash-restore-agents-wrap" style="display:none;">
-              <p class="tep-dash-hint" id="tep-tests-restore-agent-note" style="margin:0 0 6px;">Per-test IDs (<code>testId</code>, timestamps), agent references (<code>agents</code>, <code>agentIds</code>, <code>vAgentIds</code>, <code>agentSet</code>, <code>physicalAgentIds</code>, <code>agentInterfaces</code>), labels (<code>labelsIds</code>, <code>tagIds</code>), and alert bindings (<code>alerts</code>, <code>alertSuppressionWindowIds</code>, <code>flagAlertsEnabled</code>) are cleared per test. You may need to re-select agents in each restored test.</p>
-            </div>
-
-            <div class="tep-dash-row" style="margin-top:14px;">
-              <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-tests-restore" style="flex:1;">Restore tests to ThousandEyes&hellip;</button>
-            </div>
-            </div>
-          </div>
-        </div>
         <div class="tep-bulk-bar" id="tep-bulk-bar">
           <span id="tep-bulk-count">0 selected</span>
           <select id="tep-bulk-action">
@@ -1810,6 +2167,7 @@
             <option value="disable">Disable All</option>
             <option value="interval">Change Interval</option>
             <option value="protocol">Change Protocol</option>
+            <option value="backup">Backup to file</option>
             <option value="delete">Delete All</option>
           </select>
           <select id="tep-bulk-protocol" style="display:none;">
@@ -1891,23 +2249,42 @@
           </div>
         </div>
 
-        <div class="tep-create-block" id="tep-dash-block-manage">
+        <div class="tep-manage-block" id="tep-dash-block-manage">
           <button type="button" class="tep-create-toggle" id="tep-dash-toggle-manage" aria-expanded="true" aria-controls="tep-dash-expand-manage">
             <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Manage Dashboards
           </button>
-          <div class="tep-create-expand" id="tep-dash-expand-manage">
-            <div class="tep-dash-cleanup" id="tep-dash-cleanup" style="margin-top:0;padding-top:0;border-top:0;">
-              <p class="tep-dash-cleanup-meta" id="tep-dash-cleanup-meta">Not loaded yet.</p>
-              <div class="tep-dash-cleanup-toolbar">
-                <input type="search" class="tep-input tep-dash-cleanup-search" id="tep-dash-cleanup-search" placeholder="Search names…" autocomplete="off" title="Filter the list by dashboard name" aria-label="Search dashboard names">
-                <div class="tep-dash-cleanup-actions">
-                  <button type="button" class="tep-dash-toolbar-btn" id="tep-dash-cleanup-sort" title="Toggle sort by modified time">Newest</button>
-                  <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--toggle" id="tep-dash-cleanup-shared" title="Show or hide shared and built-in dashboards" aria-pressed="false">Shared</button>
-                  <button type="button" class="tep-dash-toolbar-btn" id="tep-dash-cleanup-select-none" title="Clear checkbox selection">Clear</button>
-                  <button type="button" class="tep-dash-toolbar-btn tep-dash-toolbar-btn--danger" id="tep-dash-cleanup-delete" title="Delete selected dashboards">Delete</button>
-                </div>
-              </div>
-              <div class="tep-dash-cleanup-list" id="tep-dash-cleanup-list"></div>
+          <div class="tep-manage-expand tep-create-expand" id="tep-dash-expand-manage">
+            <div class="tep-manage-toolbar">
+              <select id="tep-dash-cleanup-scope">
+                <option value="mine" selected>Mine only</option>
+                <option value="all">Include shared</option>
+              </select>
+              <input id="tep-dash-cleanup-search" placeholder="Search dashboards&hellip;">
+              <select id="tep-dash-cleanup-sort" style="width:auto;">
+                <option value="modified" selected>Sort: Date Modified</option>
+                <option value="modified-asc">Sort: Oldest first</option>
+                <option value="name">Sort: Name</option>
+              </select>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-dash-cleanup-load" title="Refresh dashboard list" aria-label="Refresh dashboard list">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
+                  <path d="M3 21v-5h5" />
+                </svg>
+              </button>
+            </div>
+            <div class="tep-bulk-bar" id="tep-dash-bulk-bar">
+              <span id="tep-dash-bulk-count">0 selected</span>
+              <select id="tep-dash-bulk-action">
+                <option value="">— Bulk Action —</option>
+                <option value="delete">Delete</option>
+              </select>
+              <button type="button" class="tep-bulk-apply" id="tep-dash-bulk-apply">Apply</button>
+            </div>
+            <div class="tep-test-count" id="tep-dash-cleanup-meta">Not loaded yet.</div>
+            <div class="tep-test-list" id="tep-dash-cleanup-list">
+              <span class="tep-log-info">Loading dashboards&hellip;</span>
             </div>
           </div>
         </div>
@@ -1940,6 +2317,185 @@
         </details>
       </div>
 
+      <!-- ============== ENDPOINT TOOLS (/endpoint only) ============== -->
+      <div class="tep-view-panel" id="tep-panel-endpoint">
+        <div class="tep-create-block" id="tep-ep-block-create">
+          <button type="button" class="tep-create-toggle" id="tep-ep-toggle-create" aria-expanded="false" aria-controls="tep-ep-expand-create">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Create Endpoint Test
+          </button>
+          <div class="tep-create-expand" id="tep-ep-expand-create" hidden>
+            <p class="tep-dash-hint" style="margin:0 0 10px;">Deploy scheduled HTTP and/or Network tests to Endpoint Agents via the TE deploy API.</p>
+
+            <label class="tep-label" for="tep-ep-testname">Bundle name (use <code>{target}</code> for bulk)</label>
+            <input class="tep-input" id="tep-ep-testname" value="Endpoint Test - {target}" placeholder="My endpoint bundle" autocomplete="off">
+
+            <label class="tep-label" for="tep-ep-targets">Targets (one per line)</label>
+            <textarea class="tep-textarea" id="tep-ep-targets" placeholder="https://example.com&#10;www.another.com" rows="4"></textarea>
+
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:8px 0;">
+              <div>
+                <label class="tep-label" for="tep-ep-interval">Interval</label>
+                <select class="tep-select" id="tep-ep-interval">
+                  <option value="60" selected>1 minute</option>
+                  <option value="120">2 minutes</option>
+                  <option value="300">5 minutes</option>
+                  <option value="600">10 minutes</option>
+                  <option value="900">15 minutes</option>
+                  <option value="1800">30 minutes</option>
+                  <option value="3600">60 minutes</option>
+                </select>
+              </div>
+              <div>
+                <label class="tep-label" for="tep-ep-max-machines">Max machines</label>
+                <input class="tep-input" id="tep-ep-max-machines" type="number" value="25" min="1" max="999" style="width:80px;">
+              </div>
+            </div>
+
+            <div style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 12px;font-size:12px;color:#94a3b8;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" id="tep-ep-include-http" checked> HTTP Server test
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" id="tep-ep-include-network" checked> Network test
+              </label>
+            </div>
+
+            <div class="tep-actions">
+              <button class="tep-btn tep-btn-primary" id="tep-ep-create">Deploy Endpoint Tests</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tep-manage-block" id="tep-ep-block-manage">
+          <button type="button" class="tep-create-toggle" id="tep-ep-toggle-manage" aria-expanded="true" aria-controls="tep-ep-expand-manage">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Manage Endpoint Tests
+          </button>
+          <div class="tep-manage-expand tep-create-expand" id="tep-ep-expand-manage">
+            <div class="tep-manage-toolbar">
+              <select id="tep-ep-manage-category-filter">
+                <option value="">All Categories</option>
+                <option value="SCHEDULED_TEST">Scheduled</option>
+                <option value="DYNAMIC_APP_TEST">Dynamic</option>
+              </select>
+              <select id="tep-ep-manage-type-filter">
+                <option value="">All Types</option>
+                <option value="Http">HTTP</option>
+                <option value="Network">Network</option>
+              </select>
+              <input id="tep-ep-manage-search" placeholder="Search tests&hellip;">
+              <select id="tep-ep-manage-sort" style="width:auto;">
+                <option value="created" selected>Sort: Date Created</option>
+                <option value="default">Sort: Default</option>
+                <option value="name">Sort: Name</option>
+                <option value="modified">Sort: Date Modified</option>
+              </select>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-ep-manage-load" title="Refresh endpoint test list" aria-label="Refresh endpoint test list">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
+                  <path d="M3 21v-5h5" />
+                </svg>
+              </button>
+            </div>
+            <div class="tep-bulk-bar" id="tep-ep-bulk-bar">
+              <span id="tep-ep-bulk-count">0 selected</span>
+              <select id="tep-ep-bulk-action">
+                <option value="">— Bulk Action —</option>
+                <option value="probe">TCP probe mode</option>
+                <option value="interval">Change interval</option>
+                <option value="enable">Enable</option>
+                <option value="disable">Disable</option>
+                <option value="delete">Delete</option>
+              </select>
+              <select id="tep-ep-bulk-probe" style="display:none;">
+                <option value="AUTO">AUTO</option>
+                <option value="SYN">SYN</option>
+                <option value="SACK">SACK</option>
+              </select>
+              <select id="tep-ep-bulk-interval" style="display:none;">
+                <option value="60">1 minute</option>
+                <option value="120">2 minutes</option>
+                <option value="300">5 minutes</option>
+                <option value="600">10 minutes</option>
+                <option value="900">15 minutes</option>
+                <option value="1800">30 minutes</option>
+                <option value="3600">60 minutes</option>
+              </select>
+              <button type="button" class="tep-bulk-apply" id="tep-ep-bulk-apply">Apply</button>
+            </div>
+            <div class="tep-test-count" id="tep-ep-test-count">Not loaded yet.</div>
+            <div class="tep-test-list" id="tep-ep-test-list">
+              <span class="tep-log-info">Click refresh to load endpoint tests.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tep-create-block" id="tep-ep-block-backup">
+          <button type="button" class="tep-create-toggle" id="tep-ep-toggle-backup" aria-expanded="false" aria-controls="tep-ep-expand-backup">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Backup and Restore
+          </button>
+          <div class="tep-create-expand" id="tep-ep-expand-backup" hidden>
+            <div class="tep-dash-card tep-dash-restore-card">
+              <label class="tep-label" for="tep-ep-tests-json">Endpoint tests JSON <span id="tep-ep-tests-json-count" class="tep-dash-hint" style="font-weight:normal;"></span></label>
+              <details class="tep-dash-json-details" id="tep-ep-tests-json-details">
+                <summary>
+                  <span class="tep-dash-json-sum tep-dash-json-sum-empty" id="tep-ep-tests-json-summary">No JSON yet — refresh Manage list, then click Refresh JSON</span>
+                  <span class="tep-dash-json-chev" aria-hidden="true">&#9654;</span>
+                </summary>
+                <div class="tep-dash-json-details-body">
+                  <textarea class="tep-textarea tep-dash-json" id="tep-ep-tests-json" spellcheck="false" placeholder="[ ]"></textarea>
+                </div>
+              </details>
+              <div class="tep-dash-actions">
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon tep-dash-refresh-btn" id="tep-ep-tests-refresh" title="Refresh JSON from selected tests (or all)" aria-label="Refresh endpoint tests JSON">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
+                    <path d="M3 21v-5h5" />
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
+                    <path d="M21 3v5h-5" />
+                  </svg>
+                </button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-tests-download">Backup to file&hellip;</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-tests-import-file-btn">Import backup file&hellip;</button>
+                <input type="file" id="tep-ep-tests-import-file" accept="application/json,.json" style="display:none;">
+              </div>
+              <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;">Restore posts stripped copies via bulk-save (new test ids). Deploy API is used only from Create.</p>
+              <div class="tep-dash-row" style="margin-top:14px;">
+                <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-ep-tests-restore" style="flex:1;">Restore to ThousandEyes&hellip;</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tep-create-block" id="tep-ep-block-cloud-tests">
+          <button type="button" class="tep-create-toggle" id="tep-ep-toggle-cloud-tests" aria-expanded="false" aria-controls="tep-ep-expand-cloud-tests">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Cloud Tests
+          </button>
+          <div class="tep-create-expand" id="tep-ep-expand-cloud-tests" hidden>
+            <p class="tep-dash-hint" style="margin:0 0 8px;">Open the standard cloud test tools (Create test, Manage) while staying on this page.</p>
+          </div>
+        </div>
+
+        <details class="tep-dash-details" id="tep-ep-details-diagnostics">
+          <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
+          <div class="tep-dash-details-inner tep-dash-advanced-inner">
+            <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">
+              Logs same-origin requests under <code>/namespace/endpoint-api</code>, <code>/namespace/endpoint/</code>, <code>/namespace/product-led-growth-api</code>, <code>test-config</code>, and <code>/ajax/…/endpoint</code> to the Log below and the browser console (<code>[TE Optics endpoint]</code>). Reload test settings, open a test, change probe mode, save — then copy this report.
+            </p>
+            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#94a3b8;cursor:pointer;line-height:1.45;margin-bottom:10px;">
+              <input type="checkbox" id="tep-ep-sniff-ajax" checked style="margin-top:3px;flex-shrink:0;">
+              <span>Record endpoint API traffic (fetch + XHR)</span>
+            </label>
+            <div class="tep-dash-actions" style="margin-top:0;">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-copy-debug">Copy diagnostics report</button>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-clear-sniff">Clear sniff history</button>
+            </div>
+            <p class="tep-dash-hint" id="tep-ep-sniff-meta" style="margin:10px 0 0;font-size:11px;color:#64748b;">Sniff history empty — interact with the Endpoint UI to capture URLs.</p>
+          </div>
+        </details>
+      </div>
+
       <!-- Author: Christopher Hunt -->
       <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
         <strong style="color:#cbd5e1;">TE Optics</strong>
@@ -1968,24 +2524,36 @@
     const tabs = root.querySelector('#tep-view-tabs');
     const h2 = root.querySelector('.tep-header h2');
     const pDash = root.querySelector('#tep-panel-dashboard');
+    const pEndpoint = root.querySelector('#tep-panel-endpoint');
     const pManage = root.querySelector('#tep-panel-manage');
     if (!tabs || !pDash || !pManage) return;
+
+    tabs.style.display = 'none';
+    tabs.innerHTML = '';
+    pManage.classList.remove('active');
+    pDash.classList.remove('active');
+    if (pEndpoint) pEndpoint.classList.remove('active');
+    const dashBack = root.querySelector('#tep-dash-tests-back-wrap');
+    const epBack = root.querySelector('#tep-endpoint-tests-back-wrap');
+    if (dashBack) dashBack.setAttribute('hidden', '');
+    if (epBack) epBack.setAttribute('hidden', '');
+    tepFromDashTests = false;
+    tepFromEndpointTests = false;
 
     if (isDashboardToolsPage()) {
       if (h2) {
         h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
       }
-      tabs.style.display = 'none';
-      tabs.innerHTML = '';
-      pManage.classList.remove('active');
       pDash.classList.add('active');
-      const back = root.querySelector('#tep-dash-tests-back-wrap');
-      if (back) back.setAttribute('hidden', '');
-      tepFromDashTests = false;
+    } else if (isEndpointToolsPage() && pEndpoint) {
+      if (h2) {
+        h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      }
+      pEndpoint.classList.add('active');
     } else {
-      tabs.style.display = 'none';
-      tabs.innerHTML = '';
-      pDash.classList.remove('active');
+      if (h2) {
+        h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      }
       pManage.classList.add('active');
     }
   }
@@ -1997,10 +2565,13 @@
     const pDash = root.querySelector('#tep-panel-dashboard');
     const pManage = root.querySelector('#tep-panel-manage');
     const back = root.querySelector('#tep-dash-tests-back-wrap');
+    const epBack = root.querySelector('#tep-endpoint-tests-back-wrap');
     if (pDash) pDash.classList.remove('active');
     if (pManage) pManage.classList.add('active');
     if (back) back.removeAttribute('hidden');
+    if (epBack) epBack.setAttribute('hidden', '');
     tepFromDashTests = true;
+    tepFromEndpointTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
       h2.innerHTML = `<span>TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
@@ -2019,6 +2590,44 @@
     if (pDash) pDash.classList.add('active');
     if (back) back.setAttribute('hidden', '');
     tepFromDashTests = false;
+    const h2 = root.querySelector('.tep-header h2');
+    if (h2) {
+      h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+    }
+    updateManageUnitsTotal();
+    applyDefaultAuthenticatedStatus();
+  }
+
+  function showTestsPanelFromEndpoint() {
+    if (!isEndpointToolsPage()) return;
+    const pEndpoint = root.querySelector('#tep-panel-endpoint');
+    const pManage = root.querySelector('#tep-panel-manage');
+    const back = root.querySelector('#tep-endpoint-tests-back-wrap');
+    const dashBack = root.querySelector('#tep-dash-tests-back-wrap');
+    if (pEndpoint) pEndpoint.classList.remove('active');
+    if (pManage) pManage.classList.add('active');
+    if (back) back.removeAttribute('hidden');
+    if (dashBack) dashBack.setAttribute('hidden', '');
+    tepFromEndpointTests = true;
+    tepFromDashTests = false;
+    const h2 = root.querySelector('.tep-header h2');
+    if (h2) {
+      h2.innerHTML = `<span>TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+    }
+    void loadTests();
+    updateManageUnitsTotal();
+    applyDefaultAuthenticatedStatus();
+  }
+
+  function showEndpointPanelFromTests() {
+    if (!isEndpointToolsPage()) return;
+    const pEndpoint = root.querySelector('#tep-panel-endpoint');
+    const pManage = root.querySelector('#tep-panel-manage');
+    const back = root.querySelector('#tep-endpoint-tests-back-wrap');
+    if (pManage) pManage.classList.remove('active');
+    if (pEndpoint) pEndpoint.classList.add('active');
+    if (back) back.setAttribute('hidden', '');
+    tepFromEndpointTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
       h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
@@ -2135,7 +2744,9 @@
 
   function applyDefaultAuthenticatedStatus() {
     if (!isOnTEPage()) return;
-    if (isDashboardToolsPage() && !tepFromDashTests) {
+    if (isEndpointToolsPage() && !tepFromEndpointTests) {
+      setStatus('Authenticated — endpoint tools', 'ok');
+    } else if (isDashboardToolsPage() && !tepFromDashTests) {
       setStatus(agents && agents.length ? `Dashboard — ${agents.length} portal agent(s) loaded` : 'Authenticated — dashboard tools', 'ok');
     } else {
       setStatus(agents && agents.length ? `Authenticated — ${agents.length} agent(s) loaded` : 'Authenticated — loading agents…', 'ok');
@@ -3044,8 +3655,58 @@
     return { ok: false };
   }
 
+  function syncDashCleanupScopeFromUi() {
+    const el = root.querySelector('#tep-dash-cleanup-scope');
+    dashCleanupShowShared = !!(el && el.value === 'all');
+  }
+
+  function getDashCleanupSortMode() {
+    const el = root.querySelector('#tep-dash-cleanup-sort');
+    return el && el.value ? el.value : 'modified';
+  }
+
+  function formatDashModifiedMs(ms) {
+    if (!ms || !Number.isFinite(ms)) return '—';
+    try {
+      return new Date(ms).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+    } catch (_) {
+      return String(ms);
+    }
+  }
+
+  function getDashCleanupTypeBadge(row) {
+    if (row && row.isBuiltIn) return { kind: 'badge', label: 'Built-in', css: 'tep-type-page' };
+    if (row && row.isSharedWithCurrentAccount) return { kind: 'badge', label: 'Shared', css: 'tep-type-dns' };
+    return { kind: 'dot' };
+  }
+
+  function formatDashCleanupTypeHtml(badge) {
+    if (badge.kind === 'dot') {
+      return '<span class="tep-dash-type-dot" title="Custom dashboard" aria-label="Custom dashboard"></span>';
+    }
+    return `<span class="tep-type-badge ${badge.css}">${tepEscapeHtmlText(badge.label)}</span>`;
+  }
+
+  function getDashCleanupViewHref(id) {
+    try {
+      const u = new URL('/dashboard', location.origin);
+      u.searchParams.set('dashboardId', String(id));
+      return u.toString();
+    } catch (_) {
+      return '/dashboard?dashboardId=' + encodeURIComponent(String(id));
+    }
+  }
+
+  function updateDashCleanupBulkUI() {
+    const countEl = root.querySelector('#tep-dash-bulk-count');
+    const bar = root.querySelector('#tep-dash-bulk-bar');
+    const count = selectedDashCleanupIds.size;
+    if (countEl) countEl.textContent = `${count} selected`;
+    if (bar) bar.classList.toggle('active', count > 0);
+  }
+
   function setDashCleanupUiBusy(busy) {
-    const ids = ['tep-dash-cleanup-search', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-shared', 'tep-dash-cleanup-delete', 'tep-dash-cleanup-select-none'];
+    const ids = ['tep-dash-cleanup-search', 'tep-dash-cleanup-sort', 'tep-dash-cleanup-scope', 'tep-dash-cleanup-load', 'tep-dash-bulk-action', 'tep-dash-bulk-apply'];
     for (const id of ids) {
       const el = root.querySelector('#' + id);
       if (el) el.disabled = !!busy;
@@ -3058,57 +3719,28 @@
     });
   }
 
-  function updateDashCleanupSortButton() {
-    const btn = root.querySelector('#tep-dash-cleanup-sort');
-    if (!btn) return;
-    btn.textContent = dashCleanupSortNewestFirst ? 'Newest' : 'Oldest';
-  }
-
-  function updateDashCleanupSharedButton() {
-    const btn = root.querySelector('#tep-dash-cleanup-shared');
-    if (!btn) return;
-    btn.setAttribute('aria-pressed', dashCleanupShowShared ? 'true' : 'false');
-    btn.classList.toggle('tep-dash-toolbar-btn--on', dashCleanupShowShared);
-    btn.title = dashCleanupShowShared
-      ? 'Shared and built-in dashboards are shown (click to hide)'
-      : 'Shared and built-in dashboards are hidden (click to show)';
-  }
-
-  function toggleDashCleanupShowShared() {
-    dashCleanupShowShared = !dashCleanupShowShared;
-    updateDashCleanupSharedButton();
-    syncDashCleanupMeta();
-    const checked = new Set(
-      [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')].map((b) => b.dataset.dashCleanupId).filter(Boolean)
-    );
-    renderDashCleanupList();
-    for (const cb of root.querySelectorAll('.tep-dash-cleanup-cb')) {
-      const id = cb.dataset.dashCleanupId;
-      if (id && checked.has(id)) cb.checked = true;
-    }
-  }
-
   function applyDashCleanupSortOrder() {
+    const mode = getDashCleanupSortMode();
     dashCleanupCatalog.sort((a, b) => {
+      if (mode === 'name') {
+        return String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' });
+      }
       const ta = typeof a.modifiedMs === 'number' ? a.modifiedMs : 0;
       const tb = typeof b.modifiedMs === 'number' ? b.modifiedMs : 0;
-      if (ta !== tb) return dashCleanupSortNewestFirst ? (tb - ta) : (ta - tb);
+      if (mode === 'modified-asc') {
+        if (ta !== tb) return ta - tb;
+      } else if (ta !== tb) {
+        return tb - ta;
+      }
       return String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' });
     });
   }
 
-  function toggleDashCleanupSortOrder() {
-    const checked = new Set(
-      [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')].map((b) => b.dataset.dashCleanupId).filter(Boolean)
-    );
-    dashCleanupSortNewestFirst = !dashCleanupSortNewestFirst;
-    updateDashCleanupSortButton();
+  function renderDashCleanupListAfterManageInput() {
+    syncDashCleanupScopeFromUi();
     applyDashCleanupSortOrder();
+    syncDashCleanupMeta();
     renderDashCleanupList();
-    for (const cb of root.querySelectorAll('.tep-dash-cleanup-cb')) {
-      const id = cb.dataset.dashCleanupId;
-      if (id && checked.has(id)) cb.checked = true;
-    }
   }
 
   function renderDashCleanupList() {
@@ -3116,41 +3748,24 @@
     if (!host) return;
     host.textContent = '';
     if (!dashCleanupListEverLoaded) {
-      const span = document.createElement('span');
-      span.className = 'tep-log-info';
-      span.style.display = 'block';
-      span.style.padding = '10px 12px';
-      span.textContent = 'Use “Load dashboards in account group” to fetch names and ids for this account group.';
-      host.appendChild(span);
+      host.innerHTML = '<span class="tep-log-info">Click refresh to load dashboards for this account group.</span>';
       return;
     }
     if (!dashCleanupCatalog.length) {
-      const span = document.createElement('span');
-      span.className = 'tep-log-info';
-      span.style.display = 'block';
-      span.style.padding = '10px 12px';
-      span.textContent = 'No dashboards in the merged list — try again after using the Dashboards UI in TE, or check the log for HTTP errors.';
-      host.appendChild(span);
+      host.innerHTML = '<span class="tep-log-info">No dashboards in the merged list — try refresh after using the Dashboards UI in TE, or check the log for HTTP errors.</span>';
       return;
     }
     const filtered = getDashCleanupFilteredCatalog();
     if (!filtered.length) {
-      const span = document.createElement('span');
-      span.className = 'tep-log-info';
-      span.style.display = 'block';
-      span.style.padding = '10px 12px';
       const q = getDashCleanupSearchQuery();
-      let msg = 'No dashboard names match this search — change the filter or clear Search names.';
+      let msg = 'No dashboards match filter.';
       if (!q && dashCleanupCatalog.length && !dashCleanupShowShared) {
         const allInCategory = dashCleanupCatalog.every((r) => isDashCleanupSharedCategoryRow(r));
-        if (allInCategory) {
-          msg = 'All loaded dashboards are shared or built-in — click Shared to show them.';
-        } else {
-          msg = 'Nothing to show — turn on Shared or adjust search.';
-        }
+        msg = allInCategory
+          ? 'All loaded dashboards are shared or built-in — choose Include shared.'
+          : 'Nothing to show — choose Include shared or adjust search.';
       }
-      span.textContent = msg;
-      host.appendChild(span);
+      host.innerHTML = `<span class="tep-log-info">${tepEscapeHtmlText(msg)}</span>`;
       return;
     }
     let currentDashId = '';
@@ -3164,59 +3779,50 @@
 
     for (const row of rows) {
       const inSharedCategory = isDashCleanupSharedCategoryRow(row);
-      const wrap = document.createElement('div');
-      wrap.className = 'tep-dash-cleanup-row' + (inSharedCategory ? ' tep-dash-cleanup-row--shared' : '');
-      const label = document.createElement('label');
-      if (inSharedCategory) {
-        label.title = dashCleanupSharedCategoryLabelTitle(row);
-      }
-      const isCurrent = currentDashId && String(row.id) === String(currentDashId);
-      if (isCurrent) {
-        const ptr = document.createElement('span');
-        ptr.className = 'tep-dash-page-pointer';
-        ptr.title = 'This dashboard matches the one on the current ThousandEyes page (URL dashboardId) — points to the app content on the left';
-        ptr.setAttribute('aria-hidden', 'true');
-        ptr.innerHTML = '&#8592;';
-        label.appendChild(ptr);
-      }
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'tep-dash-cleanup-cb';
-      cb.dataset.dashCleanupId = row.id;
-      if (inSharedCategory) {
-        cb.disabled = true;
-        cb.title = dashCleanupSharedCategoryCbTitle(row);
-      }
-      const textCol = document.createElement('div');
-      textCol.className = 'tep-dash-cleanup-titles';
-      const nameEl = document.createElement('a');
-      nameEl.className = 'tep-dash-cleanup-name';
-      nameEl.textContent = row.title;
-      try {
-        const u = new URL('/dashboard', location.origin);
-        u.searchParams.set('dashboardId', String(row.id));
-        nameEl.href = u.toString();
-      } catch (_) {
-        nameEl.href = '/dashboard?dashboardId=' + encodeURIComponent(String(row.id));
-      }
-      nameEl.target = '_blank';
-      nameEl.rel = 'noopener noreferrer';
-      const idEl = document.createElement('span');
-      idEl.className = 'tep-dash-cleanup-id';
-      idEl.textContent = row.id;
-      textCol.appendChild(nameEl);
-      textCol.appendChild(idEl);
-      label.appendChild(cb);
-      label.appendChild(textCol);
-      if (isCurrent) {
-        const actions = document.createElement('span');
-        actions.className = 'tep-dash-cleanup-row-actions';
+      const id = String(row.id || '');
+      const isCurrent = currentDashId && id === String(currentDashId);
+      const badge = getDashCleanupTypeBadge(row);
+      const viewHref = getDashCleanupViewHref(id);
+      const modifiedLabel = formatDashModifiedMs(row.modifiedMs);
+      const card = document.createElement('div');
+      card.className = 'tep-test-card' + (inSharedCategory ? ' tep-test-card--shared' : '');
+      card.dataset.dashboardId = id;
+      if (inSharedCategory) card.title = dashCleanupSharedCategoryLabelTitle(row);
 
-        const backupBtn = document.createElement('button');
-        backupBtn.type = 'button';
-        backupBtn.className = 'tep-btn tep-btn-secondary tep-btn-sm';
-        backupBtn.title = 'Open Backup and Restore';
-        backupBtn.textContent = 'Backup';
+      let actionsHtml = '';
+      if (isCurrent) {
+        actionsHtml = `
+          <div class="tep-test-actions">
+            <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-dash-action="backup" title="Open Backup and Restore">Backup</button>
+            ${inSharedCategory ? '' : '<button type="button" class="tep-btn-danger tep-test-action-icon" data-dash-action="delete" title="Delete" aria-label="Delete"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>'}
+          </div>`;
+      }
+
+      card.innerHTML = `
+        <div class="tep-test-card-header">
+          ${isCurrent ? '<span class="tep-test-page-pointer" title="This dashboard matches the one on the current ThousandEyes page (URL dashboardId) — points to the app content on the left" aria-hidden="true">&#8592;</span>' : ''}
+          <input type="checkbox" class="tep-test-card-check tep-dash-cleanup-cb" data-dash-cleanup-id="${tepEscapeHtmlText(id)}" ${selectedDashCleanupIds.has(id) ? 'checked' : ''} ${inSharedCategory ? 'disabled' : ''} ${inSharedCategory ? `title="${tepEscapeHtmlText(dashCleanupSharedCategoryCbTitle(row))}"` : ''}>
+          ${formatDashCleanupTypeHtml(badge)}
+          <a class="tep-test-card-name tep-test-link" href="${tepEscapeHtmlText(viewHref)}" target="_blank" rel="noopener noreferrer">${tepEscapeHtmlText(row.title || 'Unnamed')}</a>
+          ${actionsHtml}
+        </div>
+        <div class="tep-test-card-meta">
+          <span title="Dashboard id">${tepEscapeHtmlText(id)}</span>
+          <span>Modified ${tepEscapeHtmlText(modifiedLabel)}</span>
+        </div>
+      `;
+
+      const cb = card.querySelector('.tep-dash-cleanup-cb');
+      if (cb && !cb.disabled) {
+        cb.addEventListener('change', (e) => {
+          if (e.target.checked) selectedDashCleanupIds.add(id);
+          else selectedDashCleanupIds.delete(id);
+          updateDashCleanupBulkUI();
+        });
+      }
+
+      const backupBtn = card.querySelector('[data-dash-action="backup"]');
+      if (backupBtn) {
         backupBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -3228,72 +3834,56 @@
             expand.scrollIntoView({ block: 'start', behavior: 'smooth' });
           }
         });
-        actions.appendChild(backupBtn);
-        if (!inSharedCategory) {
-          const delBtn = document.createElement('button');
-          delBtn.type = 'button';
-          delBtn.className = 'tep-btn tep-btn-danger tep-btn-sm';
-          delBtn.title = 'Delete this dashboard';
-          delBtn.textContent = 'Delete';
-          delBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const id = String(row.id || '');
-            const name = String(row.title || 'Unnamed');
-            if (!id) return;
-            const ok = confirm(`Permanently delete this dashboard from ThousandEyes?\n\n${name}\n${id}\n\nThis cannot be undone.`);
-            if (!ok) return;
-            setDashCleanupUiBusy(true);
-            try {
-              const res = await tryDeleteDashboardById(id);
-              if (res && res.ok) {
-                dashCleanupCatalog = dashCleanupCatalog.filter((r) => String(r.id) !== id);
-                syncDashCleanupMeta();
-                renderDashCleanupList();
-                toast('Dashboard deleted', 'ok');
-              } else {
-                toast('Delete failed — see log', 'err');
-              }
-            } catch (err) {
-              toast('Delete failed', 'err');
-            } finally {
-              setDashCleanupUiBusy(false);
-            }
-          });
-          actions.appendChild(delBtn);
-        }
-        label.appendChild(actions);
       }
-      wrap.appendChild(label);
-      host.appendChild(wrap);
+      const delBtn = card.querySelector('[data-dash-action="delete"]');
+      if (delBtn) {
+        delBtn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const name = String(row.title || 'Unnamed');
+          if (!id) return;
+          const ok = confirm(`Permanently delete this dashboard from ThousandEyes?\n\n${name}\n${id}\n\nThis cannot be undone.`);
+          if (!ok) return;
+          setDashCleanupUiBusy(true);
+          try {
+            const res = await tryDeleteDashboardById(id);
+            if (res && res.ok) {
+              dashCleanupCatalog = dashCleanupCatalog.filter((r) => String(r.id) !== id);
+              selectedDashCleanupIds.delete(id);
+              updateDashCleanupBulkUI();
+              syncDashCleanupMeta();
+              renderDashCleanupList();
+              toast('Dashboard deleted', 'ok');
+            } else {
+              toast('Delete failed — see log', 'err');
+            }
+          } catch (_) {
+            toast('Delete failed', 'err');
+          } finally {
+            setDashCleanupUiBusy(false);
+          }
+        });
+      }
+
+      host.appendChild(card);
     }
   }
 
   function syncDashCleanupMeta() {
     const meta = root.querySelector('#tep-dash-cleanup-meta');
     if (!meta) return;
-    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '(unknown)';
     if (!dashCleanupListEverLoaded) {
-      meta.textContent = 'Not loaded yet · account group aid is sent as ?aid= when known.';
+      meta.textContent = 'Not loaded yet.';
       return;
     }
     const total = dashCleanupCatalog.length;
-    const sharedCategoryN = dashCleanupCatalog.filter((r) => isDashCleanupSharedCategoryRow(r)).length;
     const visible = getDashCleanupFilteredCatalog().length;
-    const q = getDashCleanupSearchQuery();
-    const parts = [];
-    if (q) {
-      parts.push(`${visible} match name filter “${q}”`);
-      parts.push(`${total} in catalog`);
+    const sharedCategoryN = dashCleanupCatalog.filter((r) => isDashCleanupSharedCategoryRow(r)).length;
+    if (!dashCleanupShowShared && sharedCategoryN > 0 && !getDashCleanupSearchQuery()) {
+      meta.textContent = `Showing ${visible} of ${total} dashboard(s) · ${sharedCategoryN} shared or built-in hidden`;
     } else {
-      if (!dashCleanupShowShared && sharedCategoryN > 0) {
-        parts.push(`${visible} dashboard(s) · ${sharedCategoryN} shared or built-in hidden`);
-      } else {
-        parts.push(`${visible} dashboard(s) in list`);
-      }
+      meta.textContent = `Showing ${visible} of ${total} dashboard(s)`;
     }
-    parts.push(`aid=${aid}`);
-    meta.textContent = parts.join(' · ');
   }
 
   async function refreshDashboardCleanupList() {
@@ -3309,8 +3899,6 @@
       dashCleanupListEverLoaded = true;
       applyDashCleanupSortOrder();
       syncDashCleanupMeta();
-      updateDashCleanupSortButton();
-      updateDashCleanupSharedButton();
       renderDashCleanupList();
       if (dashCleanupCatalog.length) toast(`Loaded ${dashCleanupCatalog.length} dashboard(s)`, 'ok');
       else toast('No dashboards found — check log', 'err');
@@ -3325,8 +3913,7 @@
   }
 
   async function bulkDeleteSelectedDashboards() {
-    const boxes = [...root.querySelectorAll('.tep-dash-cleanup-cb:checked')];
-    const selectedIds = boxes.map((b) => b.dataset.dashCleanupId).filter(Boolean);
+    const selectedIds = [...selectedDashCleanupIds];
     const deletableIds = selectedIds.filter((id) => {
       const row = dashCleanupCatalog.find((r) => String(r.id) === String(id));
       return row && !isDashCleanupSharedCategoryRow(row);
@@ -3361,9 +3948,21 @@
       }
     }
     setDashCleanupUiBusy(false);
+    selectedDashCleanupIds.clear();
+    updateDashCleanupBulkUI();
     syncDashCleanupMeta();
     renderDashCleanupList();
     toast(`Delete finished: ${ok} removed, ${fail} failed`, fail ? 'err' : 'ok');
+  }
+
+  function dashBulkApply() {
+    const actionEl = root.querySelector('#tep-dash-bulk-action');
+    const action = actionEl ? actionEl.value : '';
+    if (!action) {
+      toast('Choose a bulk action', 'err');
+      return;
+    }
+    if (action === 'delete') void bulkDeleteSelectedDashboards();
   }
 
   function cloneJsonDeep(obj) {
@@ -4049,6 +4648,12 @@
           log('Dashboard mode: optional agent load failed — ' + e.message, 'tep-log-info');
         }
         refreshDashboardEditor();
+        startUsageSummaryPlanUnitsPoll();
+      } else if (isEndpointToolsPage()) {
+        installEndpointNetworkCapture();
+        applyDefaultAuthenticatedStatus();
+        log('Endpoint mode: session OK. API diagnostics sniff is on — use Diagnostics below or filter console for [TE Optics endpoint].', 'tep-log-ok');
+        void loadEndpointTests();
         startUsageSummaryPlanUnitsPoll();
       } else {
         setStatus('Authenticated — loading agents…', 'ok');
@@ -4829,11 +5434,16 @@
   // ---------------------------------------------------------------------------
   let allTests = [];
   let selectedTestIds = new Set();
+  /** Restore import (Create → Restore tab). */
+  let testsRestoreImportData = null;
+  let testsRestoreImportName = '';
+  let selectedTestsRestoreKeys = new Set();
+  let allEndpointTests = [];
+  let selectedEndpointTestIds = new Set();
+  /** Last successful POST body for test-configs/search (from sniff or probe). */
+  let endpointSearchBodyCache = null;
   const testListEl = $('#tep-test-list');
   const testCountEl = $('#tep-test-count');
-  const manageTypeFilter = $('#tep-manage-type-filter');
-  const manageSearch = $('#tep-manage-search');
-  const manageSort = $('#tep-manage-sort');
   const bulkBar = $('#tep-bulk-bar');
   const bulkCount = $('#tep-bulk-count');
   const bulkAction = $('#tep-bulk-action');
@@ -5861,9 +6471,16 @@
     }
   }
 
+  function getManageSearchQuery() {
+    const el = root.querySelector('#tep-manage-search');
+    return el && typeof el.value === 'string' ? el.value.trim().toLowerCase() : '';
+  }
+
   function getFilteredTests() {
-    const typeF = manageTypeFilter.value;
-    const searchQ = manageSearch.value.toLowerCase();
+    const typeEl = root.querySelector('#tep-manage-type-filter');
+    const sortEl = root.querySelector('#tep-manage-sort');
+    const typeF = typeEl ? typeEl.value : '';
+    const searchQ = getManageSearchQuery();
     let filtered = allTests;
     if (typeF) filtered = filtered.filter(t => t.testType === typeF);
     if (searchQ) filtered = filtered.filter(t =>
@@ -5884,7 +6501,7 @@
       if (tt in TYPE_ORDER) return TYPE_ORDER[tt];
       return 99;
     }
-    const sortMode = manageSort.value;
+    const sortMode = sortEl ? sortEl.value : 'default';
     const focusTid = getUrlQueryTestIdFocus();
     return filtered.sort((a, b) => {
       if (focusTid) {
@@ -6714,7 +7331,7 @@
       updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
 
       if (updated.testId == null && updated.id != null) updated.testId = updated.id;
-      return updated;
+      return applyBgpPolicyFromTestBody(updated);
     }
 
     form.querySelector('.tep-cancel-edit').addEventListener('click', () => {
@@ -6847,6 +7464,7 @@
     delete cloned._fetchStatus;
     delete cloned._fetchError;
     cloned.name = newName;
+    applyBgpPolicyFromTestBody(cloned);
 
     try {
       log(`Cloning "${t.name}" as "${newName}"…`, 'tep-log-info');
@@ -6882,7 +7500,7 @@
     const action = newState ? 'Enabling' : 'Disabling';
     try {
       log(`${action} "${t.name}"…`, 'tep-log-info');
-      const updated = { ...t, flagEnabled: newState, flagIgnoreWarnings: 0 };
+      const updated = applyBgpPolicyFromTestBody({ ...t, flagEnabled: newState, flagIgnoreWarnings: 0 });
       const resp = await ajax(testApiUrl(t, { forWrite: true }), {
         method: 'POST',
         body: JSON.stringify(updated)
@@ -6935,6 +7553,12 @@
     const selected = allTests.filter(t => selectedTestIds.has(String(t.testId || t.id)));
     if (!selected.length) { log('No tests selected.', 'tep-log-err'); return; }
 
+    if (action === 'backup') {
+      bulkAction.value = '';
+      await backupSelectedTestsToFile(selected);
+      return;
+    }
+
     if (action === 'delete') {
       if (!confirm(`Delete ${selected.length} test(s)? This cannot be undone.`)) return;
     }
@@ -6949,7 +7573,7 @@
       try {
         let resp;
         if (action === 'enable' || action === 'disable') {
-          const updated = { ...t, flagEnabled: action === 'enable' ? 1 : 0, flagIgnoreWarnings: 0 };
+          const updated = applyBgpPolicyFromTestBody({ ...t, flagEnabled: action === 'enable' ? 1 : 0, flagIgnoreWarnings: 0 });
           resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
         } else if (action === 'interval') {
           const newInterval = parseInt(bulkInterval.value, 10);
@@ -6975,7 +7599,7 @@
             updated.freq = newInterval;
           }
           alignSubintervalToInterval(updated, newInterval);
-          resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
+          resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
         } else if (action === 'protocol') {
           if (!isNetworkStyleProtocolFormTest(t)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
           try {
@@ -7039,7 +7663,7 @@
 
           const writeUrl = testApiUrl(t, { forWrite: true });
           log(`  DEBUG bulk protocol → ${writeUrl} type="${t.type}" testType="${t.testType}" → "${updated.testType || t.testType}" port=${newPort}`, 'tep-log-info');
-          resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(updated) });
+          resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
         } else if (action === 'delete') {
           resp = await ajax(testApiUrl(t), { method: 'DELETE' });
         }
@@ -7116,16 +7740,43 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Tabs (create test type tabs)
+  // Tabs (create test type tabs + Restore)
   // ---------------------------------------------------------------------------
-  tabsContainer.addEventListener('click', (e) => {
-    const tab = e.target.closest('.tep-tab');
-    if (!tab) return;
-    tabsContainer.querySelectorAll('.tep-tab').forEach(t => t.classList.remove('active'));
+  function expandCreatePanel() {
+    const createExpand = $('#tep-panel-create');
+    const createToggle = $('#tep-create-toggle');
+    if (createExpand && createExpand.hasAttribute('hidden')) {
+      createExpand.removeAttribute('hidden');
+      if (createToggle) createToggle.setAttribute('aria-expanded', 'true');
+    }
+  }
+
+  function showTestsRestorePanel() {
+    const form = $('#tep-create-form');
+    const panel = $('#tep-restore-panel');
+    if (form) form.hidden = true;
+    if (panel) panel.hidden = false;
+  }
+
+  function hideTestsRestorePanel() {
+    const form = $('#tep-create-form');
+    const panel = $('#tep-restore-panel');
+    if (form) form.hidden = false;
+    if (panel) panel.hidden = true;
+    tabsContainer.querySelectorAll('.tep-tab').forEach((t) => {
+      if (t.dataset.type === 'restore') t.classList.remove('active');
+    });
+    const activeType = currentType && currentType !== 'restore' ? currentType : 'http-server';
+    const tab = tabsContainer.querySelector(`.tep-tab[data-type="${activeType}"]`);
+    if (tab) tab.classList.add('active');
+  }
+
+  function activateCreateTypeTab(tab) {
+    tabsContainer.querySelectorAll('.tep-tab').forEach((t) => t.classList.remove('active'));
     tab.classList.add('active');
     currentType = tab.dataset.type;
+    hideTestsRestorePanel();
 
-    // Show/hide type-specific fields
     $('#tep-a2s-fields').style.display = (currentType === 'http-server' || currentType === 'agent-to-server' || currentType === 'page-load') ? 'flex' : 'none';
 
     const subWrap = $('#tep-subinterval-wrap');
@@ -7144,7 +7795,6 @@
       }
     }
 
-    // Update placeholder & name template
     const nameInput = $('#tep-testname');
     const targetsInput = $('#tep-targets');
     switch (currentType) {
@@ -7164,6 +7814,30 @@
     syncTargetsCloneGutter();
     clearCreateFailureStatus();
     updateCreateUnitsEstimate();
+  }
+
+  function openTestsRestoreTab() {
+    expandCreatePanel();
+    tabsContainer.querySelectorAll('.tep-tab').forEach((t) => t.classList.remove('active'));
+    const restoreTab = tabsContainer.querySelector('.tep-tab[data-type="restore"]');
+    if (restoreTab) restoreTab.classList.add('active');
+    showTestsRestorePanel();
+    if (!testsRestoreImportData) {
+      const input = $('#tep-restore-import-file');
+      if (input) {
+        try { input.click(); } catch (_) { /* */ }
+      }
+    }
+  }
+
+  tabsContainer.addEventListener('click', (e) => {
+    const tab = e.target.closest('.tep-tab');
+    if (!tab) return;
+    if (tab.dataset.type === 'restore') {
+      openTestsRestoreTab();
+      return;
+    }
+    activateCreateTypeTab(tab);
   });
 
   // A2S protocol toggle — show/hide TCP options when ICMP is selected
@@ -7176,6 +7850,74 @@
   // ---------------------------------------------------------------------------
   // TE internal test body builders (matched to actual TE AJAX format)
   // ---------------------------------------------------------------------------
+  function extractTargetHostForBgpCheck(target) {
+    if (target == null) return '';
+    let s = String(target).trim();
+    if (!s) return '';
+    s = s.replace(/\s+ICMP$/i, '').trim();
+    try {
+      if (/^https?:\/\//i.test(s)) {
+        const u = new URL(s);
+        return u.hostname || '';
+      }
+    } catch (_) { /* not a full URL */ }
+    s = s.replace(/^https?:\/\//i, '').replace(/[/?#].*$/, '').trim();
+    if (s.startsWith('[')) {
+      const end = s.indexOf(']');
+      if (end > 0) return s.slice(1, end);
+    }
+    const colonIdx = s.lastIndexOf(':');
+    if (colonIdx > 0 && !s.includes('[')) {
+      const maybePort = parseInt(s.substring(colonIdx + 1), 10);
+      if (maybePort > 0 && maybePort < 65536) s = s.substring(0, colonIdx);
+    }
+    return s;
+  }
+
+  function isPrivateOrLocalHost(host) {
+    const h = String(host || '').trim().toLowerCase();
+    if (!h) return false;
+    if (h === 'localhost' || h.endsWith('.local')) return true;
+    const m4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m4) {
+      const a = m4.slice(1).map(Number);
+      if (a.some((n) => n > 255)) return false;
+      if (a[0] === 10) return true;
+      if (a[0] === 127) return true;
+      if (a[0] === 169 && a[1] === 254) return true;
+      if (a[0] === 192 && a[1] === 168) return true;
+      if (a[0] === 172 && a[1] >= 16 && a[1] <= 31) return true;
+      return false;
+    }
+    if (h === '::1') return true;
+    if (h.startsWith('fe80:')) return true;
+    if (h.startsWith('fc') || h.startsWith('fd')) return true;
+    return false;
+  }
+
+  function shouldDisableBgpForTarget(target) {
+    return isPrivateOrLocalHost(extractTargetHostForBgpCheck(target));
+  }
+
+  /** TE rejects public BGP monitors for RFC1918 / local targets — disable BGP on create/save. */
+  function applyBgpPolicyForLocalTarget(body, target) {
+    if (!body || typeof body !== 'object') return body;
+    if (!shouldDisableBgpForTarget(target)) return body;
+    body.flagBgp = 0;
+    body.flagUsePublicBgp = 0;
+    body.privateMonitorSet = { monitorSetId: null, bgpMonitors: [] };
+    return body;
+  }
+
+  function applyBgpPolicyFromTestBody(body) {
+    if (!body || typeof body !== 'object') return body;
+    let target = getTarget(body);
+    if (!target && body.server && typeof body.server === 'object') {
+      target = body.server.serverName || body.server.target || '';
+    }
+    return applyBgpPolicyForLocalTarget(body, target);
+  }
+
   function baseBody(name, vAgentIds, aid) {
     return {
       alertSuppressionWindowIds: [],
@@ -7217,7 +7959,7 @@
     const probeMode = opts.probeMode || 'SACK';
     const inSession = opts.pathtraceInSession != null ? opts.pathtraceInSession : 1;
     const port = opts.port || 443;
-    return {
+    return applyBgpPolicyForLocalTarget({
       ...baseBody(name, vAgentIds, aid),
       authType: 'NONE',
       customHeaders: '',
@@ -7249,7 +7991,7 @@
       clientCertPresent: false,
       allowVerifyContent: false,
       proxyId: null
-    };
+    }, target);
   }
 
   function buildAgentToServerBody(name, target, interval, vAgentIds, aid, opts) {
@@ -7299,7 +8041,7 @@
       body.readableTarget = icmpTarget;
       body.targetServer = { serverName: host, port: -1, target: icmpTarget };
     }
-    return body;
+    return applyBgpPolicyForLocalTarget(body, host);
   }
 
   function buildPageLoadBody(name, target, pageInterval, vAgentIds, aid, opts) {
@@ -7311,7 +8053,7 @@
     const rawSub = (opts.subInterval != null && Number(opts.subInterval) > 0) ? Number(opts.subInterval)
       : ((opts.httpInterval != null && Number(opts.httpInterval) > 0) ? Number(opts.httpInterval) : pageInterval);
     const subI = coerceSubintervalToDividePageInterval(pageInterval, rawSub);
-    return {
+    return applyBgpPolicyForLocalTarget({
       ...baseBody(name, vAgentIds, aid),
       authType: 'NONE',
       customHeaders: '',
@@ -7347,7 +8089,7 @@
       allowVerifyContent: false,
       proxyId: null,
       pageLoadTimeLimit: 10
-    };
+    }, target);
   }
 
   const TE_TYPE_MAP = {
@@ -7598,19 +8340,9 @@
     if (createUnitsFocused) updateManageUnitsTotal();
   }
 
-  // ─── Tests: Backup / Restore ─────────────────────────────────────────
-  // Cloned from the dashboard flow (see #tep-dash-block-backup-restore and
-  // restoreDashboardFromEditor). Differences from dashboards:
-  //   1. Tests are always a LIST. The backup source is either the rows
-  //      checked in #tep-bulk-bar (selectedTestIds), or — if nothing is
-  //      checked — the full loaded list. JSON is emitted as an array even
-  //      for a single test so restore always parses the same shape.
-  //   2. Each test type has its own POST endpoint (/ajax/tests/{slug}).
-  //      testApiUrl(t, {forWrite:true}) picks the slug for us.
-  //   3. Restore always creates NEW tests (per user's selected semantic).
-  //      TE assigns a fresh testId; on duplicate name the bump loop keeps
-  //      going until the collision is resolved, matching the dashboard's
-  //      DASH_RESTORE_NAME_CONFLICT_MAX behaviour.
+  // ─── Tests: Backup (bulk) / Restore (Create tab) ─────────────────────
+  //   Backup: Manage checkboxes → bulk action “Backup to file”.
+  //   Restore: Create → Restore tab → import JSON → pick tests → restore.
 
   const TESTS_RESTORE_NAME_CONFLICT_MAX = 24;
 
@@ -7719,82 +8451,183 @@
     }
   }
 
-  // Which tests should the "Refresh" button back up? Selected rows via the
-  // bulk bar, or — when the selection is empty — every loaded test.
-  function collectTestsForBackup() {
-    const idSet = selectedTestIds instanceof Set ? selectedTestIds : new Set();
-    if (idSet.size === 0) return allTests.slice();
-    return allTests.filter((t) => idSet.has(String(t.testId || t.id)));
+  function getTestListId(t) {
+    return String(t && (t.testId != null ? t.testId : t.id) || '');
   }
 
-  // Sync the collapsed JSON summary + parenthetical count. Mirrors the
-  // dashboard's refreshDashboardJsonSummary but for an array payload.
-  function refreshTestsJsonSummary() {
-    const ta = $('#tep-tests-json');
-    const summary = $('#tep-tests-json-summary');
-    const countEl = $('#tep-tests-json-count');
-    if (!ta || !summary) return;
-    const raw = ta.value || '';
-    const t = raw.trim();
-    if (!t) {
-      summary.textContent = 'No JSON yet — click Refresh to load selected tests (or all)';
-      summary.className = 'tep-dash-json-sum tep-dash-json-sum-empty';
-      if (countEl) countEl.textContent = '';
-      return;
-    }
-    let parsed;
-    try { parsed = JSON.parse(t); } catch (e) {
-      summary.textContent = `JSON parse error: ${e.message}`;
-      summary.className = 'tep-dash-json-sum tep-dash-json-sum-err';
-      if (countEl) countEl.textContent = '';
-      return;
-    }
-    const arr = normalizeTestsRestoreRoot(parsed);
-    const n = arr.length;
-    const names = arr.slice(0, 3).map((x) => x.testName || x.name || '(unnamed)').join(', ');
-    summary.textContent = `${n} test${n === 1 ? '' : 's'}${names ? ` — ${names}${n > 3 ? ', …' : ''}` : ''}`;
-    summary.className = 'tep-dash-json-sum tep-dash-json-sum-ok';
-    if (countEl) countEl.textContent = `(${n} test${n === 1 ? '' : 's'})`;
+  function getTestListLabel(t, index) {
+    const name = t.testName || t.name || t.url || (t.server && t.server.serverName) || `Test ${index + 1}`;
+    const type = t.testType || t.type || '';
+    return { name: String(name), type: String(type) };
   }
 
-  async function refreshTestsEditor() {
-    const ta = $('#tep-tests-json');
-    if (!ta) return;
-    const source = collectTestsForBackup();
-    if (!source.length) {
-      toast('No tests to back up — the list is empty', 'err');
-      setStatus('No tests loaded', 'err');
+  function testsRestoreRowKey(t, index) {
+    const id = getTestListId(t);
+    if (id) return `id:${id}`;
+    const name = (t.testName || t.name || '').trim();
+    if (name) return `name:${name}::${index}`;
+    return `idx:${index}`;
+  }
+
+  function updateTestsRestorePickCount() {
+    const countEl = $('#tep-restore-pick-count');
+    if (countEl) countEl.textContent = `${selectedTestsRestoreKeys.size} selected`;
+    const runBtn = $('#tep-restore-run');
+    if (runBtn) runBtn.disabled = !testsRestoreImportData || selectedTestsRestoreKeys.size === 0;
+  }
+
+  function renderTestsRestorePicker(arr) {
+    const listEl = $('#tep-restore-pick-list');
+    if (!listEl) return;
+    const rows = Array.isArray(arr) ? arr : [];
+    if (!rows.length) {
+      listEl.innerHTML = '<span class="tep-log-info">No tests in backup file.</span>';
+      updateTestsRestorePickCount();
       return;
     }
-    setStatus(`Fetching detail for ${source.length} test${source.length === 1 ? '' : 's'}…`);
-    log(`Tests backup: fetching detail for ${source.length} test(s)`, 'tep-log-info');
-    // fetchTestDetail mutates the entry in `allTests` in place. We clone
-    // afterwards so any strip we do on the backup copy doesn't leak into
-    // live state used by other panel features (Edit modal etc.).
-    const errors = [];
-    for (const t of source) {
-      try {
-        if (!t._agentsLoaded) await fetchTestDetail(t);
-      } catch (e) {
-        errors.push({ id: t.testId || t.id, err: e.message });
+    listEl.innerHTML = '';
+    rows.forEach((t, i) => {
+      const key = testsRestoreRowKey(t, i);
+      const { name, type } = getTestListLabel(t, i);
+      const row = document.createElement('label');
+      row.className = 'tep-br-pick-row';
+      const checked = selectedTestsRestoreKeys.has(key);
+      row.innerHTML = `<input type="checkbox" data-key="${tepEscapeHtmlText(key)}" ${checked ? 'checked' : ''}><span class="tep-br-pick-name" title="${tepEscapeHtmlText(name)}">${tepEscapeHtmlText(name)}</span><span class="tep-br-pick-meta">${tepEscapeHtmlText(type)}</span>`;
+      const cb = row.querySelector('input');
+      if (cb) {
+        cb.addEventListener('change', (e) => {
+          if (e.target.checked) selectedTestsRestoreKeys.add(key);
+          else selectedTestsRestoreKeys.delete(key);
+          updateTestsRestorePickCount();
+        });
       }
-    }
-    if (errors.length) {
-      log(`Tests backup: ${errors.length} detail fetch(es) failed (see below)`, 'tep-log-err');
-      for (const e of errors) log(`  · testId=${e.id}: ${e.err}`, 'tep-log-err');
-    }
-    const copies = source.map((t) => {
-      const c = cloneJsonDeep(t);
-      // Panel internals are noise in a backup file. Identity/timestamps are
-      // stripped on RESTORE (not here) so the file remains a faithful
-      // historical snapshot of the account state at backup time.
-      for (const k of Object.keys(c)) { if (k.startsWith('_')) delete c[k]; }
-      return c;
+      listEl.appendChild(row);
     });
-    ta.value = JSON.stringify(copies, null, 2);
-    refreshTestsJsonSummary();
-    setStatus(`Tests JSON ready — ${copies.length} test${copies.length === 1 ? '' : 's'}`, 'ok');
-    log(`Tests backup: ${copies.length} test(s) serialized to editor`, 'tep-log-ok');
+    updateTestsRestorePickCount();
+  }
+
+  function syncTestsRestoreSelectionFromData(body) {
+    if (body == null) {
+      selectedTestsRestoreKeys.clear();
+      renderTestsRestorePicker([]);
+      return;
+    }
+    const arr = normalizeTestsRestoreRoot(body);
+    const keys = arr.map((t, i) => testsRestoreRowKey(t, i));
+    const keySet = new Set(keys);
+    for (const k of selectedTestsRestoreKeys) {
+      if (!keySet.has(k)) selectedTestsRestoreKeys.delete(k);
+    }
+    if (!selectedTestsRestoreKeys.size && keys.length) {
+      keys.forEach((k) => selectedTestsRestoreKeys.add(k));
+    }
+    renderTestsRestorePicker(arr);
+  }
+
+  function setAllTestsRestorePick(checked) {
+    if (!testsRestoreImportData) {
+      selectedTestsRestoreKeys.clear();
+      renderTestsRestorePicker([]);
+      return;
+    }
+    const arr = normalizeTestsRestoreRoot(testsRestoreImportData);
+    if (checked) {
+      arr.forEach((t, i) => selectedTestsRestoreKeys.add(testsRestoreRowKey(t, i)));
+    } else {
+      selectedTestsRestoreKeys.clear();
+    }
+    renderTestsRestorePicker(arr);
+  }
+
+  function updateTestsRestoreFileHint() {
+    const hint = $('#tep-restore-file-hint');
+    if (!hint) return;
+    if (!testsRestoreImportData) {
+      hint.textContent = 'Choose a backup JSON file to see tests you can restore.';
+      return;
+    }
+    const n = normalizeTestsRestoreRoot(testsRestoreImportData).length;
+    hint.textContent = testsRestoreImportName
+      ? `${n} test${n === 1 ? '' : 's'} in ${testsRestoreImportName}`
+      : `${n} test${n === 1 ? '' : 's'} loaded`;
+  }
+
+  function loadTestsRestoreBackupFile(file) {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const body = JSON.parse(String(r.result || ''));
+        const arr = normalizeTestsRestoreRoot(body);
+        if (!arr.length) {
+          toast('No test objects found in file', 'err');
+          return;
+        }
+        testsRestoreImportData = body;
+        testsRestoreImportName = file.name || '';
+        selectedTestsRestoreKeys.clear();
+        syncTestsRestoreSelectionFromData(body);
+        updateTestsRestoreFileHint();
+        const pickWrap = $('#tep-restore-pick-wrap');
+        if (pickWrap) pickWrap.hidden = false;
+        toast(`Loaded ${arr.length} test(s) from ${testsRestoreImportName}`, 'ok');
+      } catch (e) {
+        toast(`Invalid JSON: ${e.message}`, 'err');
+      }
+    };
+    r.onerror = () => toast('Failed to read file', 'err');
+    r.readAsText(file);
+  }
+
+  async function backupSelectedTestsToFile(selected) {
+    if (!selected.length) {
+      toast('Select tests in Manage first', 'err');
+      return;
+    }
+    const dismiss = toastProcessing(`Backing up ${selected.length} test(s)…`);
+    try {
+      setStatus(`Fetching detail for ${selected.length} test(s)…`);
+      log(`Tests backup: fetching detail for ${selected.length} test(s)`, 'tep-log-info');
+      const errors = [];
+      for (const t of selected) {
+        try {
+          if (!t._agentsLoaded) await fetchTestDetail(t);
+        } catch (e) {
+          errors.push({ id: t.testId || t.id, err: e.message });
+        }
+      }
+      if (errors.length) {
+        log(`Tests backup: ${errors.length} detail fetch(es) failed`, 'tep-log-err');
+        for (const e of errors) log(`  · testId=${e.id}: ${e.err}`, 'tep-log-err');
+      }
+      const copies = selected.map((t) => {
+        const c = cloneJsonDeep(t);
+        for (const k of Object.keys(c)) { if (k.startsWith('_')) delete c[k]; }
+        return c;
+      });
+      const json = JSON.stringify(copies, null, 2);
+      const suggested = suggestTestsBackupFileName();
+      const name = window.prompt('Download filename:', suggested) || suggested;
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        try { a.remove(); } catch (_) { /* */ }
+        try { URL.revokeObjectURL(url); } catch (_) { /* */ }
+      }, 500);
+      log(`Tests backup: downloaded ${copies.length} test(s) as ${name}`, 'tep-log-ok');
+      toast(`Backed up ${copies.length} test(s)`, 'ok');
+      setStatus(`Backup saved — ${copies.length} test(s)`, 'ok');
+    } catch (e) {
+      log(`Tests backup failed: ${e.message}`, 'tep-log-err');
+      toast(`Backup failed: ${e.message}`, 'err');
+    } finally {
+      dismiss();
+    }
   }
 
   function suggestTestsBackupFileName() {
@@ -7802,55 +8635,30 @@
     return `te-tests-backup-${iso}.json`;
   }
 
-  function downloadTestsBackup() {
-    const ta = $('#tep-tests-json');
-    const raw = ta ? (ta.value || '') : '';
-    if (!raw.trim()) {
-      toast('Nothing to save — click Refresh first', 'err');
-      return;
-    }
-    const suggested = suggestTestsBackupFileName();
-    const name = window.prompt('Download filename:', suggested) || suggested;
-    const blob = new Blob([raw], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      try { a.remove(); } catch (_) { /* */ }
-      try { URL.revokeObjectURL(url); } catch (_) { /* */ }
-    }, 500);
-    toast('Download started', 'ok');
-  }
-
   function syncTestsRestoreAgentUi() {
-    const modeEl = $('#tep-tests-restore-agent-mode');
-    const wrap = $('#tep-tests-restore-agents-wrap');
+    const modeEl = $('#tep-restore-agent-mode');
+    const wrap = $('#tep-restore-agents-wrap');
     if (!modeEl || !wrap) return;
     wrap.style.display = modeEl.value === 'strip' ? '' : 'none';
   }
 
-  async function restoreTestsFromEditor() {
-    const ta = $('#tep-tests-json');
-    if (!ta || !ta.value.trim()) {
-      toast('Load, import, or paste tests JSON in the box first', 'err');
+  async function restoreTestsFromImport() {
+    if (!testsRestoreImportData) {
+      toast('Choose a backup file first', 'err');
       return;
     }
-    const modeEl = $('#tep-tests-restore-agent-mode');
-    const prefixEl = $('#tep-tests-restore-title-prefix');
+    const modeEl = $('#tep-restore-agent-mode');
+    const prefixEl = $('#tep-restore-title-prefix');
     const mode = (modeEl && modeEl.value) || 'keep';
     const prefix = prefixEl && prefixEl.value ? prefixEl.value : '';
-    let body;
-    try { body = JSON.parse(ta.value); } catch (e) {
-      toast('Invalid JSON: ' + e.message, 'err');
+    const arrAll = normalizeTestsRestoreRoot(testsRestoreImportData);
+    if (!arrAll.length) {
+      toast('Could not find any test objects in backup', 'err');
       return;
     }
-    const arr = normalizeTestsRestoreRoot(body);
+    const arr = arrAll.filter((t, i) => selectedTestsRestoreKeys.has(testsRestoreRowKey(t, i)));
     if (!arr.length) {
-      toast('Could not find any test objects in JSON', 'err');
-      log('Tests restore: normalizeTestsRestoreRoot returned no tests. Paste an array of test config objects, or a single test object.', 'tep-log-err');
+      toast('Select at least one test to restore', 'err');
       return;
     }
     const stripAccount = mode === 'strip';
@@ -7876,6 +8684,7 @@
       if (aid) obj.aid = aid;
       stripTestForRestore(obj, stripAccount);
       applyTestsRestoreNameAdorner(obj, prefix);
+      applyBgpPolicyFromTestBody(obj);
       const label = obj.testName || obj.name || `test #${i + 1}`;
       // testApiUrl needs `type` to resolve the write slug. Fall back to
       // testType (the canonical label) if `type` is missing/renamed.
@@ -7974,6 +8783,9 @@
       } else {
         body = typeInfo.buildBody(testName, target, pageOrTestInterval, vAgentIds, aid, protoOpts);
       }
+      if (shouldDisableBgpForTarget(target)) {
+        log(`Local/private target "${extractTargetHostForBgpCheck(target)}" — BGP disabled`, 'tep-log-info');
+      }
 
       // For network tests, try to fetch an existing one first to discover field format
       if (currentType === 'agent-to-server') {
@@ -8040,6 +8852,1167 @@
       resetCreateTestsForm();
       log('Create form cleared for the next batch.', 'tep-log-info');
     }
+  }
+
+  // ─── Endpoint: deploy scheduled tests ─────────────────────────────────
+  const ENDPOINT_TEST_SEARCH_PATH = '/namespace/endpoint-api/test-configs-service/v1/test-configs/search';
+  const ENDPOINT_TEST_DETAIL_PATH = '/namespace/endpoint-api/test-configs-service/v1/test-configs';
+  const ENDPOINT_BULK_SAVE_PATH = '/namespace/endpoint-api/test-configs-service/v1/test-configs/bulk-save';
+  const ENDPOINT_BULK_DELETE_PATH = '/namespace/endpoint-api/test-configs-service/v1/test-configs/bulk-delete';
+  const ENDPOINT_DEPLOY_PATH = '/namespace/product-led-growth-api/ajax/tests/templates/custom/deploy?module=ENDPOINT';
+  const ENDPOINT_SEARCH_DEFAULT_BODY = {
+    filters: [],
+    deleted: false,
+    pageIndex: 0,
+    pageSize: 200
+  };
+
+  function normalizeEndpointSearchBody(body) {
+    const out = body && typeof body === 'object' ? { ...body } : {};
+    if (out.pageIndex == null) out.pageIndex = 0;
+    if (out.pageSize == null) out.pageSize = 200;
+    if (out.deleted == null) out.deleted = false;
+    if (!Array.isArray(out.filters)) out.filters = [];
+    return out;
+  }
+
+  async function fetchEndpointTestsViaSearch(body) {
+    const base = normalizeEndpointSearchBody(body);
+    const pageSize = Number(base.pageSize) || 200;
+    const merged = [];
+    let pageIndex = Number(base.pageIndex) || 0;
+    let totalCount = null;
+    for (let guard = 0; guard < 50; guard++) {
+      const pageBody = { ...base, pageIndex, pageSize };
+      const resp = await ajax(ENDPOINT_TEST_SEARCH_PATH, {
+        method: 'POST',
+        body: JSON.stringify(pageBody)
+      });
+      const text = await resp.text().catch(() => '');
+      if (!resp.ok) {
+        throw new Error(`${resp.status}: ${text.slice(0, 240)}`);
+      }
+      let data;
+      try { data = JSON.parse(text); } catch (e) {
+        throw new Error(`JSON parse: ${e.message}`);
+      }
+      const configs = extractEndpointTestConfigsFromSearchResponse(data);
+      if (!Array.isArray(configs)) {
+        throw new Error(`unexpected shape keys: ${topLevelKeysLabel(data)}`);
+      }
+      merged.push(...configs);
+      if (data && data.totalCount != null) totalCount = Number(data.totalCount);
+      if (!configs.length || configs.length < pageSize) break;
+      if (totalCount != null && merged.length >= totalCount) break;
+      pageIndex += 1;
+    }
+    return merged;
+  }
+
+  function getSniffedEndpointSearchBody() {
+    for (const r of TEP_EP_REQUEST_SNIFF) {
+      if (!r.path || !r.path.includes('test-configs/search') || !r.body) continue;
+      try {
+        const parsed = JSON.parse(r.body);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch (_) { /* */ }
+    }
+    return null;
+  }
+
+  function endpointSearchBodyCandidates() {
+    const out = [];
+    const sniffed = getSniffedEndpointSearchBody();
+    if (sniffed) out.push(sniffed);
+    if (endpointSearchBodyCache) out.push(endpointSearchBodyCache);
+    out.push(
+      ENDPOINT_SEARCH_DEFAULT_BODY,
+      { filters: [], deleted: false, pageIndex: 0, pageSize: 50 }
+    );
+    const seen = new Set();
+    return out.filter((b) => {
+      const k = JSON.stringify(b);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+
+  function extractEndpointTestConfigsFromSearchResponse(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (Array.isArray(data.testConfigs)) return data.testConfigs;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.content)) return data.content;
+    if (Array.isArray(data)) return data;
+    return null;
+  }
+
+  function unwrapEndpointTestRow(t) {
+    if (!t || typeof t !== 'object') return t;
+    if (t.testConfig && typeof t.testConfig === 'object') {
+      const inner = { ...t.testConfig };
+      if (inner.testId == null && t.testId != null) inner.testId = t.testId;
+      if ((!inner.name || !String(inner.name).trim()) && t.name) inner.name = t.name;
+      return inner;
+    }
+    return t;
+  }
+
+  function getEndpointTestName(t) {
+    const raw = unwrapEndpointTestRow(t);
+    if (!raw) return 'Unnamed';
+    const n = raw.name || raw.testName || raw.description;
+    if (n != null && String(n).trim()) return String(n).trim();
+    const target = getEndpointTestTarget(raw);
+    if (target) return target;
+    const id = getEndpointTestId(raw);
+    if (id != null && id !== '') return `Test ${id}`;
+    return 'Unnamed';
+  }
+
+  function normalizeEndpointTest(t) {
+    if (!t || typeof t !== 'object') return t;
+    const out = { ...unwrapEndpointTestRow(t) };
+    out.testId = out.testId != null ? out.testId : (out.id != null ? out.id : out.testConfigId);
+    out.name = getEndpointTestName(out);
+    out.testType = out.testType || out.type || '';
+    out.testCategory = out.testCategory || out.category || '';
+    if (out.flagEnabled == null && out.enabled != null) out.flagEnabled = out.enabled ? 1 : 0;
+    if (out.flagEnabled == null && out.isEnabled != null) out.flagEnabled = out.isEnabled ? 1 : 0;
+    if (typeof out.flagEnabled === 'boolean') out.flagEnabled = out.flagEnabled ? 1 : 0;
+    if (typeof out.flagDeleted === 'boolean') out.flagDeleted = out.flagDeleted ? 1 : 0;
+    return out;
+  }
+
+  function isEndpointTestDeleted(t) {
+    const raw = unwrapEndpointTestRow(t);
+    if (!raw) return false;
+    if (raw.flagDeleted === true || raw.flagDeleted === 1) return true;
+    if (raw.deleted === true || raw.deleted === 1) return true;
+    if (raw.isDeleted === true || raw.isDeleted === 1) return true;
+    return false;
+  }
+
+  function cloneEndpointTestConfig(t) {
+    return JSON.parse(JSON.stringify(unwrapEndpointTestRow(t) || {}));
+  }
+
+  function isEndpointTestEnabled(t) {
+    if (!t) return false;
+    if (t.flagEnabled === true || t.flagEnabled === 1) return true;
+    return false;
+  }
+
+  async function prepareEndpointConfigForSave(t) {
+    try {
+      return await fetchEndpointTestDetail(t);
+    } catch (e) {
+      log(`Endpoint save: detail fetch failed for ${getEndpointTestId(t)} — using list row (${e.message})`, 'tep-log-info');
+      return cloneEndpointTestConfig(t);
+    }
+  }
+
+  async function endpointBulkSave(testConfigs) {
+    if (!Array.isArray(testConfigs) || !testConfigs.length) {
+      throw new Error('no test configs to save');
+    }
+    log(`Endpoint bulk-save ${testConfigs.length} test(s)…`, 'tep-log-info');
+    const resp = await ajax(ENDPOINT_BULK_SAVE_PATH, {
+      method: 'POST',
+      body: JSON.stringify({ testConfigs })
+    });
+    const text = await resp.text().catch(() => '');
+    if (!resp.ok) {
+      throw new Error(`${resp.status}: ${text.slice(0, 400)}`);
+    }
+    let data = null;
+    if (text.trim()) {
+      try { data = JSON.parse(text); } catch (_) { /* empty or non-json ok */ }
+    }
+    log(`Endpoint bulk-save OK (${testConfigs.length} test(s))`, 'tep-log-ok');
+    return data;
+  }
+
+  async function endpointBulkDelete(testIds) {
+    const ids = (testIds || []).map((id) => Number(id)).filter((n) => Number.isFinite(n));
+    if (!ids.length) throw new Error('no test ids to delete');
+    log(`Endpoint bulk-delete ${ids.length} test(s): ${ids.join(', ')}`, 'tep-log-info');
+    const resp = await ajax(ENDPOINT_BULK_DELETE_PATH, {
+      method: 'POST',
+      body: JSON.stringify({ testIds: ids })
+    });
+    const text = await resp.text().catch(() => '');
+    if (!resp.ok) {
+      throw new Error(`${resp.status}: ${text.slice(0, 400)}`);
+    }
+    log(`Endpoint bulk-delete OK`, 'tep-log-ok');
+    return text;
+  }
+
+  function applyEndpointBulkMutation(cfg, action, opts) {
+    const out = cloneEndpointTestConfig(cfg);
+    if (action === 'enable') out.flagEnabled = true;
+    else if (action === 'disable') out.flagEnabled = false;
+    else if (action === 'interval') {
+      const sec = opts && opts.interval != null ? Number(opts.interval) : 60;
+      if (!out.genericConfig || typeof out.genericConfig !== 'object') {
+        out.genericConfig = { priority: 0, interval: sec };
+      } else {
+        out.genericConfig.interval = sec;
+      }
+    } else if (action === 'probe') {
+      const mode = (opts && opts.probeMode) ? String(opts.probeMode) : 'AUTO';
+      if (!out.networkConfig || typeof out.networkConfig !== 'object') {
+        out.networkConfig = buildEndpointNetworkConfig();
+      }
+      out.networkConfig.tcpProbeMode = mode;
+    }
+    return out;
+  }
+
+  const ENDPOINT_INTERVAL_OPTS = [60, 120, 300, 600, 900, 1800, 3600];
+
+  function getEndpointMaxMachines(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const mc = raw && raw.machineConfig;
+    const n = mc && mc.maxMachines != null ? Number(mc.maxMachines) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : 25;
+  }
+
+  function closeEndpointEditForms(exceptCard) {
+    const listEl = $('#tep-ep-test-list');
+    if (!listEl) return;
+    listEl.querySelectorAll('.tep-test-card.is-editing').forEach((c) => {
+      if (exceptCard && c === exceptCard) return;
+      c.classList.remove('is-editing');
+      const f = c.querySelector('.tep-edit-form');
+      if (f) f.remove();
+    });
+  }
+
+  function applyEndpointEditFormValues(cfg, vals) {
+    const out = cloneEndpointTestConfig(cfg);
+    out.name = vals.name;
+    out.flagEnabled = !!vals.enabled;
+    if (isEndpointDynamicTest(out)) return out;
+
+    const sec = Number(vals.interval);
+    if (!out.genericConfig || typeof out.genericConfig !== 'object') {
+      out.genericConfig = { priority: 0, interval: Number.isFinite(sec) && sec > 0 ? sec : 60 };
+    } else {
+      out.genericConfig.interval = Number.isFinite(sec) && sec > 0 ? sec : out.genericConfig.interval;
+    }
+
+    const tt = String(out.testType || out.type || '');
+    if (tt === 'Http') {
+      if (!out.httpConfig || typeof out.httpConfig !== 'object') out.httpConfig = {};
+      out.httpConfig.url = parseEndpointHttpUrl(vals.target);
+    } else if (tt === 'Network' || tt === 'RADIUS') {
+      out.server = parseEndpointNetworkHost(vals.target);
+    }
+
+    if (!out.networkConfig || typeof out.networkConfig !== 'object') {
+      out.networkConfig = buildEndpointNetworkConfig();
+    }
+    out.networkConfig.tcpProbeMode = vals.probeMode || 'AUTO';
+
+    const maxM = Math.max(1, parseInt(vals.maxMachines, 10) || 25);
+    if (!out.machineConfig || typeof out.machineConfig !== 'object') {
+      out.machineConfig = buildEndpointMachineConfig(maxM);
+    } else {
+      out.machineConfig.maxMachines = maxM;
+    }
+    return out;
+  }
+
+  function toggleEndpointEditForm(card, t) {
+    const existing = card.querySelector('.tep-edit-form');
+    if (existing) {
+      existing.remove();
+      card.classList.remove('is-editing');
+      return;
+    }
+    closeEndpointEditForms(card);
+    card.classList.add('is-editing');
+
+    const isDynamic = isEndpointDynamicTest(t);
+    const target = getEndpointTestTarget(t);
+    const interval = getEndpointTestInterval(t) || 60;
+    const probe = getEndpointProbeMode(t);
+    const maxMachines = getEndpointMaxMachines(t);
+    const tt = String(t.testType || t.type || '');
+    const targetLabel = tt === 'Http' ? 'URL' : 'Target';
+
+    const intervalBlock = isDynamic ? '' : `<div class="tep-edit-row">
+        <label>Interval</label>
+        <select class="tep-ep-edit-interval">
+          ${ENDPOINT_INTERVAL_OPTS.map((v) =>
+    `<option value="${v}" ${v === interval ? 'selected' : ''}>${v / 60}m</option>`).join('')}
+        </select>
+      </div>`;
+
+    const probeBlock = isDynamic ? '' : `<div class="tep-edit-row">
+        <label>Probe</label>
+        <select class="tep-ep-edit-probe">
+          <option value="AUTO" ${probe === 'AUTO' ? 'selected' : ''}>AUTO</option>
+          <option value="SYN" ${probe === 'SYN' ? 'selected' : ''}>SYN</option>
+          <option value="SACK" ${probe === 'SACK' ? 'selected' : ''}>SACK</option>
+        </select>
+      </div>`;
+
+    const maxMachinesBlock = isDynamic ? '' : `<div class="tep-edit-row">
+        <label>Max agents</label>
+        <input type="number" class="tep-ep-edit-max-machines" value="${maxMachines}" min="1" max="999" style="flex:0 0 80px;">
+      </div>`;
+
+    const form = document.createElement('div');
+    form.className = 'tep-edit-form';
+    form.innerHTML = `
+      <div class="tep-edit-row">
+        <label>Name</label>
+        <input class="tep-ep-edit-name" value="${(getEndpointTestName(t) || '').replace(/"/g, '&quot;')}">
+      </div>
+      <div class="tep-edit-row">
+        <label>${isDynamic ? 'Application' : targetLabel}</label>
+        <input class="tep-ep-edit-target" value="${(target || '').replace(/"/g, '&quot;')}" ${isDynamic ? 'disabled' : ''}>
+      </div>
+      ${intervalBlock}
+      ${probeBlock}
+      ${maxMachinesBlock}
+      <div class="tep-edit-row">
+        <label>Enabled</label>
+        <select class="tep-ep-edit-enabled">
+          <option value="1" ${isEndpointTestEnabled(t) ? 'selected' : ''}>Enabled</option>
+          <option value="0" ${!isEndpointTestEnabled(t) ? 'selected' : ''}>Disabled</option>
+        </select>
+      </div>
+      <div class="tep-edit-actions">
+        <button type="button" class="tep-btn tep-btn-primary tep-btn-sm tep-ep-save-edit">Save</button>
+        <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-ep-cancel-edit">Cancel</button>
+      </div>
+    `;
+
+    form.querySelector('.tep-ep-cancel-edit').addEventListener('click', () => {
+      card.classList.remove('is-editing');
+      form.remove();
+    });
+
+    form.querySelector('.tep-ep-save-edit').addEventListener('click', async () => {
+      const dismiss = toastProcessing('Saving endpoint test…');
+      try {
+        const name = (form.querySelector('.tep-ep-edit-name').value || '').trim();
+        if (!name) {
+          toast('Name is required', 'err');
+          return;
+        }
+        const targetEl = form.querySelector('.tep-ep-edit-target');
+        const vals = {
+          name,
+          target: targetEl ? targetEl.value.trim() : '',
+          interval: parseInt(form.querySelector('.tep-ep-edit-interval') && form.querySelector('.tep-ep-edit-interval').value, 10),
+          probeMode: form.querySelector('.tep-ep-edit-probe') ? form.querySelector('.tep-ep-edit-probe').value : 'AUTO',
+          maxMachines: form.querySelector('.tep-ep-edit-max-machines') ? form.querySelector('.tep-ep-edit-max-machines').value : getEndpointMaxMachines(t),
+          enabled: parseInt(form.querySelector('.tep-ep-edit-enabled').value, 10) === 1
+        };
+        const base = await prepareEndpointConfigForSave(t);
+        const updated = applyEndpointEditFormValues(base, vals);
+        await endpointBulkSave([updated]);
+        log(`Endpoint test saved: "${name}" (id ${getEndpointTestId(t)})`, 'tep-log-ok');
+        toast(`Saved "${name}"`, 'ok');
+        card.classList.remove('is-editing');
+        form.remove();
+        await loadEndpointTests();
+      } catch (e) {
+        log(`Endpoint save failed: ${e.message}`, 'tep-log-err');
+        if (isLikelyPermissionDenied(String(e.message), String(e.message))) {
+          setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+        }
+        toast(`Save failed: ${e.message}`, 'err');
+      } finally {
+        dismiss();
+      }
+    });
+
+    card.appendChild(form);
+  }
+
+  async function toggleEndpointTestEnabled(t, card) {
+    const enabling = !isEndpointTestEnabled(t);
+    if (!enabling && !window.confirm(`Disable "${getEndpointTestName(t)}"?`)) return;
+    const dismiss = toastProcessing(enabling ? 'Enabling…' : 'Disabling…');
+    try {
+      const base = await prepareEndpointConfigForSave(t);
+      const updated = applyEndpointBulkMutation(base, enabling ? 'enable' : 'disable', {});
+      await endpointBulkSave([updated]);
+      toast(`${enabling ? 'Enabled' : 'Disabled'} "${getEndpointTestName(t)}"`, 'ok');
+      await loadEndpointTests();
+    } catch (e) {
+      log(`Endpoint toggle failed: ${e.message}`, 'tep-log-err');
+      toast(`Could not update test: ${e.message}`, 'err');
+    } finally {
+      dismiss();
+    }
+  }
+
+  async function deleteEndpointTest(t, card) {
+    const name = getEndpointTestName(t);
+    if (!window.confirm(`Delete endpoint test "${name}"? This cannot be undone.`)) return;
+    const id = getEndpointTestId(t);
+    const dismiss = toastProcessing('Deleting…');
+    try {
+      await endpointBulkDelete([id]);
+      toast(`Deleted "${name}"`, 'ok');
+      selectedEndpointTestIds.delete(String(id));
+      updateEndpointBulkUI();
+      await loadEndpointTests();
+    } catch (e) {
+      log(`Endpoint delete failed: ${e.message}`, 'tep-log-err');
+      toast(`Delete failed: ${e.message}`, 'err');
+    } finally {
+      dismiss();
+    }
+  }
+
+  const ENDPOINT_STRIP_ON_RESTORE_KEYS = [
+    'testId', 'id', 'taskId',
+    'createDate', 'modifiedDate', 'creatorId', 'editorId',
+    'flagDeleted'
+  ];
+
+  function stripEndpointTestForRestore(t) {
+    const out = cloneEndpointTestConfig(t);
+    for (const k of Object.keys(out)) {
+      if (k.startsWith('_')) delete out[k];
+    }
+    for (const k of ENDPOINT_STRIP_ON_RESTORE_KEYS) delete out[k];
+    if (out.flagEnabled == null) out.flagEnabled = true;
+    return out;
+  }
+
+  function normalizeEndpointTestsRestoreRoot(body) {
+    if (Array.isArray(body)) return body.filter((x) => x && typeof x === 'object');
+    if (body && typeof body === 'object') {
+      if (Array.isArray(body.testConfigs)) return body.testConfigs;
+      if (body.testConfig && typeof body.testConfig === 'object') return [body.testConfig];
+    }
+    return [];
+  }
+
+  async function restoreEndpointTestsFromEditor() {
+    const ta = $('#tep-ep-tests-json');
+    if (!ta || !ta.value.trim()) {
+      toast('Paste or refresh endpoint JSON first', 'err');
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(ta.value); } catch (e) {
+      toast(`JSON parse error: ${e.message}`, 'err');
+      return;
+    }
+    const rows = normalizeEndpointTestsRestoreRoot(parsed);
+    if (!rows.length) {
+      toast('No test objects found in JSON', 'err');
+      return;
+    }
+    if (!confirm(`Restore ${rows.length} endpoint test(s) as new configs via bulk-save?`)) return;
+    const dismiss = toastProcessing(`Restoring ${rows.length} endpoint test(s)…`);
+    try {
+      const testConfigs = rows.map(stripEndpointTestForRestore);
+      await endpointBulkSave(testConfigs);
+      toast(`Restored ${testConfigs.length} endpoint test(s)`, 'ok');
+      await loadEndpointTests();
+    } catch (e) {
+      log(`Endpoint restore failed: ${e.message}`, 'tep-log-err');
+      toast(`Restore failed: ${e.message}`, 'err');
+    } finally {
+      dismiss();
+    }
+  }
+
+  function getEndpointTestCategory(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const cat = raw && (raw.testCategory || raw.category);
+    return cat != null && String(cat).trim() ? String(cat).trim() : 'SCHEDULED_TEST';
+  }
+
+  function isEndpointDynamicTest(t) {
+    return getEndpointTestCategory(t) === 'DYNAMIC_APP_TEST';
+  }
+
+  const ENDPOINT_APPLICATION_LABELS = {
+    TEAMS: 'Microsoft Teams',
+    UNKNOWN: 'Unknown application'
+  };
+
+  function formatEndpointApplicationLabel(app) {
+    if (app == null || app === '') return '';
+    const key = String(app).trim();
+    if (!key || key === 'UNKNOWN') return '';
+    if (ENDPOINT_APPLICATION_LABELS[key]) return ENDPOINT_APPLICATION_LABELS[key];
+    return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  function getEndpointTestApplicationLabel(t) {
+    const raw = unwrapEndpointTestRow(t);
+    if (!raw) return '';
+    return formatEndpointApplicationLabel(raw.application || raw.dynamicApplication || raw.app);
+  }
+
+  function getEndpointTestCategoryLabel(t) {
+    if (isEndpointDynamicTest(t)) {
+      const app = getEndpointTestApplicationLabel(t);
+      return app ? `Dynamic · ${app}` : 'Dynamic';
+    }
+    return 'Scheduled';
+  }
+
+  function getEndpointTestId(t) {
+    const raw = unwrapEndpointTestRow(t);
+    return raw && (raw.testId != null ? raw.testId : raw.id);
+  }
+
+  function getEndpointTestTarget(t) {
+    const raw = unwrapEndpointTestRow(t);
+    if (!raw) return '';
+    if (isEndpointDynamicTest(raw)) {
+      const app = getEndpointTestApplicationLabel(raw);
+      if (app) return app;
+    }
+    if (raw.httpConfig && raw.httpConfig.url) return String(raw.httpConfig.url);
+    if (raw.server && typeof raw.server === 'object' && raw.server.serverName) {
+      const port = Number(raw.server.port);
+      if (Number.isFinite(port) && port > 0 && port !== 443) {
+        return `${raw.server.serverName}:${port}`;
+      }
+      return String(raw.server.serverName);
+    }
+    return raw.target || raw.url || '';
+  }
+
+  function getEndpointTestInterval(t) {
+    const raw = unwrapEndpointTestRow(t);
+    if (!raw) return null;
+    if (raw.genericConfig && raw.genericConfig.interval != null) return Number(raw.genericConfig.interval);
+    if (raw.interval != null) return Number(raw.interval);
+    return null;
+  }
+
+  function getEndpointProbeMode(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const nc = raw && raw.networkConfig;
+    if (!nc || typeof nc !== 'object') return 'AUTO';
+    return nc.tcpProbeMode || nc.probeMode || 'AUTO';
+  }
+
+  /** TE /endpoint/views/ scenario ids mirror EndpointTestTemplateApp (scheduled + dynamic). */
+  const ENDPOINT_VIEW_ROUND_BIN_SEC = 300;
+  const ENDPOINT_VIEW_SCHEDULED_SCENARIO = {
+    Http: { scenarioId: 'eyebrowHttp', metric: 'availability' },
+    Network: { scenarioId: 'eyebrowNetworkTest', metric: 'loss' },
+    RADIUS: { scenarioId: 'eyebrowNetworkTest', metric: 'loss' }
+  };
+  const ENDPOINT_VIEW_DYNAMIC_SCENARIO = {
+    Http: { scenarioId: 'eyebrowNoDynamicAppTests', metric: 'availability' },
+    Network: { scenarioId: 'dynamicAppTesting', metric: 'loss' },
+    RADIUS: { scenarioId: 'dynamicAppTesting', metric: 'loss' }
+  };
+
+  function getEndpointViewScenario(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const tt = raw && (raw.testType || raw.type);
+    const map = isEndpointDynamicTest(raw) ? ENDPOINT_VIEW_DYNAMIC_SCENARIO : ENDPOINT_VIEW_SCHEDULED_SCENARIO;
+    if (tt && map[tt]) return map[tt];
+    if (raw && raw.scenarioId) {
+      return { scenarioId: String(raw.scenarioId), metric: raw.metric || 'availability' };
+    }
+    return ENDPOINT_VIEW_SCHEDULED_SCENARIO.Http;
+  }
+
+  function getEndpointViewRoundId() {
+    const nowSec = Math.floor(Date.now() / 1000);
+    return Math.floor(nowSec / ENDPOINT_VIEW_ROUND_BIN_SEC) * ENDPOINT_VIEW_ROUND_BIN_SEC;
+  }
+
+  function buildEndpointTestViewUrl(t) {
+    const tid = getEndpointTestId(t);
+    if (tid == null || tid === '') return '#';
+    const { scenarioId, metric } = getEndpointViewScenario(t);
+    const params = new URLSearchParams({
+      metric,
+      roundId: String(getEndpointViewRoundId()),
+      scenarioId,
+      testId: String(tid)
+    });
+    return `/endpoint/views/?${params.toString()}`;
+  }
+
+  function getFilteredEndpointTests() {
+    const categoryEl = $('#tep-ep-manage-category-filter');
+    const typeEl = $('#tep-ep-manage-type-filter');
+    const searchEl = $('#tep-ep-manage-search');
+    const sortEl = $('#tep-ep-manage-sort');
+    const categoryF = categoryEl ? categoryEl.value : '';
+    const typeF = typeEl ? typeEl.value : '';
+    const searchQ = searchEl ? searchEl.value.toLowerCase() : '';
+    let filtered = allEndpointTests.filter((t) => !isEndpointTestDeleted(t));
+    if (categoryF) filtered = filtered.filter((t) => getEndpointTestCategory(t) === categoryF);
+    if (typeF) filtered = filtered.filter((t) => String(t.testType || '') === typeF);
+    if (searchQ) {
+      filtered = filtered.filter((t) =>
+        getEndpointTestName(t).toLowerCase().includes(searchQ) ||
+        getEndpointTestTarget(t).toLowerCase().includes(searchQ) ||
+        getEndpointTestCategoryLabel(t).toLowerCase().includes(searchQ)
+      );
+    }
+    const TYPE_ORDER = { Http: 0, Network: 1, RADIUS: 2 };
+    const CATEGORY_ORDER = { SCHEDULED_TEST: 0, DYNAMIC_APP_TEST: 1 };
+    function typeRank(t) {
+      const tt = t.testType || '';
+      if (tt in TYPE_ORDER) return TYPE_ORDER[tt];
+      return 99;
+    }
+    function categoryRank(t) {
+      const cat = getEndpointTestCategory(t);
+      if (cat in CATEGORY_ORDER) return CATEGORY_ORDER[cat];
+      return 99;
+    }
+    const sortMode = sortEl ? sortEl.value : 'created';
+    const focusTid = getUrlQueryTestIdFocus();
+    return filtered.sort((a, b) => {
+      if (focusTid) {
+        const ida = String(getEndpointTestId(a) || '');
+        const idb = String(getEndpointTestId(b) || '');
+        const ma = ida === focusTid;
+        const mb = idb === focusTid;
+        if (ma !== mb) return ma ? -1 : 1;
+      }
+      if (sortMode === 'modified') {
+        const da = a.modifiedDate || a.lastModified || a.dateModified || '';
+        const db = b.modifiedDate || b.lastModified || b.dateModified || '';
+        if (da || db) return da > db ? -1 : da < db ? 1 : 0;
+      }
+      if (sortMode === 'created') {
+        const da = a.createdDate || a.dateCreated || a.createDate || '';
+        const db = b.createdDate || b.dateCreated || b.createDate || '';
+        if (da || db) return da > db ? -1 : da < db ? 1 : 0;
+      }
+      if (sortMode === 'name') {
+        return getEndpointTestName(a).localeCompare(getEndpointTestName(b));
+      }
+      const ea = isEndpointTestEnabled(a) ? 0 : 1;
+      const eb = isEndpointTestEnabled(b) ? 0 : 1;
+      if (ea !== eb) return ea - eb;
+      const ca = categoryRank(a);
+      const cb = categoryRank(b);
+      if (ca !== cb) return ca - cb;
+      const ra = typeRank(a);
+      const rb = typeRank(b);
+      if (ra !== rb) return ra - rb;
+      return getEndpointTestName(a).localeCompare(getEndpointTestName(b));
+    });
+  }
+
+  function renderEndpointTestsAfterManageInput() {
+    renderEndpointTests();
+  }
+
+  function updateEndpointBulkUI() {
+    const countEl = $('#tep-ep-bulk-count');
+    const bar = $('#tep-ep-bulk-bar');
+    const count = selectedEndpointTestIds.size;
+    if (countEl) countEl.textContent = `${count} selected`;
+    if (bar) bar.classList.toggle('active', count > 0);
+  }
+
+  async function loadEndpointTests() {
+    const listEl = $('#tep-ep-test-list');
+    const countEl = $('#tep-ep-test-count');
+    if (listEl) listEl.innerHTML = '<span class="tep-log-info">Loading endpoint tests…</span>';
+    allEndpointTests = [];
+    selectedEndpointTestIds.clear();
+    updateEndpointBulkUI();
+
+    const candidates = endpointSearchBodyCandidates();
+    let lastErr = '';
+    for (const body of candidates) {
+      try {
+        const searchBody = normalizeEndpointSearchBody(body);
+        log(`Endpoint search POST ${ENDPOINT_TEST_SEARCH_PATH} body: ${JSON.stringify(searchBody)}`, 'tep-log-info');
+        const configs = await fetchEndpointTestsViaSearch(searchBody);
+        endpointSearchBodyCache = searchBody;
+        const normalized = configs.map(normalizeEndpointTest);
+        const active = normalized.filter((t) => !isEndpointTestDeleted(t));
+        const dropped = normalized.length - active.length;
+        allEndpointTests = active;
+        const dynamicN = active.filter((t) => isEndpointDynamicTest(t)).length;
+        if (dropped > 0) {
+          log(`Endpoint search: omitted ${dropped} deleted test(s)`, 'tep-log-info');
+        }
+        log(`Loaded ${allEndpointTests.length} endpoint test(s) from search (${dynamicN} dynamic)`, 'tep-log-ok');
+        if (countEl) {
+          countEl.textContent = dynamicN
+            ? `Showing ${allEndpointTests.length} endpoint test(s) · ${dynamicN} dynamic`
+            : `Showing ${allEndpointTests.length} endpoint test(s)`;
+        }
+        renderEndpointTests();
+        return;
+      } catch (e) {
+        lastErr = e.message;
+        log(`Endpoint search error: ${e.message}`, 'tep-log-err');
+      }
+    }
+    if (listEl) listEl.innerHTML = '<span class="tep-log-err">Could not load endpoint tests — see log. Reload TE test settings once (sniff captures search body), then refresh.</span>';
+    if (countEl) countEl.textContent = 'Load failed';
+    log(`Endpoint search failed for all ${candidates.length} body candidate(s). Last: ${lastErr}`, 'tep-log-err');
+  }
+
+  function renderEndpointTests() {
+    const listEl = $('#tep-ep-test-list');
+    const countEl = $('#tep-ep-test-count');
+    if (!listEl) return;
+    const filtered = getFilteredEndpointTests();
+    const dynamicInView = filtered.filter((t) => isEndpointDynamicTest(t)).length;
+    const dynamicTotal = allEndpointTests.filter((t) => isEndpointDynamicTest(t)).length;
+    if (countEl) {
+      let line = `Showing ${filtered.length} of ${allEndpointTests.length} endpoint test(s)`;
+      if (dynamicTotal) line += ` · ${dynamicTotal} dynamic`;
+      if (dynamicInView !== dynamicTotal && dynamicInView) line += ` (${dynamicInView} in view)`;
+      countEl.textContent = line;
+    }
+    if (!filtered.length) {
+      listEl.innerHTML = '<span class="tep-log-info">No endpoint tests match filter.</span>';
+      return;
+    }
+    listEl.innerHTML = '';
+    const typeCss = { Http: 'tep-type-http', Network: 'tep-type-network', RADIUS: 'tep-type-dns' };
+    const typeLabels = { Http: 'HTTP', Network: 'Network', RADIUS: 'RADIUS' };
+    for (const t of filtered) {
+      const tid = String(getEndpointTestId(t) || '');
+      const isDynamic = isEndpointDynamicTest(t);
+      const card = document.createElement('div');
+      card.className = 'tep-test-card'
+        + (isEndpointTestEnabled(t) ? '' : ' tep-test-card--disabled')
+        + (isDynamic ? ' tep-test-card--dynamic' : '');
+      card.dataset.testId = tid;
+      const typeLabel = typeLabels[t.testType] || t.testType || '?';
+      const target = getEndpointTestTarget(t);
+      const interval = getEndpointTestInterval(t);
+      const probe = getEndpointProbeMode(t);
+      const categoryLabel = getEndpointTestCategoryLabel(t);
+      const intervalLabel = isDynamic ? 'On demand' : formatInterval(interval);
+      const probeLabel = isDynamic ? '—' : String(probe);
+      const enabled = isEndpointTestEnabled(t) ? 'on' : 'off';
+      const statusLabel = isEndpointTestEnabled(t) ? 'Enabled' : 'Disabled';
+      const statusClass = isEndpointTestEnabled(t) ? 'tep-test-status-text--on' : 'tep-test-status-text--off';
+      const statusHtml = `<button type="button" class="tep-test-status-text ${statusClass}" data-action="toggle" title="${isEndpointTestEnabled(t) ? 'Click to disable' : 'Click to enable'}">${statusLabel}</button>`;
+      const viewHref = buildEndpointTestViewUrl(t);
+      card.innerHTML = `
+        <div class="tep-test-card-header">
+          <input type="checkbox" class="tep-test-card-check tep-ep-test-card-check" data-tid="${tepEscapeHtmlText(tid)}" ${selectedEndpointTestIds.has(tid) ? 'checked' : ''}>
+          <span class="tep-type-badge ${typeCss[t.testType] || 'tep-type-other'}">${tepEscapeHtmlText(typeLabel)}</span>
+          <a class="tep-test-card-name tep-test-link" href="${tepEscapeHtmlText(viewHref)}" target="_blank" rel="noopener noreferrer">${tepEscapeHtmlText(getEndpointTestName(t))}</a>
+          <div class="tep-test-actions">
+            <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            </button>
+            <button type="button" class="tep-btn-danger tep-test-action-icon" data-action="delete" title="Delete" aria-label="Delete">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <line x1="10" y1="11" x2="10" y2="17" />
+              <line x1="14" y1="11" x2="14" y2="17" />
+            </svg>
+            </button>
+          </div>
+        </div>
+        <div class="tep-test-card-meta">
+          <span class="tep-test-status-row"><span class="tep-enabled-dot ${enabled}"></span>${statusHtml}</span>
+          <span title="Test category">${tepEscapeHtmlText(categoryLabel)}</span>
+          <span>${tepEscapeHtmlText(target ? String(target).substring(0, 50) : '—')}</span>
+          <span title="${isDynamic ? 'Dynamic tests run on demand' : 'Test interval'}">${tepEscapeHtmlText(intervalLabel)}</span>
+          <span title="${isDynamic ? 'Not applicable for dynamic tests' : 'networkConfig.tcpProbeMode'}">Probe: ${tepEscapeHtmlText(probeLabel)}</span>
+        </div>
+      `;
+      const cb = card.querySelector('.tep-ep-test-card-check');
+      if (cb) {
+        cb.addEventListener('change', (e) => {
+          if (e.target.checked) selectedEndpointTestIds.add(tid);
+          else selectedEndpointTestIds.delete(tid);
+          updateEndpointBulkUI();
+        });
+      }
+      card.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (action === 'edit') {
+          e.stopPropagation();
+          e.preventDefault();
+          const dismissLoad = toastProcessing('Loading test…');
+          try {
+            const detail = await fetchEndpointTestDetail(t);
+            Object.assign(t, detail);
+          } catch (err) {
+            log(`Endpoint edit: detail refresh failed — ${err && err.message ? err.message : err}`, 'tep-log-info');
+          }
+          dismissLoad();
+          toggleEndpointEditForm(card, t);
+        } else if (action === 'toggle') {
+          e.stopPropagation();
+          e.preventDefault();
+          await toggleEndpointTestEnabled(t, card);
+        } else if (action === 'delete') {
+          e.stopPropagation();
+          e.preventDefault();
+          await deleteEndpointTest(t, card);
+        }
+      });
+      listEl.appendChild(card);
+    }
+  }
+
+  async function fetchEndpointTestDetail(t) {
+    const id = getEndpointTestId(t);
+    if (id == null || id === '') throw new Error('missing test id');
+    const path = `${ENDPOINT_TEST_DETAIL_PATH}/${encodeURIComponent(String(id))}`;
+    const resp = await ajax(path, { method: 'GET' });
+    const text = await resp.text().catch(() => '');
+    if (!resp.ok) throw new Error(`${resp.status}: ${text.slice(0, 200)}`);
+    const data = JSON.parse(text);
+    return normalizeEndpointTest(data.testConfig || data);
+  }
+
+  function collectEndpointTestsForBackup() {
+    const idSet = selectedEndpointTestIds instanceof Set ? selectedEndpointTestIds : new Set();
+    if (idSet.size === 0) return allEndpointTests.slice();
+    return allEndpointTests.filter((t) => idSet.has(String(getEndpointTestId(t))));
+  }
+
+  function refreshEndpointTestsJsonSummary() {
+    const ta = $('#tep-ep-tests-json');
+    const summary = $('#tep-ep-tests-json-summary');
+    const countEl = $('#tep-ep-tests-json-count');
+    if (!ta || !summary) return;
+    const raw = ta.value || '';
+    const t = raw.trim();
+    if (!t) {
+      summary.textContent = 'No JSON yet — refresh Manage list, then click Refresh JSON';
+      summary.className = 'tep-dash-json-sum tep-dash-json-sum-empty';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(t); } catch (e) {
+      summary.textContent = `JSON parse error: ${e.message}`;
+      summary.className = 'tep-dash-json-sum tep-dash-json-sum-err';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    const n = arr.length;
+    const names = arr.slice(0, 3).map((x) => getEndpointTestName(x)).join(', ');
+    summary.textContent = `${n} test${n === 1 ? '' : 's'}${names ? ` — ${names}${n > 3 ? ', …' : ''}` : ''}`;
+    summary.className = 'tep-dash-json-sum tep-dash-json-sum-ok';
+    if (countEl) countEl.textContent = `(${n} test${n === 1 ? '' : 's'})`;
+  }
+
+  async function refreshEndpointTestsEditor() {
+    const ta = $('#tep-ep-tests-json');
+    if (!ta) return;
+    const source = collectEndpointTestsForBackup();
+    if (!source.length) {
+      toast('No endpoint tests to back up — load Manage list first', 'err');
+      return;
+    }
+    setStatus(`Fetching endpoint detail for ${source.length} test(s)…`);
+    const out = [];
+    const errors = [];
+    for (const t of source) {
+      try {
+        const detail = await fetchEndpointTestDetail(t);
+        out.push(detail);
+      } catch (e) {
+        errors.push({ id: getEndpointTestId(t), err: e.message });
+        out.push({ ...t, _detailFetchError: e.message });
+      }
+    }
+    ta.value = JSON.stringify(out, null, 2);
+    refreshEndpointTestsJsonSummary();
+    if (errors.length) {
+      log(`Endpoint backup: ${errors.length} detail fetch error(s) — list rows kept`, 'tep-log-err');
+    } else {
+      log(`Endpoint backup: ${out.length} test object(s) in JSON editor`, 'tep-log-ok');
+    }
+    toast(`Backed up ${out.length} endpoint test(s) to JSON`, 'ok');
+  }
+
+  function downloadEndpointTestsBackup() {
+    const ta = $('#tep-ep-tests-json');
+    if (!ta || !ta.value.trim()) {
+      toast('Nothing to download — refresh JSON first', 'err');
+      return;
+    }
+    const blob = new Blob([ta.value], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `te-endpoint-tests-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('Download started', 'ok');
+  }
+
+  async function endpointBulkApply() {
+    const actionEl = $('#tep-ep-bulk-action');
+    const action = actionEl ? actionEl.value : '';
+    if (!action) {
+      log('Select a bulk action first.', 'tep-log-err');
+      return;
+    }
+    const selected = allEndpointTests.filter((t) => selectedEndpointTestIds.has(String(getEndpointTestId(t))));
+    if (!selected.length) {
+      log('No endpoint tests selected.', 'tep-log-err');
+      return;
+    }
+
+    if (action === 'probe' || action === 'interval') {
+      const scheduled = selected.filter((t) => !isEndpointDynamicTest(t));
+      if (!scheduled.length) {
+        toast('Interval and probe bulk actions apply to scheduled tests only', 'err');
+        return;
+      }
+      if (scheduled.length < selected.length) {
+        log(`Bulk ${action}: skipping ${selected.length - scheduled.length} dynamic test(s)`, 'tep-log-info');
+      }
+    }
+
+    if (action === 'delete') {
+      if (!confirm(`Delete ${selected.length} endpoint test(s)? This cannot be undone.`)) return;
+      const dismiss = toastProcessing(`Deleting ${selected.length} endpoint test(s)…`);
+      try {
+        const ids = selected.map(getEndpointTestId).filter((id) => id != null && id !== '');
+        await endpointBulkDelete(ids);
+        toast(`Deleted ${ids.length} endpoint test(s)`, 'ok');
+        selectedEndpointTestIds.clear();
+        updateEndpointBulkUI();
+        await loadEndpointTests();
+      } catch (e) {
+        log(`Endpoint bulk delete failed: ${e.message}`, 'tep-log-err');
+        toast(`Delete failed: ${e.message}`, 'err');
+      } finally {
+        dismiss();
+      }
+      return;
+    }
+
+    const probeEl = $('#tep-ep-bulk-probe');
+    const intervalEl = $('#tep-ep-bulk-interval');
+    const opts = {
+      probeMode: probeEl ? probeEl.value : 'AUTO',
+      interval: intervalEl ? parseInt(intervalEl.value, 10) : 60
+    };
+
+    const dismiss = toastProcessing(`Bulk ${action} on ${selected.length} endpoint test(s)…`);
+    try {
+      const configs = [];
+      const mutationTargets = (action === 'probe' || action === 'interval')
+        ? selected.filter((t) => !isEndpointDynamicTest(t))
+        : selected;
+      for (const t of mutationTargets) {
+        const base = await prepareEndpointConfigForSave(t);
+        configs.push(applyEndpointBulkMutation(base, action, opts));
+      }
+      await endpointBulkSave(configs);
+      toast(`Updated ${configs.length} endpoint test(s)`, 'ok');
+      await loadEndpointTests();
+    } catch (e) {
+      log(`Endpoint bulk ${action} failed: ${e.message}`, 'tep-log-err');
+      if (isLikelyPermissionDenied(String(e.message), String(e.message))) {
+        setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+      }
+      toast(`Bulk ${action} failed: ${e.message}`, 'err');
+    } finally {
+      dismiss();
+    }
+  }
+
+  function buildEndpointMachineConfig(maxMachines) {
+    return {
+      monitoringSettingsType: 'ANY_AGENT',
+      labelIds: [],
+      agentIds: [],
+      maxMachines: Math.max(1, maxMachines || 25)
+    };
+  }
+
+  function buildEndpointNetworkConfig() {
+    return {
+      flagPing: true,
+      flagTraceroute: true,
+      ipVersion: 'V4_ONLY',
+      networkProtocol: 'AUTODETECT',
+      pathtraceInSession: true,
+      tcpProbeMode: 'AUTO',
+      tcpConnect: false
+    };
+  }
+
+  function buildEndpointGenericConfig(interval) {
+    return { interval: interval || 60, priority: 0 };
+  }
+
+  function parseEndpointHttpUrl(raw) {
+    let s = (raw || '').trim();
+    if (!s) return '';
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return s;
+  }
+
+  function parseEndpointNetworkHost(raw) {
+    const s = (raw || '').trim();
+    if (!s) return { serverName: '', port: 443 };
+    try {
+      if (/^https?:\/\//i.test(s)) {
+        const u = new URL(s);
+        const port = u.port ? parseInt(u.port, 10) : (u.protocol === 'http:' ? 80 : 443);
+        return { serverName: u.hostname, port };
+      }
+      const hostPort = s.match(/^([^:]+):(\d+)$/);
+      if (hostPort) return { serverName: hostPort[1], port: parseInt(hostPort[2], 10) || 443 };
+      return { serverName: s.replace(/^\/+|\/+$/g, ''), port: 443 };
+    } catch (_) {
+      return { serverName: s, port: 443 };
+    }
+  }
+
+  function buildEndpointDeployPayload(bundleName, target, interval, maxMachines, includeHttp, includeNetwork) {
+    const machineConfig = buildEndpointMachineConfig(maxMachines);
+    const networkConfig = buildEndpointNetworkConfig();
+    const genericConfig = buildEndpointGenericConfig(interval);
+    const endpointTests = {};
+    const resourceInclusion = {};
+    let testIdx = 1;
+
+    if (includeHttp) {
+      const key = `httpTest___${testIdx}`;
+      endpointTests[key] = {
+        testType: 'Http',
+        testCategory: 'SCHEDULED_TEST',
+        description: `${bundleName} - HTTP Test`,
+        name: `${bundleName} - Scheduled - HTTP Server`,
+        flagEnabled: true,
+        machineConfig,
+        networkConfig,
+        genericConfig,
+        httpConfig: {
+          url: parseEndpointHttpUrl(target),
+          authType: 'NONE',
+          verifyContextRegex: false,
+          httpTimeLimit: 5000,
+          maxRedirects: 10,
+          proxyDirect: false,
+          implicitProxyType: null,
+          targetResponseTime: 1000,
+          targetFetchTime: 1000,
+          verifyCertHostname: true,
+          sslVersion: 0
+        },
+        alertRules: null,
+        testLabelIds: null,
+        tagIds: null
+      };
+      resourceInclusion[key] = 'included';
+      testIdx++;
+    }
+
+    if (includeNetwork) {
+      const key = `networkTest___${testIdx}`;
+      endpointTests[key] = {
+        testType: 'Network',
+        testCategory: 'SCHEDULED_TEST',
+        description: `${bundleName} - Network Test`,
+        name: `${bundleName} - Scheduled`,
+        flagEnabled: true,
+        machineConfig,
+        networkConfig,
+        genericConfig,
+        server: parseEndpointNetworkHost(target),
+        alertRules: null,
+        testLabelIds: null,
+        tagIds: null
+      };
+      resourceInclusion[key] = 'included';
+    }
+
+    return {
+      name: bundleName,
+      userInputValues: {
+        endpointAgentSelection: machineConfig,
+        interval
+      },
+      tests: {},
+      endpointTests,
+      connectedDevicesTests: {},
+      resourceInclusion
+    };
+  }
+
+  async function createEndpointTests() {
+    const nameTemplate = ($('#tep-ep-testname') && $('#tep-ep-testname').value || '').trim();
+    const targets = ($('#tep-ep-targets') && $('#tep-ep-targets').value || '').trim().split('\n').map((s) => s.trim()).filter(Boolean);
+    const interval = parseInt($('#tep-ep-interval') && $('#tep-ep-interval').value, 10) || 60;
+    const maxMachines = parseInt($('#tep-ep-max-machines') && $('#tep-ep-max-machines').value, 10) || 25;
+    const includeHttp = !$('#tep-ep-include-http') || $('#tep-ep-include-http').checked;
+    const includeNetwork = !$('#tep-ep-include-network') || $('#tep-ep-include-network').checked;
+
+    if (!nameTemplate) { log('No bundle name specified.', 'tep-log-err'); return; }
+    if (!targets.length) { log('No targets specified.', 'tep-log-err'); return; }
+    if (!includeHttp && !includeNetwork) { log('Select at least one test type (HTTP and/or Network).', 'tep-log-err'); return; }
+
+    const createBtn = $('#tep-ep-create');
+    if (createBtn) createBtn.disabled = true;
+    const dismissProcessing = toastProcessing(`Deploying ${targets.length} endpoint bundle(s)…`);
+
+    let deployOk = 0;
+    let deployFail = 0;
+    let sawPermissionDenied = false;
+
+    for (const target of targets) {
+      const bundleName = nameTemplate.replace(/\{target\}/g, target);
+      const body = buildEndpointDeployPayload(bundleName, target, interval, maxMachines, includeHttp, includeNetwork);
+      log(`Deploying endpoint bundle "${bundleName}"…`, 'tep-log-info');
+      log(`DEBUG POST ${ENDPOINT_DEPLOY_PATH} body: ${JSON.stringify(body)}`, 'tep-log-info');
+
+      try {
+        const resp = await ajax(ENDPOINT_DEPLOY_PATH, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        const respText = await resp.text().catch(() => '');
+
+        if (resp.ok || resp.status === 201) {
+          deployOk++;
+          log(`  ✓ Deployed "${bundleName}"`, 'tep-log-ok');
+          toast(`Deployed "${bundleName}"`, 'ok');
+        } else {
+          deployFail++;
+          if (isLikelyCreatePermissionDenied(resp.status, respText)) sawPermissionDenied = true;
+          log(`  ✗ ${resp.status}: ${respText.substring(0, 300)}`, 'tep-log-err');
+          toast(`Failed to deploy "${bundleName}": ${resp.status}`, 'err');
+        }
+      } catch (e) {
+        deployFail++;
+        log(`  ✗ Error: ${e.message}`, 'tep-log-err');
+        toast(`Error deploying "${bundleName}"`, 'err');
+      }
+    }
+
+    if (createBtn) createBtn.disabled = false;
+    dismissProcessing();
+    if (sawPermissionDenied) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+    log(`Endpoint deploy done — ${deployOk} ok, ${deployFail} failed.`, deployFail ? 'tep-log-err' : 'tep-log-info');
   }
 
   // ---------------------------------------------------------------------------
@@ -8153,69 +10126,34 @@
       }
     });
   }
-  // Tests: Backup / Restore accordion wiring. Mirrors the dashboard block
-  // wiring (see #tep-dash-toggle-backup-restore at bottom of file).
+  // Tests: Restore tab wiring (Create → Restore).
   {
-    const testsBrToggle = $('#tep-tests-toggle-backup-restore');
-    const testsBrExpand = $('#tep-tests-expand-backup-restore');
-    if (testsBrToggle && testsBrExpand) {
-      testsBrToggle.addEventListener('click', () => {
-        const isHidden = testsBrExpand.hasAttribute('hidden');
-        if (isHidden) {
-          testsBrExpand.removeAttribute('hidden');
-          testsBrToggle.setAttribute('aria-expanded', 'true');
-          // Populate the summary line the first time it's opened so the
-          // user sees state (empty vs N tests) without clicking Refresh.
-          try { refreshTestsJsonSummary(); } catch (_) { /* */ }
-        } else {
-          testsBrExpand.setAttribute('hidden', '');
-          testsBrToggle.setAttribute('aria-expanded', 'false');
-        }
+    const restoreImportInput = $('#tep-restore-import-file');
+    const restoreChooseBtn = $('#tep-restore-choose-file');
+    if (restoreChooseBtn && restoreImportInput) {
+      restoreChooseBtn.addEventListener('click', () => {
+        expandCreatePanel();
+        try { restoreImportInput.click(); } catch (_) { /* */ }
       });
-    }
-    const testsRefreshBtn = $('#tep-tests-refresh');
-    if (testsRefreshBtn) {
-      testsRefreshBtn.addEventListener('click', () => {
-        // Fire-and-forget; refreshTestsEditor manages its own toasts/logs.
-        refreshTestsEditor().catch((e) => log(`Tests backup: ${e.message}`, 'tep-log-err'));
-      });
-    }
-    const testsDownloadBtn = $('#tep-tests-download');
-    if (testsDownloadBtn) testsDownloadBtn.addEventListener('click', downloadTestsBackup);
-    const testsImportBtn = $('#tep-tests-restore-import-file-btn');
-    const testsImportInput = $('#tep-tests-restore-import-file');
-    if (testsImportBtn && testsImportInput) {
-      testsImportBtn.addEventListener('click', () => { try { testsImportInput.click(); } catch (_) { /* */ } });
-      testsImportInput.addEventListener('change', (ev) => {
+      restoreImportInput.addEventListener('change', (ev) => {
         const file = ev.target.files && ev.target.files[0];
-        if (!file) return;
-        const r = new FileReader();
-        r.onload = () => {
-          const ta = $('#tep-tests-json');
-          if (ta) {
-            ta.value = String(r.result || '');
-            refreshTestsJsonSummary();
-            toast(`Imported ${file.name}`, 'ok');
-          }
-          try { testsImportInput.value = ''; } catch (_) { /* */ }
-        };
-        r.onerror = () => {
-          toast('Failed to read file', 'err');
-          try { testsImportInput.value = ''; } catch (_) { /* */ }
-        };
-        r.readAsText(file);
+        if (file) loadTestsRestoreBackupFile(file);
+        try { restoreImportInput.value = ''; } catch (_) { /* */ }
       });
     }
-    const testsJsonTa = $('#tep-tests-json');
-    if (testsJsonTa) testsJsonTa.addEventListener('input', refreshTestsJsonSummary);
-    const testsRestoreMode = $('#tep-tests-restore-agent-mode');
-    if (testsRestoreMode) testsRestoreMode.addEventListener('change', syncTestsRestoreAgentUi);
-    const testsRestoreBtn = $('#tep-tests-restore');
-    if (testsRestoreBtn) {
-      testsRestoreBtn.addEventListener('click', () => {
-        restoreTestsFromEditor().catch((e) => log(`Tests restore: ${e.message}`, 'tep-log-err'));
+    const restoreMode = $('#tep-restore-agent-mode');
+    if (restoreMode) restoreMode.addEventListener('change', syncTestsRestoreAgentUi);
+    syncTestsRestoreAgentUi();
+    const restoreRunBtn = $('#tep-restore-run');
+    if (restoreRunBtn) {
+      restoreRunBtn.addEventListener('click', () => {
+        restoreTestsFromImport().catch((e) => log(`Tests restore: ${e.message}`, 'tep-log-err'));
       });
     }
+    const restorePickAll = $('#tep-restore-pick-all');
+    if (restorePickAll) restorePickAll.addEventListener('click', () => setAllTestsRestorePick(true));
+    const restorePickNone = $('#tep-restore-pick-none');
+    if (restorePickNone) restorePickNone.addEventListener('click', () => setAllTestsRestorePick(false));
   }
   $('#tep-create').addEventListener('click', createTests);
   {
@@ -9239,15 +11177,28 @@
   }
 
   // Manage panel listeners
-  $('#tep-manage-load').addEventListener('click', loadTests);
   function renderTestsAfterManageInput() {
     clearManageFailureStatus();
     renderTests();
   }
-  manageTypeFilter.addEventListener('change', renderTestsAfterManageInput);
-  manageSearch.addEventListener('input', renderTestsAfterManageInput);
-  manageSearch.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadTests(); });
-  manageSort.addEventListener('change', renderTestsAfterManageInput);
+  const manageLoadBtn = root.querySelector('#tep-manage-load');
+  if (manageLoadBtn) manageLoadBtn.addEventListener('click', loadTests);
+  const manageTypeFilterEl = root.querySelector('#tep-manage-type-filter');
+  if (manageTypeFilterEl) manageTypeFilterEl.addEventListener('change', renderTestsAfterManageInput);
+  const manageSortEl = root.querySelector('#tep-manage-sort');
+  if (manageSortEl) manageSortEl.addEventListener('change', renderTestsAfterManageInput);
+  const manageSearchEl = root.querySelector('#tep-manage-search');
+  if (manageSearchEl) {
+    const onManageSearchInput = () => { renderTestsAfterManageInput(); };
+    manageSearchEl.addEventListener('input', onManageSearchInput);
+    manageSearchEl.addEventListener('search', onManageSearchInput);
+    manageSearchEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onManageSearchInput();
+      }
+    });
+  }
   window.addEventListener('popstate', () => {
     if (isManageViewActive()) renderTests();
   });
@@ -9307,29 +11258,22 @@
 
     $('#tep-dash-refresh').addEventListener('click', () => { refreshDashboardEditor(); });
     $('#tep-dash-download').addEventListener('click', downloadDashboardBackup);
+    const cleanupLoad = root.querySelector('#tep-dash-cleanup-load');
+    if (cleanupLoad) cleanupLoad.addEventListener('click', () => { void refreshDashboardCleanupList(); });
+    const cleanupScope = root.querySelector('#tep-dash-cleanup-scope');
+    if (cleanupScope) cleanupScope.addEventListener('change', () => { renderDashCleanupListAfterManageInput(); });
     const cleanupSort = root.querySelector('#tep-dash-cleanup-sort');
-    if (cleanupSort) cleanupSort.addEventListener('click', () => { toggleDashCleanupSortOrder(); });
-    const cleanupShared = root.querySelector('#tep-dash-cleanup-shared');
-    if (cleanupShared) cleanupShared.addEventListener('click', () => { toggleDashCleanupShowShared(); });
+    if (cleanupSort) cleanupSort.addEventListener('change', () => { renderDashCleanupListAfterManageInput(); });
     const cleanupSearch = root.querySelector('#tep-dash-cleanup-search');
     if (cleanupSearch) {
-      const onSearch = () => {
-        syncDashCleanupMeta();
-        renderDashCleanupList();
-      };
+      const onSearch = () => { renderDashCleanupListAfterManageInput(); };
       cleanupSearch.addEventListener('input', onSearch);
       cleanupSearch.addEventListener('search', onSearch);
     }
-    const cleanupNone = root.querySelector('#tep-dash-cleanup-select-none');
-    if (cleanupNone) {
-      cleanupNone.addEventListener('click', () => {
-        root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => { cb.checked = false; });
-      });
-    }
-    const cleanupDel = root.querySelector('#tep-dash-cleanup-delete');
-    if (cleanupDel) cleanupDel.addEventListener('click', () => { bulkDeleteSelectedDashboards(); });
-    updateDashCleanupSortButton();
-    updateDashCleanupSharedButton();
+    const cleanupBulkApply = root.querySelector('#tep-dash-bulk-apply');
+    if (cleanupBulkApply) cleanupBulkApply.addEventListener('click', () => { dashBulkApply(); });
+    syncDashCleanupScopeFromUi();
+    updateDashCleanupBulkUI();
     syncDashCleanupMeta();
     renderDashCleanupList();
     $('#tep-dash-restore').addEventListener('click', () => { restoreDashboardFromEditor(); });
@@ -9389,6 +11333,156 @@
     });
 
     refreshDashboardJsonSummary();
+  }
+
+  if (isEndpointToolsPage()) {
+    function wireEndpointSectionToggle(toggleId, expandId, defaultOpen, { onExpand } = {}) {
+      const btn = root.querySelector('#' + toggleId);
+      const el = root.querySelector('#' + expandId);
+      if (!btn || !el) return;
+      if (defaultOpen) {
+        el.removeAttribute('hidden');
+      } else {
+        el.setAttribute('hidden', '');
+      }
+      btn.setAttribute('aria-expanded', defaultOpen ? 'true' : 'false');
+      btn.setAttribute('aria-controls', expandId);
+      if (defaultOpen && typeof onExpand === 'function') {
+        try { onExpand(); } catch (_) { /* */ }
+      }
+      btn.addEventListener('click', () => {
+        const h = el.hasAttribute('hidden');
+        if (h) {
+          el.removeAttribute('hidden');
+          btn.setAttribute('aria-expanded', 'true');
+          if (typeof onExpand === 'function') {
+            try { onExpand(); } catch (_) { /* */ }
+          }
+        } else {
+          el.setAttribute('hidden', '');
+          btn.setAttribute('aria-expanded', 'false');
+        }
+      });
+    }
+    wireEndpointSectionToggle('tep-ep-toggle-create', 'tep-ep-expand-create', false);
+    wireEndpointSectionToggle('tep-ep-toggle-manage', 'tep-ep-expand-manage', true);
+    wireEndpointSectionToggle('tep-ep-toggle-backup', 'tep-ep-expand-backup', false);
+    wireEndpointSectionToggle('tep-ep-toggle-cloud-tests', 'tep-ep-expand-cloud-tests', false, {
+      onExpand: () => showTestsPanelFromEndpoint()
+    });
+    const backToEpBtn = root.querySelector('#tep-endpoint-back-to-tools');
+    if (backToEpBtn) {
+      backToEpBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        showEndpointPanelFromTests();
+      });
+    }
+    const epCreateBtn = root.querySelector('#tep-ep-create');
+    if (epCreateBtn) {
+      epCreateBtn.addEventListener('click', () => {
+        createEndpointTests().catch((err) => log(`Endpoint deploy: ${err.message}`, 'tep-log-err'));
+      });
+    }
+    const epManageLoad = root.querySelector('#tep-ep-manage-load');
+    if (epManageLoad) epManageLoad.addEventListener('click', () => { void loadEndpointTests(); });
+    const epCategoryFilter = root.querySelector('#tep-ep-manage-category-filter');
+    if (epCategoryFilter) epCategoryFilter.addEventListener('change', () => { renderEndpointTestsAfterManageInput(); });
+    const epTypeFilter = root.querySelector('#tep-ep-manage-type-filter');
+    if (epTypeFilter) epTypeFilter.addEventListener('change', () => { renderEndpointTestsAfterManageInput(); });
+    const epSearch = root.querySelector('#tep-ep-manage-search');
+    if (epSearch) epSearch.addEventListener('input', () => { renderEndpointTestsAfterManageInput(); });
+    const epSort = root.querySelector('#tep-ep-manage-sort');
+    if (epSort) epSort.addEventListener('change', () => { renderEndpointTestsAfterManageInput(); });
+    const epBulkAction = root.querySelector('#tep-ep-bulk-action');
+    const epBulkProbe = root.querySelector('#tep-ep-bulk-probe');
+    const epBulkInterval = root.querySelector('#tep-ep-bulk-interval');
+    if (epBulkAction) {
+      epBulkAction.addEventListener('change', () => {
+        const v = epBulkAction.value;
+        if (epBulkProbe) epBulkProbe.style.display = v === 'probe' ? '' : 'none';
+        if (epBulkInterval) epBulkInterval.style.display = v === 'interval' ? '' : 'none';
+      });
+    }
+    const epBulkApply = root.querySelector('#tep-ep-bulk-apply');
+    if (epBulkApply) epBulkApply.addEventListener('click', () => { void endpointBulkApply(); });
+    const epTestsRefresh = root.querySelector('#tep-ep-tests-refresh');
+    if (epTestsRefresh) {
+      epTestsRefresh.addEventListener('click', () => {
+        refreshEndpointTestsEditor().catch((e) => log(`Endpoint backup: ${e.message}`, 'tep-log-err'));
+      });
+    }
+    const epTestsDownload = root.querySelector('#tep-ep-tests-download');
+    if (epTestsDownload) epTestsDownload.addEventListener('click', downloadEndpointTestsBackup);
+    const epImportBtn = root.querySelector('#tep-ep-tests-import-file-btn');
+    const epImportInput = root.querySelector('#tep-ep-tests-import-file');
+    if (epImportBtn && epImportInput) {
+      epImportBtn.addEventListener('click', () => { try { epImportInput.click(); } catch (_) { /* */ } });
+      epImportInput.addEventListener('change', (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const r = new FileReader();
+        r.onload = () => {
+          const ta = $('#tep-ep-tests-json');
+          if (ta) {
+            ta.value = String(r.result || '');
+            refreshEndpointTestsJsonSummary();
+            toast(`Imported ${file.name}`, 'ok');
+          }
+          try { epImportInput.value = ''; } catch (_) { /* */ }
+        };
+        r.readAsText(file);
+      });
+    }
+    const epJsonTa = root.querySelector('#tep-ep-tests-json');
+    if (epJsonTa) epJsonTa.addEventListener('input', refreshEndpointTestsJsonSummary);
+    const epRestoreBtn = root.querySelector('#tep-ep-tests-restore');
+    if (epRestoreBtn) {
+      epRestoreBtn.addEventListener('click', () => {
+        restoreEndpointTestsFromEditor().catch((e) => log(`Endpoint restore: ${e.message}`, 'tep-log-err'));
+      });
+    }
+    const epSniffCb = root.querySelector('#tep-ep-sniff-ajax');
+    if (epSniffCb) {
+      epSniffCb.checked = window.__TEP_OPTICS_EP_SNIFF_AJAX__ !== false;
+      epSniffCb.addEventListener('change', () => {
+        window.__TEP_OPTICS_EP_SNIFF_AJAX__ = !!epSniffCb.checked;
+        epConsole('info', 'endpoint sniff toggled', { on: epSniffCb.checked });
+        log(`Endpoint API sniff ${epSniffCb.checked ? 'ON' : 'OFF'}`, 'tep-log-info');
+      });
+    }
+    const epCopyDebug = root.querySelector('#tep-ep-copy-debug');
+    if (epCopyDebug) {
+      epCopyDebug.addEventListener('click', async () => {
+        const text = buildEndpointDebugReport();
+        try {
+          await navigator.clipboard.writeText(text);
+          toast('Endpoint diagnostics copied', 'ok');
+          epConsole('info', 'diagnostics report copied', { chars: text.length });
+        } catch (_) {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+            toast('Endpoint diagnostics copied', 'ok');
+          } catch (e2) {
+            toast('Copy failed — expand Log and copy manually', 'err');
+          }
+          ta.remove();
+        }
+      });
+    }
+    const epClearSniff = root.querySelector('#tep-ep-clear-sniff');
+    if (epClearSniff) {
+      epClearSniff.addEventListener('click', () => {
+        clearEpSniffHistory();
+        toast('Endpoint sniff history cleared', 'ok');
+      });
+    }
+    syncEpSniffMeta();
   }
 
   // ---------------------------------------------------------------------------
