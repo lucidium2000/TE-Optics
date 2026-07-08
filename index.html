@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.57</span>
+        TE Optics<span class="install-version" aria-label="Build">2.59</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.57';
+  const TEP_VERSION = '2.59';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2934,6 +2934,7 @@
   }
 
   renderViewTabsInitial();
+  wireEnterpriseManageFilterListeners();
 
   function showTestsPanelFromDashboard() {
     if (!isDashboardToolsPage()) return;
@@ -5286,7 +5287,7 @@
       }
       // Units depend on enterprise vs cloud agent types; refresh once agent types are known.
       if (allTests && allTests.length) {
-        renderTests();
+        renderTestsAfterManageInput();
         updateManageUnitsTotal();
       }
     } catch (e) {
@@ -5808,6 +5809,7 @@
   // Manage Tests — state & functions
   // ---------------------------------------------------------------------------
   let allTests = [];
+  let loadTestsInFlight = false;
   let selectedTestIds = new Set();
   /** Restore import (Create → Restore tab). */
   let testsRestoreImportData = null;
@@ -6713,31 +6715,40 @@
     }
 
     log(`Agent enrichment complete: ${enriched} of ${allTests.length} test(s) have agents`, 'tep-log-ok');
-    renderTests();
+    renderTestsAfterManageInput();
+  }
+
+  function targetDisplayString(v) {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    return '';
   }
 
   function getTarget(t) {
+    if (!t || typeof t !== 'object') return '';
     if (t.url && typeof t.url === 'object') {
-      if (typeof t.url.url === 'string') return t.url.url;
-      if (typeof t.url.target === 'string') return t.url.target;
-      if (typeof t.url.href === 'string') return t.url.href;
-      return String(t.url.url || t.url.target || t.url.href || '');
+      const u = targetDisplayString(t.url.url) || targetDisplayString(t.url.target) || targetDisplayString(t.url.href);
+      if (u) return u;
     }
     if (typeof t.url === 'string' && t.url) return t.url;
-    if (t.server && typeof t.server === 'object') return t.server.serverName || '';
-    if (t.server) return t.server;
-    if (t.domain) return t.domain;
-    if (t.target) return t.target;
-    if (t.hostname) return t.hostname;
-    if (t.testTarget) return t.testTarget;
-    if (t.serverName) return t.serverName;
-    if (t.destination) return t.destination;
+    if (t.server && typeof t.server === 'object') {
+      const s = targetDisplayString(t.server.serverName) || targetDisplayString(t.server.host) || targetDisplayString(t.server.name);
+      if (s) return s;
+    }
+    if (t.server != null) return targetDisplayString(t.server);
+    if (t.domain != null) return targetDisplayString(t.domain);
+    if (t.target != null) return targetDisplayString(t.target);
+    if (t.hostname != null) return targetDisplayString(t.hostname);
+    if (t.testTarget != null) return targetDisplayString(t.testTarget);
+    if (t.serverName != null) return targetDisplayString(t.serverName);
+    if (t.destination != null) return targetDisplayString(t.destination);
     if (t.config) {
-      if (t.config.url && typeof t.config.url === 'object') return t.config.url.url || '';
+      if (t.config.url && typeof t.config.url === 'object') return targetDisplayString(t.config.url.url);
       if (typeof t.config.url === 'string') return t.config.url;
-      if (t.config.server) return t.config.server;
-      if (t.config.domain) return t.config.domain;
-      if (t.config.target) return t.config.target;
+      if (t.config.server != null) return targetDisplayString(t.config.server);
+      if (t.config.domain != null) return targetDisplayString(t.config.domain);
+      if (t.config.target != null) return targetDisplayString(t.config.target);
     }
     return '';
   }
@@ -6746,10 +6757,13 @@
     const o = (opts && typeof opts === 'object') ? opts : {};
     const quiet = !!o.quiet;
     const skipEnrich = !!o.skipEnrich;
-    if (!quiet) {
+    if (loadTestsInFlight) return;
+    loadTestsInFlight = true;
+    const previousTests = allTests;
+    try {
+    if (!quiet && testListEl) {
       testListEl.innerHTML = '<span class="tep-log-info">Loading tests…</span>';
     }
-    allTests = [];
 
     const endpoints = [
       '/ajax/settings/tests',
@@ -6766,28 +6780,29 @@
         const resp = await ajax(ep);
         if (resp.ok) {
           const data = await resp.json();
+          let fetchedTests = [];
           if (Array.isArray(data)) {
-            allTests = data;
+            fetchedTests = data;
           } else {
             // Try to find arrays of tests inside the response
             for (const k of Object.keys(data)) {
-              if (Array.isArray(data[k])) allTests.push(...data[k]);
+              if (Array.isArray(data[k])) fetchedTests.push(...data[k]);
             }
             // If no arrays found, maybe the response IS the list as object
-            if (!allTests.length && typeof data === 'object') {
+            if (!fetchedTests.length && typeof data === 'object') {
               // Log structure for debugging
               log(`${ep} → keys: ${Object.keys(data).slice(0, 10).join(', ')}`, 'tep-log-info');
               // Check if values contain test-like objects
               for (const k of Object.keys(data)) {
                 const v = data[k];
                 if (v && typeof v === 'object' && !Array.isArray(v) && v.testType) {
-                  allTests.push(v);
+                  fetchedTests.push(v);
                 }
               }
             }
           }
-          if (allTests.length) {
-            allTests = allTests.map(normalizeTest);
+          if (fetchedTests.length) {
+            allTests = fetchedTests.map(normalizeTest);
             log(`Loaded ${allTests.length} test(s) from ${ep}`, 'tep-log-ok');
             found = true;
             break;
@@ -6805,12 +6820,18 @@
     }
 
     if (!found) {
+      allTests = previousTests.length ? previousTests : [];
       log('Could not find test list endpoint. Check log above.', 'tep-log-err');
       if (sawListPermissionDenied) {
         notifyManageAccessDenied();
       }
       if (!quiet) {
-        testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
+        if (allTests.length) {
+          renderTestsAfterManageInput();
+          toast('Could not refresh tests — showing previous list', 'err');
+        } else if (testListEl) {
+          testListEl.innerHTML = '<span class="tep-log-err">Could not load tests — see log.</span>';
+        }
       } else {
         if (!sawListPermissionDenied) {
           toast('Could not load portal tests — see log', 'err');
@@ -6819,12 +6840,15 @@
     } else {
       if (!quiet) {
         clearManageFailureStatus();
-        renderTests();
+        renderTestsAfterManageInput();
         if (!skipEnrich) enrichTestsWithAgents();
       } else {
         clearManageFailureStatus();
         log(`Loaded ${allTests.length} portal test(s) (quiet)`, 'tep-log-ok');
       }
+    }
+    } finally {
+      loadTestsInFlight = false;
     }
   }
 
@@ -6858,10 +6882,14 @@
     const searchQ = getManageSearchQuery();
     let filtered = allTests;
     if (typeF) filtered = filtered.filter(t => t.testType === typeF);
-    if (searchQ) filtered = filtered.filter(t =>
-      (t.name || '').toLowerCase().includes(searchQ) ||
-      getTarget(t).toLowerCase().includes(searchQ)
-    );
+    if (searchQ) {
+      filtered = filtered.filter((t) => {
+        const tid = String(t.testId != null ? t.testId : t.id != null ? t.id : '');
+        return (t.name || '').toLowerCase().includes(searchQ) ||
+          getTarget(t).toLowerCase().includes(searchQ) ||
+          tid.includes(searchQ);
+      });
+    }
     const TYPE_ORDER = {
       'http-server': 0, 'Http': 0,
       'network': 1, 'agent-to-server': 1, 'A2s': 1,
@@ -6982,7 +7010,15 @@
     testCountEl.textContent = `Showing ${filtered.length} of ${allTests.length} test(s)`;
 
     if (!filtered.length) {
-      testListEl.innerHTML = '<span class="tep-log-info">No tests match filter.</span>';
+      const typeEl = root.querySelector('#tep-manage-type-filter');
+      const hasFilter = !!getManageSearchQuery() || !!(typeEl && typeEl.value);
+      let msg = 'No tests match filter.';
+      if (!allTests.length) {
+        msg = loadTestsInFlight ? 'Loading tests…' : 'No tests loaded — click refresh.';
+      } else if (!hasFilter) {
+        msg = 'No tests in list.';
+      }
+      testListEl.innerHTML = `<span class="tep-log-info">${msg}</span>`;
       updateManageUnitsTotal();
       return;
     }
@@ -7085,6 +7121,36 @@
       testListEl.appendChild(card);
     }
     updateManageUnitsTotal();
+  }
+
+  function renderTestsAfterManageInput() {
+    clearManageFailureStatus();
+    renderTests();
+  }
+
+  function wireEnterpriseManageFilterListeners() {
+    if (root._tepEnterpriseManageFilterWired) return;
+    root._tepEnterpriseManageFilterWired = true;
+    root.addEventListener('input', (e) => {
+      const id = e.target && e.target.id;
+      if (id === 'tep-manage-search') renderTestsAfterManageInput();
+    });
+    root.addEventListener('search', (e) => {
+      const id = e.target && e.target.id;
+      if (id === 'tep-manage-search') renderTestsAfterManageInput();
+    });
+    root.addEventListener('change', (e) => {
+      const id = e.target && e.target.id;
+      if (id === 'tep-manage-type-filter' || id === 'tep-manage-sort') renderTestsAfterManageInput();
+    });
+    root.addEventListener('keydown', (e) => {
+      if (e.target && e.target.id === 'tep-manage-search' && e.key === 'Enter') {
+        e.preventDefault();
+        renderTestsAfterManageInput();
+      }
+    });
+    const manageLoadBtn = root.querySelector('#tep-manage-load');
+    if (manageLoadBtn) manageLoadBtn.addEventListener('click', () => { void loadTests(); });
   }
 
   function toggleEditForm(card, t) {
@@ -10394,15 +10460,19 @@
   // Event listeners
   // ---------------------------------------------------------------------------
 
+  wireEnterpriseManageFilterListeners();
+
   // Log toggle
-  $('#tep-log-toggle').addEventListener('click', () => {
+  const logToggleBtn = $('#tep-log-toggle');
+  if (logToggleBtn) logToggleBtn.addEventListener('click', () => {
     const btn = $('#tep-log-toggle');
     const logPanel = $('#tep-log');
     btn.classList.toggle('open');
     logPanel.classList.toggle('open');
   });
 
-  $('#tep-log-copy').addEventListener('click', async (ev) => {
+  const logCopyBtn = $('#tep-log-copy');
+  if (logCopyBtn) logCopyBtn.addEventListener('click', async (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
     const text = (logEl.innerText || '').trim();
@@ -10431,7 +10501,8 @@
   });
 
   // Top-level view tab switcher (delegated — tabs differ on /dashboard)
-  root.querySelector('#tep-view-tabs').addEventListener('click', (e) => {
+  const viewTabsEl = root.querySelector('#tep-view-tabs');
+  if (viewTabsEl) viewTabsEl.addEventListener('click', (e) => {
     const tab = e.target.closest('.tep-view-tab');
     if (!tab || !tab.dataset.view) return;
     root.querySelectorAll('#tep-view-tabs .tep-view-tab').forEach(t => t.classList.remove('active'));
@@ -10545,7 +10616,7 @@
     const clearBtn = root.querySelector('#tep-clear-log');
     if (clearBtn) clearBtn.addEventListener('click', () => { logEl.innerHTML = ''; });
   }
-  filterInput.addEventListener('input', () => { clearCreateFailureStatus(); renderAgents(filterInput.value); });
+  if (filterInput) filterInput.addEventListener('input', () => { clearCreateFailureStatus(); renderAgents(filterInput.value); });
   const agentFilterWrap = filterInput && filterInput.closest('.tep-agent-filter-wrap');
   if (agentFilterWrap && filterInput) {
     wireAgentFilterClear(agentFilterWrap, filterInput, () => { clearCreateFailureStatus(); renderAgents(filterInput.value); });
@@ -11551,43 +11622,23 @@
     localStorage.removeItem(TEP_DARK_LEGACY_KEY);
   }
 
-  // Manage panel listeners
-  function renderTestsAfterManageInput() {
-    clearManageFailureStatus();
-    renderTests();
-  }
-  const manageLoadBtn = root.querySelector('#tep-manage-load');
-  if (manageLoadBtn) manageLoadBtn.addEventListener('click', loadTests);
-  const manageTypeFilterEl = root.querySelector('#tep-manage-type-filter');
-  if (manageTypeFilterEl) manageTypeFilterEl.addEventListener('change', renderTestsAfterManageInput);
-  const manageSortEl = root.querySelector('#tep-manage-sort');
-  if (manageSortEl) manageSortEl.addEventListener('change', renderTestsAfterManageInput);
-  const manageSearchEl = root.querySelector('#tep-manage-search');
-  if (manageSearchEl) {
-    const onManageSearchInput = () => { renderTestsAfterManageInput(); };
-    manageSearchEl.addEventListener('input', onManageSearchInput);
-    manageSearchEl.addEventListener('search', onManageSearchInput);
-    manageSearchEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        onManageSearchInput();
-      }
-    });
-  }
   window.addEventListener('popstate', () => {
-    if (isManageViewActive()) renderTests();
+    if (isManageViewActive()) renderTestsAfterManageInput();
   });
 
   // Bulk controls
-  bulkAction.addEventListener('change', () => {
-    bulkInterval.style.display = bulkAction.value === 'interval' ? '' : 'none';
-    bulkProtocol.style.display = bulkAction.value === 'protocol' ? '' : 'none';
-    bulkInsessionLabel.style.display = (bulkAction.value === 'protocol' && bulkProtocol.value.startsWith('TCP')) ? 'flex' : 'none';
+  if (bulkAction) bulkAction.addEventListener('change', () => {
+    if (bulkInterval) bulkInterval.style.display = bulkAction.value === 'interval' ? '' : 'none';
+    if (bulkProtocol) bulkProtocol.style.display = bulkAction.value === 'protocol' ? '' : 'none';
+    if (bulkInsessionLabel && bulkProtocol) {
+      bulkInsessionLabel.style.display = (bulkAction.value === 'protocol' && bulkProtocol.value.startsWith('TCP')) ? 'flex' : 'none';
+    }
   });
-  bulkProtocol.addEventListener('change', () => {
-    bulkInsessionLabel.style.display = bulkProtocol.value.startsWith('TCP') ? 'flex' : 'none';
+  if (bulkProtocol) bulkProtocol.addEventListener('change', () => {
+    if (bulkInsessionLabel) bulkInsessionLabel.style.display = bulkProtocol.value.startsWith('TCP') ? 'flex' : 'none';
   });
-  $('#tep-bulk-apply').addEventListener('click', bulkApply);
+  const bulkApplyBtn = $('#tep-bulk-apply');
+  if (bulkApplyBtn) bulkApplyBtn.addEventListener('click', bulkApply);
 
   if (isDashboardToolsPage()) {
     function wireDashSectionToggle(toggleId, expandId, defaultOpen, { onExpand } = {}) {
