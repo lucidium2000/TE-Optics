@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.59';
+  const TEP_VERSION = '2.60';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -183,7 +183,7 @@
   function shouldCaptureDashboardUrl(url) {
     if (!url || typeof url !== 'string') return false;
     const lower = url.toLowerCase();
-    if (!lower.includes('thousandeyes.com') && !lower.startsWith('/')) return false;
+    if (!lower.includes('thousandeyes.com') && !lower.includes('thousandeyes.us') && !lower.startsWith('/')) return false;
     let path = lower;
     try {
       if (lower.startsWith('http')) path = new URL(url).pathname.toLowerCase();
@@ -2867,9 +2867,9 @@
     return null;
   }
 
-  // Check if running on a ThousandEyes page
+  // Check if running on a ThousandEyes page (commercial .com or Cisco/gov .us region)
   function isOnTEPage() {
-    return /thousandeyes\.com$/i.test(window.location.hostname);
+    return /thousandeyes\.(?:com|us)$/i.test(window.location.hostname);
   }
 
   function readBrowserCookie(name) {
@@ -4608,8 +4608,8 @@
   // ---------------------------------------------------------------------------
   async function initAuth() {
     if (!isOnTEPage()) {
-      setStatus('⚠ Not on app.thousandeyes.com — inject this script there', 'err');
-      log('This script must run on app.thousandeyes.com.', 'tep-log-err');
+      setStatus('⚠ Not on ThousandEyes — inject this on app.thousandeyes.com or app.thousandeyes.us', 'err');
+      log('This script must run on ThousandEyes (app.thousandeyes.com or app.thousandeyes.us).', 'tep-log-err');
       return;
     }
 
@@ -6238,7 +6238,7 @@
     if (depth > 12) return null;
     if (typeof val === 'string') {
       const m = val.match(/https:\/\/[^\s"'<>]+/i);
-      if (m && /thousandeyes\.com/i.test(m[0])) return m[0].replace(/[,;.)}\]]+$/, '');
+      if (m && /thousandeyes\.(?:com|us)/i.test(m[0])) return m[0].replace(/[,;.)}\]]+$/, '');
       return null;
     }
     if (!val || typeof val !== 'object') return null;
@@ -6265,7 +6265,7 @@
       if (id) return buildTeInstantViewUrl(slug, id, origin);
     }
     if (rawText && typeof rawText === 'string') {
-      const m = rawText.match(/https:\/\/[^\s"'<>]+thousandeyes\.com[^\s"'<>]*/i);
+      const m = rawText.match(/https:\/\/[^\s"'<>]+thousandeyes\.(?:com|us)[^\s"'<>]*/i);
       if (m) return m[0].replace(/[,;.)}\]]+$/, '');
       const src = sourceTestId != null ? String(sourceTestId) : '';
       const idMatches = [...rawText.matchAll(/"testId"\s*:\s*(\d{4,12})/gi)].map((x) => x[1]);
