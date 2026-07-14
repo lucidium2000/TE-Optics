@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.62</span>
+        TE Optics<span class="install-version" aria-label="Build">2.63</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.62';
+  const TEP_VERSION = '2.63';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -9232,11 +9232,12 @@
     if (!body || !detail) return body;
     if (detail.description != null) body.description = detail.description;
     if (detail.flagEnabled != null) body.flagEnabled = detail.flagEnabled;
-    if (detail.flagAlertsEnabled != null) body.flagAlertsEnabled = detail.flagAlertsEnabled;
-    if (Array.isArray(detail.alerts)) body.alerts = detail.alerts;
-    if (Array.isArray(detail.alertSuppressionWindowIds)) {
-      body.alertSuppressionWindowIds = detail.alertSuppressionWindowIds;
-    }
+    // Do NOT copy alert bindings on convert: alert rules are test-type-specific,
+    // so carrying the source test's rule IDs into a different type yields
+    // "Invalid alerts selected" (400). Start the converted test with alerting
+    // off and no rules — the user can re-add alerts afterward.
+    body.flagAlertsEnabled = 0;
+    body.alerts = [];
     if (detail.labelsIds !== undefined) body.labelsIds = detail.labelsIds;
     if (Array.isArray(detail.tagIds)) body.tagIds = detail.tagIds;
     return body;
