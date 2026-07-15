@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.82';
+  const TEP_VERSION = '2.88';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -376,6 +376,32 @@
     TEP_DASH_METRIC_DATA.entries = TEP_DASH_METRIC_DATA.entries.slice(0, TEP_DASH_METRIC_DATA.max);
   }
 
+  /** True for the dash-api drill-down endpoint. Endpoint-agent number widgets
+   *  (e.g. Endpoint HTTP Availability) render their value from here rather than
+   *  from self-service/data, so we capture it too for the SaaS Health widget. */
+  function isDrillDownUrl(u) {
+    return typeof u === 'string' && u.includes('/namespace/dash-api/drill-down');
+  }
+  /** Availability metric ids we care about: HTTP Server (NAS, WEB_AVAILABILITY)
+   *  and Endpoint HTTP test (EYEBROW/ENDPOINT ..._HTTP_AVAILABILITY). */
+  const TEP_AVAIL_METRIC_RE = /WEB_AVAILABILITY|_HTTP_AVAILABILITY/i;
+  /** Store a drill-down response, tagged with the metric from its request body so
+   *  the SaaS widget can average endpoint HTTP availability alongside NAS. Only
+   *  availability drill-downs are kept, to avoid churning the metric-data buffer. */
+  function recordDrillDownData(url, data, reqBodyStr) {
+    let metricId = '', widgetId = '';
+    try {
+      const b = JSON.parse(reqBodyStr || '');
+      metricId = String(b.metric || b.metricId || '');
+      widgetId = String(b.widgetId || '');
+    } catch (_) { /* */ }
+    if (!metricId || !TEP_AVAIL_METRIC_RE.test(metricId)) return;
+    let dashId = null;
+    try { dashId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
+    TEP_DASH_METRIC_DATA.entries.unshift({ t: Date.now(), widgetId, metricId, dashId, data, drillDown: true });
+    TEP_DASH_METRIC_DATA.entries = TEP_DASH_METRIC_DATA.entries.slice(0, TEP_DASH_METRIC_DATA.max);
+  }
+
   /**
    * Best payload from URL-keyword captures OR sniffed high-scoring JSON (any /ajax path).
    * When focusDashboardId is set (from the page URL), only entries that match that id are used
@@ -579,6 +605,19 @@
           }
         }
 
+        if (reqUrl && isDrillDownUrl(reqUrl)) {
+          const c = res.clone();
+          if (c.ok) {
+            const t = await c.text();
+            const p = tryParseJsonText(t);
+            if (p != null) {
+              let reqBody = '';
+              try { reqBody = (args[1] && typeof args[1].body === 'string') ? args[1].body : ''; } catch (_) { /* */ }
+              recordDrillDownData(reqUrl, p, reqBody);
+            }
+          }
+        }
+
         if (reqUrl && shouldCaptureDashboardUrl(reqUrl)) {
           const clone = res.clone();
           const ct = (clone.headers && clone.headers.get && clone.headers.get('content-type')) || '';
@@ -623,6 +662,7 @@
       return XHROpen.call(this, method, url, ...rest);
     };
     XMLHttpRequest.prototype.send = function (body) {
+      try { this.__tep_req_body = (typeof body === 'string') ? body : ''; } catch (_) { this.__tep_req_body = ''; }
       this.addEventListener('load', function () {
         try {
           const reqUrl = this.__tep_req_url || '';
@@ -633,6 +673,10 @@
           if (isSelfServiceDataUrl(reqUrl) && st >= 200 && st < 300) {
             const p = tryParseJsonText(String(this.responseText || ''));
             if (p != null) recordSelfServiceData(reqUrl, p);
+          }
+          if (isDrillDownUrl(reqUrl) && st >= 200 && st < 300) {
+            const p = tryParseJsonText(String(this.responseText || ''));
+            if (p != null) recordDrillDownData(reqUrl, p, this.__tep_req_body || '');
           }
           if (shouldCaptureDashboardUrl(reqUrl)) {
             const raw = String(this.responseText || '');
@@ -1431,9 +1475,10 @@
     lines.push('  GET  /ajax/alert-rules/list                          (standard rule list — proven)');
     lines.push('  POST /ajax/alert-rules/save                          (create/update standard rule — proven; ruleId=null → create)');
     lines.push('  DELETE /ajax/alert-rules/{ruleId}                    (delete standard rule — proven)');
-    lines.push('  GET  /ajax/settings/alerts/endpoint/list             (endpoint rule list — proven)');
-    lines.push('  GET  /ajax/settings/alerts/endpoint/browser-session-rules   (endpoint browser session rules — proven)');
-    lines.push('  DELETE /ajax/settings/alerts/endpoint/rule/{ruleId}  (delete endpoint rule — assumed)');
+    lines.push('  GET  /ajax/settings/alerts/endpoint/list             (endpoint agent rule list — proven)');
+    lines.push('  POST /ajax/settings/alerts/endpoint/save             (create/update endpoint agent rule — proven)');
+    lines.push('  GET/PUT /ajax/settings/alerts/endpoint/browser-session-rules[/{id}]   (endpoint browser session rules — proven)');
+    lines.push('  DELETE /ajax/settings/alerts/endpoint/rule/{ruleId}  (delete endpoint agent rule — assumed)');
     lines.push('  GET  /ajax/settings/alerts/rule/{ruleId}/editor/     (standard rule editor detail)');
     lines.push('  resolvedWriteBase: ' + alertRulesWriteBase());
     lines.push('  candidates tried: ' + alertRulesUrlCandidates().join(', '));
@@ -2506,6 +2551,18 @@
     .tep-sev-default  { background: #334155; color: #94a3b8; }
     .tep-alert-active-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #f87171; flex-shrink: 0; }
     .tep-alert-cleared-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #4ade80; flex-shrink: 0; }
+    .tep-armg-group {
+      display: flex; align-items: center; justify-content: space-between;
+      margin: 12px 0 6px; padding: 4px 2px 5px; border-bottom: 1px solid #334155;
+    }
+    .tep-armg-group:first-child { margin-top: 0; }
+    .tep-armg-group-name {
+      font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #93c5fd;
+    }
+    .tep-armg-group-count {
+      font-size: 10px; font-weight: 700; color: #94a3b8; background: #1e293b;
+      border: 1px solid #334155; border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
+    }
 
     /* Edit form inline */
     .tep-edit-form { margin-top: 8px; padding-top: 8px; border-top: 1px solid #334155; }
@@ -3391,7 +3448,7 @@
               <option value="safe" selected>Safe — clear test &amp; notification bindings (best for a different account)</option>
               <option value="keep">Keep bindings from the JSON (same account only; may fail cross-account)</option>
             </select>
-            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Server-owned fields (id, dates) are always stripped. In <strong>Safe</strong> mode, test assignments and notification/integration references are cleared because those ids are account-specific — you re-assign rules to tests afterward in the TE UI. Restore creates <strong>standard</strong> (cloud/enterprise/network) rules; endpoint-agent rules are included in backups but can&rsquo;t yet be recreated via restore.</p>
+            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Server-owned fields (id, dates) are always stripped. In <strong>Safe</strong> mode, test/agent assignments and notification/integration references are cleared because those ids are account-specific — you re-assign rules afterward in the TE UI. Restore auto-routes each rule to the right API: standard, endpoint-agent, or endpoint browser-session.</p>
             <div class="tep-dash-row" style="margin-top:14px;">
               <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-arules-restore" style="flex:1;" disabled>Restore selected alert rules&hellip;</button>
             </div>
@@ -4651,6 +4708,7 @@
   const ALERT_RULES_ENDPOINT_LIST = '/ajax/settings/alerts/endpoint/list';
   const ALERT_RULES_ENDPOINT_BROWSER = '/ajax/settings/alerts/endpoint/browser-session-rules';
   const ALERT_RULES_ENDPOINT_RULE_BASE = '/ajax/settings/alerts/endpoint/rule';
+  const ALERT_RULES_ENDPOINT_SAVE = '/ajax/settings/alerts/endpoint/save';
 
   /** Which API a rule came from: 'endpoint' rules use the /ajax/settings/alerts/endpoint/* API. */
   function alertRuleSource(r) {
@@ -4741,6 +4799,70 @@
     const t = r && (r.alertTypeDisplayName || r.alertType || r.type || r.testType || r.ruleType);
     if (t != null && String(t).trim()) return String(t).trim();
     return alertRuleSource(r) === 'endpoint' ? 'Endpoint' : 'rule';
+  }
+
+  // Custom category order for the "Type" sort (per user request).
+  const ALERT_CATEGORY_ORDER = ['App', 'Network', 'Endpoint', 'BGP', 'Devices', 'Internet Insights', 'WAN Insights', 'Cloud', 'Traffic', 'Event'];
+
+  /** Bucket a rule into one of the ALERT_CATEGORY_ORDER categories (or 'Other'). */
+  function alertRuleCategory(r) {
+    if (alertRuleSource(r) === 'endpoint') return 'Endpoint';
+    const s = `${(r && r.alertType) || ''} ${(r && r.alertTypeDisplayName) || ''} ${(r && r.type) || ''}`.toLowerCase();
+    const has = (...ks) => ks.some((k) => s.includes(k));
+    if (has('endpoint')) return 'Endpoint';
+    if (has('bgp', 'route', 'routing', 'prefix')) return 'BGP';
+    if (has('internetinsight', 'internet insight', 'outage')) return 'Internet Insights';
+    if (has('waninsight', 'wan insight', 'wan')) return 'WAN Insights';
+    if (has('device')) return 'Devices';
+    if (has('traffic', 'flow', 'netflow')) return 'Traffic';
+    if (has('event')) return 'Event';
+    if (has('cloud')) return 'Cloud';
+    if (has('onewaynetwork', 'network', 'agenttoagent', 'agent to agent', 'voice', 'sip', 'rtp', 'loss', 'latency', 'jitter', 'dscp')) return 'Network';
+    if (has('http', 'page', 'web', 'transaction', 'ftp', 'api', 'dns', 'ssl', 'certificate')) return 'App';
+    return 'Other';
+  }
+
+  /** Sort index for a rule's category; unknown ('Other') sorts last. */
+  function alertRuleCategoryOrder(r) {
+    const idx = ALERT_CATEGORY_ORDER.indexOf(alertRuleCategory(r));
+    return idx === -1 ? ALERT_CATEGORY_ORDER.length : idx;
+  }
+
+  /** Within the App category, HTTP rules sort first (0), everything else after (1). */
+  function alertRuleAppSubRank(r) {
+    if (alertRuleCategory(r) !== 'App') return 0;
+    const s = `${(r && r.alertType) || ''} ${(r && r.alertTypeDisplayName) || ''}`.toLowerCase();
+    return s.includes('http') ? 0 : 1;
+  }
+
+  /**
+   * If the current TE page URL is on a specific alert-rules tab (?tab=…), return
+   * the set of categories that tab represents so they float to the top of the
+   * sort. Tab values map: Network→App+Network, endpoint→Endpoint, routing→BGP,
+   * device→Devices, outage→Internet Insights, Wani→WAN Insights, cloud→Cloud,
+   * traffic→Traffic, eventdetection→Event.
+   */
+  function alertTabPriorityCategories() {
+    let tab = '';
+    try { tab = (new URLSearchParams(window.location.search).get('tab') || '').trim().toLowerCase(); } catch (_) { tab = ''; }
+    if (!tab) return null;
+    if (tab.startsWith('network')) return new Set(['App', 'Network']);
+    if (tab.startsWith('endpoint')) return new Set(['Endpoint']);
+    if (tab.startsWith('rout')) return new Set(['BGP']);
+    if (tab.startsWith('device')) return new Set(['Devices']);
+    if (tab.startsWith('outage')) return new Set(['Internet Insights']);
+    if (tab.startsWith('wan')) return new Set(['WAN Insights']);
+    if (tab.startsWith('cloud')) return new Set(['Cloud']);
+    if (tab.startsWith('traffic')) return new Set(['Traffic']);
+    if (tab.startsWith('event')) return new Set(['Event']);
+    return null;
+  }
+
+  /** Category sort index, boosting the active tab's categories to the front. */
+  function alertRuleEffectiveCategoryOrder(r, tabCats) {
+    const base = alertRuleCategoryOrder(r);
+    if (!tabCats) return base;
+    return (tabCats.has(alertRuleCategory(r)) ? 0 : ALERT_CATEGORY_ORDER.length + 1) + base;
   }
 
   /** Modified time in ms (rule bodies use unix-seconds `modifiedTime`). 0 if absent. */
@@ -4936,7 +5058,11 @@
   async function fetchEndpointAlertRules() {
     const out = [];
     const seen = new Set();
-    for (const url of [ALERT_RULES_ENDPOINT_LIST, ALERT_RULES_ENDPOINT_BROWSER]) {
+    const sources = [
+      { url: ALERT_RULES_ENDPOINT_LIST, kind: 'agent' },
+      { url: ALERT_RULES_ENDPOINT_BROWSER, kind: 'browser' },
+    ];
+    for (const { url, kind } of sources) {
       try {
         const resp = await ajax(url, { method: 'GET' });
         const text = await resp.text().catch(() => '');
@@ -4944,7 +5070,7 @@
         let data; try { data = JSON.parse(text); } catch (_) { log(`Alert rules: GET ${url} → non-JSON`, 'tep-log-info'); continue; }
         const arr = normalizeAlertRulesRoot(data);
         for (const r of arr) {
-          try { r._tepSource = 'endpoint'; } catch (_) { /* */ }
+          try { r._tepSource = 'endpoint'; r._tepEndpointKind = kind; } catch (_) { /* */ }
           const id = alertRuleIdOf(r);
           const key = id ? `id:${id}` : `n:${alertRuleNameOf(r)}`;
           if (seen.has(key)) continue;
@@ -5067,6 +5193,7 @@
       }
       if ('labelsFilter' in out) out.labelsFilter = [];
       if ('tagsFilter' in out) out.tagsFilter = [];
+      if ('agentsFilter' in out) out.agentsFilter = [];  // endpoint-agent ids are account-specific
       if ('labelMetaCondition' in out) out.labelMetaCondition = null;
       if ('tagMetaCondition' in out) out.tagMetaCondition = null;
       if (out.locationMetaCondition && typeof out.locationMetaCondition === 'object') {
@@ -5074,6 +5201,23 @@
       }
     }
     return out;
+  }
+
+  /**
+   * Pick the create endpoint for a rule by its structure:
+   *  - browser-session rules carry `visitedSitesFilter` → endpoint browser API
+   *  - endpoint-agent rules carry `agentsFilter`        → endpoint save API
+   *  - everything else                                  → standard save API
+   */
+  function alertRuleRestoreTarget(rule) {
+    const r = rule || {};
+    if ('visitedSitesFilter' in r || String(r.alertType || '').toLowerCase() === 'endpointbrowsersessionsagent') {
+      return { url: ALERT_RULES_ENDPOINT_BROWSER, kind: 'endpoint-browser' };
+    }
+    if ('agentsFilter' in r) {
+      return { url: ALERT_RULES_ENDPOINT_SAVE, kind: 'endpoint-agent' };
+    }
+    return { url: `${alertRulesWriteBase()}/save`, kind: 'standard' };
   }
 
   async function restoreSelectedAlertRules() {
@@ -5085,10 +5229,8 @@
     }
     const modeSel = $('#tep-arules-restore-mode');
     const mode = modeSel ? modeSel.value : 'safe';
-    const base = alertRulesWriteBase();
-    if (!base) { toast('Alert-rules endpoint unknown — click Load first', 'err'); return; }
-    const saveUrl = `${base}/save`;
-    if (!confirm(`Restore ${arr.length} alert rule(s) to this account as new rules?${mode === 'safe' ? ' Test & notification bindings are cleared.' : ' Bindings from the JSON are kept (may fail cross-account).'} Continue?`)) return;
+    if (!alertRulesWriteBase()) { toast('Alert-rules endpoint unknown — click Load first', 'err'); return; }
+    if (!confirm(`Restore ${arr.length} alert rule(s) to this account as new rules?${mode === 'safe' ? ' Test/agent & notification bindings are cleared.' : ' Bindings from the JSON are kept (may fail cross-account).'} Continue?`)) return;
     const dismiss = toastProcessing(`Restoring ${arr.length} rule(s)…`);
     let ok = 0;
     let fail = 0;
@@ -5096,14 +5238,15 @@
       for (const src of arr) {
         const body = cleanAlertRuleForRestore(src, mode);
         const label = formatAlertRuleLabel(src).name;
+        const target = alertRuleRestoreTarget(src);
         try {
-          const resp = await ajax(saveUrl, { method: 'POST', body: JSON.stringify(body) });
+          const resp = await ajax(target.url, { method: 'POST', body: JSON.stringify(body) });
           const text = await resp.text().catch(() => '');
           if (resp.ok || resp.status === 201) {
             ok++;
           } else {
             fail++;
-            log(`Alert rule restore: "${label}" failed ${resp.status}: ${text.slice(0, 200)}`, 'tep-log-err');
+            log(`Alert rule restore: "${label}" (${target.kind}) → POST ${target.url} failed ${resp.status}: ${text.slice(0, 200)}`, 'tep-log-err');
             if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
           }
         } catch (e) {
@@ -5136,6 +5279,8 @@
     }
     const sortEl = $('#tep-armg-sort');
     const sort = sortEl ? sortEl.value : 'type';
+    // If the TE page is on a specific alert-rules tab, float that tab's categories first.
+    const tabCats = alertTabPriorityCategories();
     rows.sort((a, b) => {
       if (sort === 'name') {
         return alertRuleNameOf(a).localeCompare(alertRuleNameOf(b), undefined, { sensitivity: 'base' });
@@ -5145,7 +5290,13 @@
         if (d !== 0) return d;
         return alertRuleNameOf(a).localeCompare(alertRuleNameOf(b), undefined, { sensitivity: 'base' });
       }
-      // Default: group by type, then most-recently modified first within a type.
+      // Default: group by category (App, Network, Endpoint, BGP, …) — with the
+      // active tab's categories first — then HTTP-first within App, then most
+      // recently modified, then name.
+      const co = alertRuleEffectiveCategoryOrder(a, tabCats) - alertRuleEffectiveCategoryOrder(b, tabCats);
+      if (co !== 0) return co;
+      const sr = alertRuleAppSubRank(a) - alertRuleAppSubRank(b);
+      if (sr !== 0) return sr;
       const t = alertRuleTypeOf(a).localeCompare(alertRuleTypeOf(b), undefined, { sensitivity: 'base' });
       if (t !== 0) return t;
       const d = alertRuleModifiedMs(b) - alertRuleModifiedMs(a);
@@ -5205,7 +5356,24 @@
       host.innerHTML = '<span class="tep-log-info">No alert rules match filter.</span>';
       return;
     }
+    // When sorting by category (the "Type" sort), show a group header before
+    // each category so the ordering (App → Network → Endpoint → …) is visible.
+    const sortEl = $('#tep-armg-sort');
+    const grouped = !sortEl || sortEl.value === 'type';
+    const catCounts = {};
+    if (grouped) rows.forEach((r) => { const c = alertRuleCategory(r); catCounts[c] = (catCounts[c] || 0) + 1; });
+    let lastCat = null;
     for (const rule of rows) {
+      if (grouped) {
+        const cat = alertRuleCategory(rule);
+        if (cat !== lastCat) {
+          lastCat = cat;
+          const header = document.createElement('div');
+          header.className = 'tep-armg-group';
+          header.innerHTML = `<span class="tep-armg-group-name">${tepEscapeHtmlText(cat)}</span><span class="tep-armg-group-count">${catCounts[cat]}</span>`;
+          host.appendChild(header);
+        }
+      }
       const id = alertRuleIdOf(rule);
       const name = alertRuleNameOf(rule);
       const type = alertRuleTypeOf(rule);
@@ -5298,13 +5466,19 @@
 
   async function deleteAlertRuleById(id) {
     if (!id) return { ok: false };
-    // Route by source: standard rules → DELETE /ajax/alert-rules/{id} (confirmed);
-    // endpoint rules → DELETE /ajax/settings/alerts/endpoint/rule/{id} (best-effort).
+    // Route by source/subtype:
+    //  - standard rules          → DELETE /ajax/alert-rules/{id}                               (confirmed)
+    //  - endpoint browser rules  → DELETE /ajax/settings/alerts/endpoint/browser-session-rules/{id}  (mirror of PUT)
+    //  - endpoint agent rules    → DELETE /ajax/settings/alerts/endpoint/rule/{id}             (best-effort)
     const rule = alertRulesCatalog.find((r) => alertRuleIdOf(r) === String(id));
-    const isEndpoint = rule && alertRuleSource(rule) === 'endpoint';
-    const url = isEndpoint
-      ? `${ALERT_RULES_ENDPOINT_RULE_BASE}/${encodeURIComponent(id)}`
-      : `${alertRulesWriteBase()}/${encodeURIComponent(id)}`;
+    let url;
+    if (rule && alertRuleSource(rule) === 'endpoint') {
+      url = (rule._tepEndpointKind === 'browser')
+        ? `${ALERT_RULES_ENDPOINT_BROWSER}/${encodeURIComponent(id)}`
+        : `${ALERT_RULES_ENDPOINT_RULE_BASE}/${encodeURIComponent(id)}`;
+    } else {
+      url = `${alertRulesWriteBase()}/${encodeURIComponent(id)}`;
+    }
     try {
       const resp = await ajax(url, { method: 'DELETE' });
       if (resp.ok || resp.status === 204) return { ok: true };
@@ -13875,6 +14049,9 @@
   // TE's HTTP Server "Availability" metric id (NAS dashboards). Match the metric,
   // not the widget's label — any widget using this metric counts.
   const TEP_WEB_AVAIL_RE = /WEB_AVAILABILITY/i;
+  // Endpoint HTTP test "Availability" metric id (endpoint-agent data source),
+  // e.g. EYEBROW_TEST_HTTP_AVAILABILITY / ENDPOINT_TEST_HTTP_AVAILABILITY.
+  const TEP_EP_AVAIL_RE = /(?:EYEBROW|ENDPOINT)_TEST_HTTP_AVAILABILITY/i;
   // Keys that carry a computed value inside a widget's runtime data store.
   const TEP_VALUE_KEY_RE = /^(value|val|current|latest|avg|average|mean|score|availability|avail|y|metricValue|result)$/i;
   // Config/presentation containers that must NOT be mined for values (e.g. a
@@ -13911,7 +14088,7 @@
     if (Array.isArray(node)) { for (const x of node) tepCollectWebAvailWidgets(x, results, depth + 1); return; }
     if (typeof node !== 'object') return;
     const metric = tepWidgetMetricId(node);
-    if (metric && TEP_WEB_AVAIL_RE.test(metric)) {
+    if (metric && (TEP_WEB_AVAIL_RE.test(metric) || TEP_EP_AVAIL_RE.test(metric))) {
       const values = [];
       tepGrabAvailNumbers(node.storeMap, values, 0);
       tepGrabAvailNumbers(node.data, values, 0);
@@ -13919,6 +14096,7 @@
       results.push({
         widgetId: node.widgetId || node.id || null,
         label: (node.viewConfig && node.viewConfig.description) || (node.meta && node.meta.title) || '',
+        source: TEP_EP_AVAIL_RE.test(metric) ? 'endpoint' : 'web',
         values,
       });
     }
@@ -13970,6 +14148,17 @@
   const TEP_DASH_DATA_PATH = '/namespace/dash-api/dash/self-service/data';
   const TEP_NAS_METRICS_DEFAULT = ['NAS-WEB_AVAILABILITY', 'NAS-WEB_TTFB', 'NAS-WEB_THROUGHPUT', 'NAS-NET_LOSS', 'NAS-NET_LATENCY'];
   const TEP_NAS_FILTER_IDS = ['NAS-TEST', 'NAS-AGENT', 'NAS-TEST_TAG', 'NAS-AGENT_TAG'];
+
+  // Endpoint HTTP availability renders via dash-api/drill-down against the
+  // ENDPOINT_AGENTS data source (see API discovery). These mirror the request
+  // TE's endpoint number widgets make.
+  const TEP_DRILLDOWN_PATH = '/namespace/dash-api/drill-down';
+  const TEP_ENDPOINT_METRICS_DEFAULT = [
+    'ENDPOINT_TEST_HTTP_APPLICATION_SCORE', 'EYEBROW_GATEWAY_CPU_LOAD_PERCENT', 'EYEBROW_GATEWAY_MEMORY_LOAD_PERCENT',
+    'ENDPOINT_GATEWAY_CONNECTION_SCORE', 'EYEBROW_TEST_HTTP_AVAILABILITY', 'EYEBROW_TEST_HTTP_RESPONSE_TIME',
+    'EYEBROW_TEST_NET_LOSS', 'EYEBROW_TEST_NET_LATENCY', 'EYEBROW_TEST_HTTP_DNS_LOOKUP', 'ENDPOINT_AST_TEST_APPLICATION_SCORE',
+  ];
+  const TEP_ENDPOINT_FILTER_IDS = ['EYEBROW_MACHINE_ID', 'EYEBROW_AGENT_TAG'];
 
   /** The focused dashboard object (with template.widgets) from the capture buffer. */
   function tepFocusedDashboardObject() {
@@ -14109,46 +14298,193 @@
     }
     return vals.reduce((s, x) => s + x, 0) / vals.length;
   }
+  /** Every endpoint metric id referenced anywhere in the dashboard (for the
+   *  drill-down dataSourceFilters). Falls back to the discovered default set. */
+  function tepDashboardEndpointMetricIds(dash) {
+    const set = new Set();
+    const walk = (n, depth) => {
+      if (n == null || depth > 12) return;
+      if (Array.isArray(n)) { for (const x of n) walk(x, depth + 1); return; }
+      if (typeof n !== 'object') return;
+      const m = (n.config && n.config.metric) || n.metric;
+      if (typeof m === 'string' && /^(?:EYEBROW|ENDPOINT)_/.test(m)) set.add(m);
+      for (const k of Object.keys(n)) if (n[k] && typeof n[k] === 'object') walk(n[k], depth + 1);
+    };
+    walk(dash, 0);
+    // Always include the availability metric so the drill-down returns it.
+    for (const m of TEP_ENDPOINT_METRICS_DEFAULT) if (!set.has(m)) set.add(m);
+    return [...set];
+  }
+  /** Leaf widgets on the dashboard whose metric is Endpoint HTTP Availability. */
+  function tepFindEndpointAvailWidgets(dash) {
+    const roots = (dash && dash.template && Array.isArray(dash.template.widgets)) ? dash.template.widgets
+      : (Array.isArray(dash && dash.widgets) ? dash.widgets : []);
+    const found = [];
+    const walk = (node, ancestors) => {
+      if (!node || typeof node !== 'object') return;
+      const children = Array.isArray(node.widgets) ? node.widgets : null;
+      if (children) {
+        const chain = [node, ...ancestors];
+        for (const c of children) walk(c, chain);
+        return;
+      }
+      let metric = null, metricDeclarer = null;
+      for (const n of [node, ...ancestors]) {
+        const m = n && n.config && n.config.metric;
+        if (typeof m === 'string') { metric = m; metricDeclarer = n; break; }
+      }
+      if (metric && TEP_EP_AVAIL_RE.test(metric)) {
+        found.push({ node, parent: ancestors[0] || null, metricDeclarer, metric });
+      }
+    };
+    for (const r of roots) walk(r, []);
+    return found;
+  }
+  /** Rebuild the drill-down POST body for one endpoint availability widget
+   *  (mirrors the request TE's endpoint number widgets make). */
+  function tepBuildEndpointDrillDownBody(entry, dash, dashboardId, metricIds) {
+    const { node, parent, metricDeclarer, metric } = entry;
+    const leafCfg = (node.config && typeof node.config === 'object') ? node.config : {};
+    const decCfg = (metricDeclarer && metricDeclarer.config && typeof metricDeclarer.config === 'object') ? metricDeclarer.config : {};
+    const cfg = { ...decCfg, ...leafCfg };
+    const last = (dash && dash.defaultTimespan && Number(dash.defaultTimespan.timespanDuration)) || 86400;
+    return {
+      metric,
+      areFiltersLocked: false,
+      aggregationType: cfg.aggregationType || 'MEAN',
+      isToAggregateOnTime: true,
+      isToCompare: false,
+      shouldUseAlertSuppressionWindows: false,
+      shouldUseLocalProblemWindows: false,
+      aggregateProperties: [],
+      filters: cfg.filters || {},
+      generalFilters: cfg.generalFilters || (parent && parent.config && parent.config.generalFilters) || {},
+      dashboardId,
+      dataSourceFilters: {
+        dataSourceId: 'ENDPOINT_AGENTS',
+        filters: TEP_ENDPOINT_FILTER_IDS.map((fid) => ({
+          filterId: fid, metricIds, values: [],
+          generalFilter: { filterDimensionId: fid, operator: 'IN', values: [] },
+        })),
+      },
+      parentWidgetId: parent ? (parent.widgetId || parent.id || null) : null,
+      shouldConvertAlertStoreToStore: true,
+      storeMap: {},
+      timeSpanConfig: { now: Date.now(), last, useGlobalTimespan: false },
+      widgetId: node.widgetId || node.id,
+      widgetType: node.type || 'numbers',
+      groupByLabel: 'All',
+    };
+  }
+  /** Fetch + average one endpoint availability widget's value via drill-down.
+   *  Returns a percent or null. */
+  async function tepFetchEndpointAvailability(entry, dash, dashboardId, metricIds) {
+    const node = entry.node;
+    const widgetId = node.widgetId || node.id;
+    const metricId = entry.metric;
+    if (!widgetId || !metricId) return null;
+    const body = tepBuildEndpointDrillDownBody(entry, dash, dashboardId, metricIds);
+    let resp;
+    try {
+      resp = await ajax(TEP_DRILLDOWN_PATH, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`SaaS widget: endpoint availability fetch error for ${widgetId} — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) { log(`SaaS widget: endpoint availability ${widgetId} → ${resp ? resp.status : 'error'}`, 'tep-log-info'); return null; }
+    const text = await resp.text().catch(() => '');
+    let json; try { json = JSON.parse(text); } catch (_) { log(`SaaS widget: non-JSON endpoint data for ${widgetId}`, 'tep-log-info'); return null; }
+    const vals = tepExtractAvailFromWidgetData(json);
+    if (!vals.length) {
+      log(`SaaS widget: no endpoint availability number found in ${widgetId} response (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
+      return null;
+    }
+    return vals.reduce((s, x) => s + x, 0) / vals.length;
+  }
   /** Read HTTP Server Availability from the self-service/data responses the
    *  dashboard already fetched (works for any widget type — the page built the
    *  correct request). One value per widgetId, latest capture wins. */
   function tepAvailFromCapturedMetricData() {
     let focusId = null;
     try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
-    const byWidget = new Map();
+    const byWidgetWeb = new Map();
+    const byWidgetEp = new Map();
     for (const e of TEP_DASH_METRIC_DATA.entries) {
-      if (!e || !e.metricId || !TEP_WEB_AVAIL_RE.test(e.metricId)) continue;
+      if (!e || !e.metricId) continue;
+      const isWeb = TEP_WEB_AVAIL_RE.test(e.metricId);
+      const isEp = TEP_EP_AVAIL_RE.test(e.metricId);
+      if (!isWeb && !isEp) continue;
       if (focusId && e.dashId && String(e.dashId) !== String(focusId)) continue;
       const vals = tepExtractAvailFromWidgetData(e.data);
       if (!vals.length) continue;
       const key = e.widgetId || ('t' + e.t);
-      if (!byWidget.has(key)) byWidget.set(key, vals.reduce((s, x) => s + x, 0) / vals.length); // entries newest-first
+      const bucket = isEp ? byWidgetEp : byWidgetWeb;
+      if (!bucket.has(key)) bucket.set(key, vals.reduce((s, x) => s + x, 0) / vals.length); // entries newest-first
     }
-    const perWidget = [...byWidget.values()];
-    if (!perWidget.length) return null;
-    const avg = perWidget.reduce((s, x) => s + x, 0) / perWidget.length;
-    log(`SaaS widget: averaged ${perWidget.length} captured HTTP Server Availability widget(s) → ${avg.toFixed(2)}%`, 'tep-log-ok');
-    return { avg, count: perWidget.length, widgetsDetected: perWidget.length };
+    const web = [...byWidgetWeb.values()];
+    const endpoint = [...byWidgetEp.values()];
+    if (!web.length && !endpoint.length) return null;
+    if (web.length) {
+      const a = web.reduce((s, x) => s + x, 0) / web.length;
+      log(`SaaS widget: averaged ${web.length} captured HTTP Server Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
+    }
+    if (endpoint.length) {
+      const a = endpoint.reduce((s, x) => s + x, 0) / endpoint.length;
+      log(`SaaS widget: averaged ${endpoint.length} captured Endpoint HTTP Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
+    }
+    return { web, endpoint };
   }
-  /** HTTP Server Availability for the focused dashboard: prefer the widget data
-   *  the page already loaded; fall back to actively fetching leaf availability
-   *  widgets. Returns { avg, count, widgetsDetected } or null. */
+  /** Combined HTTP availability for the focused dashboard: HTTP Server (NAS) plus
+   *  Endpoint HTTP test availability. Prefers the widget data the page already
+   *  loaded; falls back to actively fetching leaf availability widgets (NAS via
+   *  self-service/data, endpoint via drill-down). Every widget contributes one
+   *  value to a single average. Returns
+   *  { avg, count, webCount, endpointCount, widgetsDetected } or null. */
   async function tepFetchDashboardHttpAvailability() {
-    // Primary: whatever the dashboard already rendered (any widget type).
     const captured = tepAvailFromCapturedMetricData();
-    if (captured && captured.count) return captured;
-    // Fallback: rebuild the request for leaf widgets that declare the metric.
+    let webVals = (captured && captured.web) ? captured.web.slice() : [];
+    let epVals = (captured && captured.endpoint) ? captured.endpoint.slice() : [];
+    let webDetected = webVals.length;
+    let epDetected = epVals.length;
+
     const { dash, dashboardId } = tepFocusedDashboardObject();
-    if (!dash || !dashboardId) return null;
-    const widgets = tepFindAvailNumberWidgets(dash);
-    if (!widgets.length) return null;
-    const metricIds = tepDashboardNasMetricIds(dash);
-    const results = await Promise.all(widgets.map((w) => tepFetchWidgetAvailability(w, dash, dashboardId, metricIds).catch(() => null)));
-    const vals = results.filter((v) => v != null && isFinite(v));
-    if (!vals.length) return { avg: null, count: 0, widgetsDetected: widgets.length };
-    const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
-    log(`SaaS widget: fetched + averaged ${vals.length}/${widgets.length} HTTP Server Availability widget(s) → ${avg.toFixed(2)}%`, 'tep-log-ok');
-    return { avg, count: vals.length, widgetsDetected: widgets.length };
+
+    // NAS / HTTP Server availability: active fetch when nothing was captured.
+    if (!webVals.length && dash && dashboardId) {
+      const widgets = tepFindAvailNumberWidgets(dash);
+      webDetected = widgets.length;
+      if (widgets.length) {
+        const metricIds = tepDashboardNasMetricIds(dash);
+        const results = await Promise.all(widgets.map((w) => tepFetchWidgetAvailability(w, dash, dashboardId, metricIds).catch(() => null)));
+        webVals = results.filter((v) => v != null && isFinite(v));
+        if (webVals.length) {
+          const a = webVals.reduce((s, x) => s + x, 0) / webVals.length;
+          log(`SaaS widget: fetched + averaged ${webVals.length}/${widgets.length} HTTP Server Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
+        }
+      }
+    }
+
+    // Endpoint HTTP availability: active fetch (drill-down) when nothing captured.
+    if (!epVals.length && dash && dashboardId) {
+      const epWidgets = tepFindEndpointAvailWidgets(dash);
+      epDetected = epWidgets.length;
+      if (epWidgets.length) {
+        const epMetricIds = tepDashboardEndpointMetricIds(dash);
+        const results = await Promise.all(epWidgets.map((w) => tepFetchEndpointAvailability(w, dash, dashboardId, epMetricIds).catch(() => null)));
+        epVals = results.filter((v) => v != null && isFinite(v));
+        if (epVals.length) {
+          const a = epVals.reduce((s, x) => s + x, 0) / epVals.length;
+          log(`SaaS widget: fetched + averaged ${epVals.length}/${epWidgets.length} Endpoint HTTP Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
+        }
+      }
+    }
+
+    const all = webVals.concat(epVals);
+    const widgetsDetected = webDetected + epDetected;
+    if (!all.length) return { avg: null, count: 0, webCount: 0, endpointCount: 0, widgetsDetected };
+    const avg = all.reduce((s, x) => s + x, 0) / all.length;
+    log(`SaaS widget: combined availability → ${avg.toFixed(2)}% across ${all.length} widget(s) (${webVals.length} web · ${epVals.length} endpoint)`, 'tep-log-ok');
+    return { avg, count: all.length, webCount: webVals.length, endpointCount: epVals.length, widgetsDetected };
   }
 
   /** Circular health ring whose arc length is the availability percent and whose
@@ -14182,9 +14518,15 @@
       try {
         const fetched = await tepFetchDashboardHttpAvailability();
         if (fetched && fetched.count) {
+          const parts = [];
+          if (fetched.webCount) parts.push(`${fetched.webCount} web`);
+          if (fetched.endpointCount) parts.push(`${fetched.endpointCount} endpoint`);
+          const breakdown = parts.length ? ` (${parts.join(' · ')})` : '';
+          const tip = `Live average across ${fetched.count} HTTP availability widget(s) on this dashboard`
+            + (parts.length ? ` — ${parts.join(', ')}` : '');
           saasEl.innerHTML = '<div class="tep-saas-health">'
             + `<div><div class="tep-dash-widget-main">${fetched.avg.toFixed(1)}<small>% avail</small></div>`
-            + `<div class="tep-dash-widget-sub" title="Live average across ${fetched.count} HTTP Server Availability widget(s) on this dashboard">avg of ${fetched.count} SaaS metric${fetched.count === 1 ? '' : 's'}</div></div>`
+            + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} metric${fetched.count === 1 ? '' : 's'}${breakdown}</div></div>`
             + tepHealthRingHtml(fetched.avg, '')
             + '</div>';
           done = true;
