@@ -231,7 +231,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.69</span>
+        TE Optics<span class="install-version" aria-label="Build">2.74</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -394,7 +394,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.69';
+  const TEP_VERSION = '2.74';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1381,6 +1381,193 @@
   installEndpointNetworkCapture();
 
   // ---------------------------------------------------------------------------
+  // Manage Tags route (/manage/tags) — network sniff for API discovery.
+  // The tag READ endpoint is known (GET .../internal-tags-service/tags), but tag
+  // WRITES (create/update/delete) use an as-yet-unknown endpoint — POST on the
+  // collection root and /bulk both return 405. Capture method + path + body of
+  // every tag-related request so the write endpoint can be discovered by doing
+  // the action once in the native TE UI and copying the report.
+  // ---------------------------------------------------------------------------
+  const TEP_TAGS_REQUEST_SNIFF = [];   // POST/PUT/PATCH/DELETE with bodies
+  const TEP_TAGS_RESPONSE_SNIFF = [];  // every tag-related request (method+status+path)
+  const TEP_TAGS_REQUEST_SNIFF_MAX = 60;
+  const TEP_TAGS_RESPONSE_SNIFF_MAX = 120;
+
+  function isTagsRelatedPath(pathKey) {
+    const p = (pathKey || '').toLowerCase();
+    if (!p) return false;
+    if (!(p.startsWith('/ajax/') || p.startsWith('/namespace/'))) return false;
+    if (p.includes('/pageview')) return false;
+    return p.includes('tag') || p.includes('label');
+  }
+
+  function syncTagsSniffMeta() {
+    try {
+      const el = document.getElementById('tep-tags-sniff-meta');
+      if (!el) return;
+      const writes = TEP_TAGS_REQUEST_SNIFF.length;
+      const total = TEP_TAGS_RESPONSE_SNIFF.length;
+      if (writes) {
+        el.textContent = `Captured ${writes} tag write request(s) and ${total} tag request(s) total. Copy the report to see the write method, path and body.`;
+      } else if (total) {
+        el.textContent = `Captured ${total} tag request(s) (reads only so far). Create/edit/delete a tag in the TE UI to capture the write endpoint, then copy the report.`;
+      } else {
+        el.textContent = 'Sniff history empty — create/edit/delete a tag in the TE UI to capture its API call, then copy the report.';
+      }
+    } catch (_) { /* */ }
+  }
+
+  function pushTagsRequestSniff(row) {
+    TEP_TAGS_REQUEST_SNIFF.unshift(row);
+    if (TEP_TAGS_REQUEST_SNIFF.length > TEP_TAGS_REQUEST_SNIFF_MAX) TEP_TAGS_REQUEST_SNIFF.length = TEP_TAGS_REQUEST_SNIFF_MAX;
+    try { console.info('[TE Optics tags] write', row.method, row.path, (row.body || '').slice(0, 300)); } catch (_) { /* */ }
+    syncTagsSniffMeta();
+  }
+
+  function recordTagsSniff(pathKey, status, method) {
+    if (!isTagsRelatedPath(pathKey)) return;
+    TEP_TAGS_RESPONSE_SNIFF.unshift({ path: pathKey, status, method: method || '', t: Date.now() });
+    if (TEP_TAGS_RESPONSE_SNIFF.length > TEP_TAGS_RESPONSE_SNIFF_MAX) TEP_TAGS_RESPONSE_SNIFF.length = TEP_TAGS_RESPONSE_SNIFF_MAX;
+    try { console.info('[TE Optics tags]', method || '?', status, pathKey); } catch (_) { /* */ }
+    syncTagsSniffMeta();
+  }
+
+  function installTagsNetworkCapture() {
+    if (!isManageTagsPage()) return;
+    if (window.__TEP_OPTICS_TAGS_CAPTURE__) return;
+    window.__TEP_OPTICS_TAGS_CAPTURE__ = true;
+
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function (...args) {
+      let method = 'GET';
+      let reqUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
+      let reqBody = null;
+      if (args[0] instanceof Request) {
+        reqUrl = args[0].url;
+        method = (args[0].method || 'GET').toUpperCase();
+      } else if (args[1] && args[1].method) {
+        method = String(args[1].method).toUpperCase();
+      }
+      if (args[1] && typeof args[1].body === 'string') reqBody = args[1].body;
+      try {
+        const pathKey = pathOnlyFromUrl(reqUrl || '');
+        if (isTagsRelatedPath(pathKey) && /^(POST|PUT|PATCH|DELETE)$/.test(method)) {
+          pushTagsRequestSniff({ path: pathKey, method, body: (reqBody || '').slice(0, 12000), t: Date.now() });
+        }
+      } catch (_) { /* */ }
+      const res = await origFetch(...args);
+      try {
+        const pathKey = pathOnlyFromUrl(reqUrl || '');
+        recordTagsSniff(pathKey, res.status, method);
+      } catch (_) { /* */ }
+      return res;
+    };
+
+    const XHROpen = XMLHttpRequest.prototype.open;
+    const XHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, url, ...rest) {
+      try {
+        this.__tep_tags_url = typeof url === 'string' ? url : String(url);
+        this.__tep_tags_method = (m || 'GET').toUpperCase();
+      } catch (_) {
+        this.__tep_tags_url = '';
+        this.__tep_tags_method = 'GET';
+      }
+      return XHROpen.call(this, m, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      try {
+        const pathKey = pathOnlyFromUrl(this.__tep_tags_url || '');
+        const method = this.__tep_tags_method || 'GET';
+        if (isTagsRelatedPath(pathKey) && /^(POST|PUT|PATCH|DELETE)$/.test(method) && typeof body === 'string') {
+          pushTagsRequestSniff({ path: pathKey, method, body: body.slice(0, 12000), t: Date.now() });
+        }
+      } catch (_) { /* */ }
+      this.addEventListener('load', function () {
+        try {
+          const pathKey = pathOnlyFromUrl(this.__tep_tags_url || '');
+          recordTagsSniff(pathKey, this.status, this.__tep_tags_method || 'GET');
+        } catch (_) { /* */ }
+      });
+      return XHRSend.call(this, body);
+    };
+
+    try { console.info('[TE Optics tags] network capture active — create/edit/delete a tag, then use Diagnostics → Copy API discovery report'); } catch (_) { /* */ }
+  }
+
+  function clearTagsSniff() {
+    TEP_TAGS_REQUEST_SNIFF.length = 0;
+    TEP_TAGS_RESPONSE_SNIFF.length = 0;
+    syncTagsSniffMeta();
+  }
+
+  function buildTagsDebugReport() {
+    const lines = [];
+    lines.push('=== TE Optics tags API discovery ===');
+    lines.push('generatedAt: ' + new Date().toISOString());
+    lines.push('href: ' + (typeof location !== 'undefined' ? location.href : ''));
+    lines.push('pathname: ' + (typeof location !== 'undefined' ? location.pathname : ''));
+    try {
+      const m = document.cookie && document.cookie.match(/(?:^|;\s*)teAccount=([^;]*)/);
+      lines.push('teAccountCookie: ' + (m ? decodeURIComponent(m[1]) : '(none)'));
+    } catch (_) {
+      lines.push('teAccountCookie: (error reading cookie)');
+    }
+    lines.push('csrfHeader: ' + (csrfToken ? csrfToken.headerName + ' set' : '(none)'));
+    lines.push('');
+    lines.push('HOW TO USE: in the native ThousandEyes Tags UI, create, edit, or delete ONE tag.');
+    lines.push('Then copy this report. The captured WRITE request below shows the exact endpoint,');
+    lines.push('HTTP method, and JSON body that TE Optics restore should use.');
+    lines.push('');
+    lines.push('--- Captured tag WRITE requests (POST/PUT/PATCH/DELETE) ---');
+    if (!TEP_TAGS_REQUEST_SNIFF.length) {
+      lines.push('(none captured yet — create/edit/delete a tag in the UI, then copy again)');
+    } else {
+      for (const r of TEP_TAGS_REQUEST_SNIFF) {
+        lines.push(`${r.method} ${r.path}`);
+        if (r.body) lines.push('  body: ' + r.body.slice(0, 4000));
+      }
+    }
+    lines.push('');
+    lines.push('--- All tag-related requests (method + status + path) ---');
+    if (!TEP_TAGS_RESPONSE_SNIFF.length) {
+      lines.push('(none captured yet)');
+    } else {
+      for (const s of TEP_TAGS_RESPONSE_SNIFF) lines.push(`${s.method || '?'} ${s.status} ${s.path}`);
+    }
+    lines.push('');
+    lines.push('--- Resource timing: recent tag-related /ajax/ + /namespace/ URLs ---');
+    try {
+      const seen = new Set();
+      for (const e of performance.getEntriesByType('resource')) {
+        if (!e.name || typeof e.name !== 'string') continue;
+        let p;
+        try {
+          const u = new URL(e.name, window.location.origin);
+          if (u.origin !== window.location.origin) continue;
+          p = u.pathname + u.search;
+        } catch (_) { continue; }
+        if (!isTagsRelatedPath(p)) continue;
+        if (seen.has(p)) continue;
+        seen.add(p);
+        lines.push(p);
+      }
+      if (!seen.size) lines.push('(none)');
+    } catch (_) {
+      lines.push('(performance API unavailable)');
+    }
+    lines.push('');
+    lines.push('Known tags APIs:');
+    lines.push('  GET    /namespace/tags-api/internal-tags-service/tags?expand=taggable-objects   (list — read-only service)');
+    lines.push('  POST   /namespace/tags-api/tags-service/tags        (create)');
+    lines.push('  DELETE /namespace/tags-api/tags-service/tags/{id}   (delete)');
+    lines.push('  POST   /namespace/tags-api/tags-service/tag-object-associations/{tagId}/assignments   (assign objects)');
+    return lines.join('\n');
+  }
+
+  installTagsNetworkCapture();
+
+  // ---------------------------------------------------------------------------
   // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
   // ---------------------------------------------------------------------------
   let csrfToken = null;
@@ -1767,6 +1954,9 @@
     .tep-dash-widget-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; background: #1e293b; }
     .tep-dash-widget-bar > span { display: block; height: 100%; }
     .tep-dash-widget--alert .tep-dash-widget-main { color: #f87171; }
+    a.tep-dash-widget--link { display: block; text-decoration: none; cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease; }
+    a.tep-dash-widget--link:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,.5); transform: translateY(-1px); }
+    a.tep-dash-widget--link .tep-dash-widget-title::after { content: '↗'; margin-left: auto; opacity: .65; font-size: 12px; }
     .tep-dash-widget-pending { color: #64748b; font-style: italic; }
     .tep-dash-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .tep-dashmap-full-mapbody { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -1790,6 +1980,11 @@
     .tep-map-tip-agent.tep-dash-tip-noclick:hover { background: transparent; }
     .tep-map-tip-agent.tep-dash-tip-noclick:hover .tep-map-tip-name { color: #f8fafc; }
     .tep-map-tip-health { font-weight: 600; white-space: nowrap; }
+    .tep-map-tip-geo {
+      display: inline-flex; align-items: center; vertical-align: middle;
+      margin-left: 6px; color: #93c5fd; pointer-events: auto;
+    }
+    .tep-map-tip-geo:hover { color: #fdba74; }
     .tep-agent-map-tip {
       position: absolute; z-index: 5; pointer-events: auto;
       min-width: 150px; max-width: 250px;
@@ -3192,10 +3387,23 @@
               </div>
               <div class="tep-br-pick-list" id="tep-tags-pick-list"></div>
             </div>
-            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Restore creates the selected tag definitions (key, value, color, object type) as new tags. Object assignments are not re-applied — assignment ids reference the source account&rsquo;s objects.</p>
+            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Backups include <strong>all</strong> assignments. Restore creates the selected tag definitions (key, value, color, object type) as new tags and re-applies <strong>cloud agent</strong> assignments only — enterprise and endpoint agent assignments are omitted because their ids are account-specific and won&rsquo;t exist on another site.</p>
             <div class="tep-dash-row" style="margin-top:14px;">
               <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-tags-restore" style="flex:1;" disabled>Restore selected tags&hellip;</button>
             </div>
+            <details class="tep-dash-details" id="tep-tags-diagnostics" style="margin-top:14px;">
+              <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
+              <div class="tep-dash-details-inner tep-dash-advanced-inner">
+                <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">
+                  Discover the internal tag <strong>write</strong> API. The tag read endpoint is known, but create/update/delete use an undocumented endpoint (<code>POST</code> on the collection and <code>/bulk</code> both return 405). To capture it: create, edit, or delete one tag in the ThousandEyes Tags UI, then copy this report — it lists the method, path, and request body of every tag-related call.
+                </p>
+                <div class="tep-dash-actions" style="margin-top:0;">
+                  <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tags-copy-debug">Copy API discovery report</button>
+                  <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tags-clear-sniff">Clear captures</button>
+                </div>
+                <p class="tep-dash-hint" id="tep-tags-sniff-meta" style="margin:10px 0 0;font-size:11px;color:#64748b;">Sniff history empty — create/edit/delete a tag in the TE UI to capture its API call, then copy the report.</p>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -4012,7 +4220,12 @@
   // Tags backup & restore (/manage/tags) — GET all tags, download/import JSON,
   // selectively re-create tag definitions. No tag create/edit UI otherwise.
   // ---------------------------------------------------------------------------
+  // Reads come from the read-only `internal-tags-service`; writes (create/delete)
+  // live on `tags-service` (confirmed via API discovery — internal-tags-service
+  // returns 405 for POST). Create: POST TAGS_WRITE_PATH; delete: DELETE .../{id}.
   const TAGS_API_PATH = '/namespace/tags-api/internal-tags-service/tags';
+  const TAGS_WRITE_PATH = '/namespace/tags-api/tags-service/tags';
+  const TAGS_ASSIGN_PATH_BASE = '/namespace/tags-api/tags-service/tag-object-associations';
   const TAGS_STRIP_ON_RESTORE_KEYS = ['id', 'aid', 'legacyId', 'createDate', 'modifiedDate', 'builtIn', 'assignments', 'taggableObjects', 'taggable-objects'];
   let tagsBackupData = null;
   let tagsBackupName = '';
@@ -4234,17 +4447,87 @@
     return out;
   }
 
-  /** Best-effort human label for an entry in a bulk-create `errors[]` response. */
-  function bulkErrorTagLabel(e) {
-    if (!e || typeof e !== 'object') return 'tag';
-    const t = e.tag;
-    if (t && typeof t === 'object') {
-      if (t.key != null || t.value != null) return formatTagRestoreLabel(t).name;
-      // Schema wraps as additionalProperties map → grab the first tag-like value.
-      const vals = Object.values(t).filter((v) => v && typeof v === 'object');
-      if (vals.length) return formatTagRestoreLabel(vals[0]).name;
+  /** Normalized object type of a tag (e.g. 'v-agent', 'test', 'endpoint-agent'). */
+  function tagObjectTypeStr(t) {
+    const ot = t && (t.objectType || t.object_type || '');
+    return String(ot).toLowerCase().replace(/_/g, '-');
+  }
+
+  /** True for tags whose objects are Cloud/Enterprise agents (objectType v-agent). */
+  function tagIsAgentType(t) {
+    const ot = tagObjectTypeStr(t);
+    return ot === 'v-agent' || ot === 'vagent' || ot === 'agent';
+  }
+
+  /**
+   * Set of Cloud (global) agent ids for the CURRENT account. Cloud agents are the
+   * shared ThousandEyes agents (primaryAid ≠ this account's aid); their ids are the
+   * same in every account, so they're the only assignments safe to re-apply after a
+   * cross-account restore. Enterprise + endpoint agents are account-specific → skipped.
+   */
+  async function loadCloudAgentIdSet() {
+    const ids = new Set();
+    try {
+      const resp = await ajax('/ajax/settings/tests/virtual-agents', { method: 'GET' });
+      if (!resp.ok) return ids;
+      const data = await resp.json();
+      const vAgents = data.vAgents || data.virtualAgents || (Array.isArray(data) ? data : []);
+      let activeAid = teInitData && teInitData._currentAid;
+      if (!activeAid && vAgents.length) {
+        const counts = {};
+        for (const a of vAgents) { if (a.primaryAid) counts[a.primaryAid] = (counts[a.primaryAid] || 0) + 1; }
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        if (sorted.length) activeAid = parseInt(sorted[0][0], 10) || sorted[0][0];
+      }
+      for (const a of vAgents) {
+        const isEnterprise = activeAid && a.primaryAid === activeAid;
+        if (isEnterprise) continue; // enterprise = account-specific → not portable
+        const id = a.vAgentId || a.agentId || a.id;
+        if (id != null) ids.add(String(id));
+      }
+    } catch (_) { /* best-effort */ }
+    return ids;
+  }
+
+  /**
+   * Re-apply a restored tag's Cloud-agent assignments to the newly created tag.
+   * Only Cloud agents present in `cloudAgentIds` are assigned (enterprise/endpoint
+   * agents are intentionally omitted). Returns the number of agents assigned.
+   */
+  async function reapplyCloudAgentAssignments(srcTag, newTagId, cloudAgentIds, label) {
+    if (!newTagId || !tagIsAgentType(srcTag)) return 0;
+    const members = epTagMembers(srcTag);
+    if (!members.length) return 0;
+    const assignType = srcTag.objectType || 'v-agent';
+    const assignments = [];
+    const seen = new Set();
+    let skipped = 0;
+    for (const m of members) {
+      const id = epTagMemberId(m);
+      if (!id) continue;
+      if (cloudAgentIds.has(String(id))) {
+        if (!seen.has(id)) { seen.add(id); assignments.push({ id: String(id), type: assignType }); }
+      } else {
+        skipped++;
+      }
     }
-    return 'tag';
+    if (!assignments.length) {
+      if (skipped) log(`Tag restore: "${label}" — ${skipped} non-cloud agent assignment(s) skipped`, 'tep-log-info');
+      return 0;
+    }
+    try {
+      const url = `${TAGS_ASSIGN_PATH_BASE}/${encodeURIComponent(newTagId)}/assignments`;
+      const resp = await ajax(url, { method: 'POST', body: JSON.stringify({ tagId: newTagId, assignments }) });
+      const text = await resp.text().catch(() => '');
+      if (resp.ok || resp.status === 201) {
+        log(`Tag restore: "${label}" — assigned ${assignments.length} cloud agent(s)${skipped ? `, skipped ${skipped} non-cloud` : ''}`, 'tep-log-ok');
+        return assignments.length;
+      }
+      log(`Tag restore: "${label}" — cloud assignment failed ${resp.status}: ${text.slice(0, 200)}`, 'tep-log-err');
+    } catch (e) {
+      log(`Tag restore: "${label}" — cloud assignment error: ${e.message}`, 'tep-log-err');
+    }
+    return 0;
   }
 
   async function restoreSelectedTags() {
@@ -4254,46 +4537,49 @@
       toast('Select at least one tag to restore', 'err');
       return;
     }
-    if (!confirm(`Restore ${arr.length} tag definition(s) to this account? Object assignments are not re-applied. Continue?`)) return;
+    // Do any selected agent tags carry assignments we may want to re-apply?
+    const anyAgentAssignments = arr.some((t) => tagIsAgentType(t) && epTagMembers(t).length);
+    if (!confirm(`Restore ${arr.length} tag definition(s) to this account?${anyAgentAssignments ? ' Cloud-agent assignments are re-applied; enterprise/endpoint assignments are omitted.' : ' Object assignments are not re-applied.'} Continue?`)) return;
     const dismiss = toastProcessing(`Restoring ${arr.length} tag(s)…`);
+    let ok = 0;
+    let fail = 0;
+    let assigned = 0;
     try {
-      // The internal tags service rejects POST on the collection root (405);
-      // creation goes through the bulk endpoint with a { tags: [...] } body.
-      const bodyTags = arr.map(cleanTagForRestore);
-      const url = `${TAGS_API_PATH}/bulk`;
-      log(`Tags: POST ${url} (${bodyTags.length} tag(s))`, 'tep-log-info');
-      const resp = await ajax(url, { method: 'POST', body: JSON.stringify({ tags: bodyTags }) });
-      const text = await resp.text().catch(() => '');
-      // 207 Multi-Status is the documented success code for bulk create.
-      if (!resp.ok && resp.status !== 207) {
-        log(`Tags restore failed ${resp.status}: ${text.slice(0, 240)}`, 'tep-log-err');
-        if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
-        toast(`Restore failed: ${resp.status}`, 'err');
-        return;
+      // Cloud agent ids are global/portable; load them once so we can re-apply
+      // only Cloud-agent assignments after each create (enterprise/endpoint skipped).
+      let cloudAgentIds = null;
+      if (anyAgentAssignments) {
+        cloudAgentIds = await loadCloudAgentIdSet();
+        log(`Tags restore: ${cloudAgentIds.size} cloud agent(s) available in this account for assignment`, 'tep-log-info');
       }
-      let data = null;
-      try { data = JSON.parse(text); } catch (_) { /* non-JSON body */ }
-      const created = data && Array.isArray(data.tags) ? data.tags : null;
-      const errors = data && Array.isArray(data.errors) ? data.errors : [];
-      let ok;
-      let fail;
-      if (created || errors.length) {
-        ok = created ? created.length : (arr.length - errors.length);
-        fail = errors.length;
-        for (const e of errors) {
-          const msg = [e && e.responseCode, e && e.message].filter(Boolean).join(' ').trim() || 'error';
-          log(`Tag restore: "${bulkErrorTagLabel(e)}" failed: ${msg}`, 'tep-log-err');
+      // Writes go to `tags-service` (not the read-only internal-tags-service).
+      // Create is a single-tag POST to the collection root of that service.
+      for (const src of arr) {
+        const body = cleanTagForRestore(src);
+        const label = formatTagRestoreLabel(src).name;
+        try {
+          const resp = await ajax(TAGS_WRITE_PATH, { method: 'POST', body: JSON.stringify(body) });
+          const text = await resp.text().catch(() => '');
+          if (resp.ok || resp.status === 201) {
+            ok++;
+            if (cloudAgentIds && cloudAgentIds.size) {
+              let created = null;
+              try { created = JSON.parse(text); } catch (_) { /* */ }
+              const newId = created && (created.id || (created.tag && created.tag.id));
+              if (newId) assigned += await reapplyCloudAgentAssignments(src, newId, cloudAgentIds, label);
+            }
+          } else {
+            fail++;
+            log(`Tag restore: "${label}" failed ${resp.status}: ${text.slice(0, 200)}`, 'tep-log-err');
+            if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+          }
+        } catch (e) {
+          fail++;
+          log(`Tag restore: "${label}" error: ${e.message}`, 'tep-log-err');
         }
-      } else {
-        // No structured body on a 2xx/207 → assume all created.
-        ok = arr.length;
-        fail = 0;
       }
-      log(`Tags restore complete: ${ok} created, ${fail} failed`, fail ? 'tep-log-err' : 'tep-log-ok');
-      toast(`Restored ${ok} tag(s)${fail ? `, ${fail} failed` : ''}`, fail ? 'err' : 'ok');
-    } catch (e) {
-      log(`Tags restore error: ${e.message}`, 'tep-log-err');
-      toast(`Restore failed: ${e.message}`, 'err');
+      log(`Tags restore complete: ${ok} created, ${fail} failed${assigned ? `, ${assigned} cloud agent assignment(s) applied` : ''}`, fail ? 'tep-log-err' : 'tep-log-ok');
+      toast(`Restored ${ok} tag(s)${assigned ? `, ${assigned} cloud assignment(s)` : ''}${fail ? `, ${fail} failed` : ''}`, fail ? 'err' : 'ok');
     } finally {
       dismiss();
     }
@@ -7148,6 +7434,15 @@
     return ty === 'dns-server' || ty === 'dnsserver' || tt === 'dns' || tt === 'dnsserver';
   }
 
+  /** DNS Trace bills like DNS Server: fixed 5 (cloud) / 2.5 (enterprise) milli per round, scaled by DNS server count. */
+  function isDnsTraceTest(t) {
+    if (!t) return false;
+    if (t.type === 6 || t.testType === 6) return true;
+    const ty = String(t.type == null ? '' : t.type).toLowerCase();
+    const tt = String(t.testType == null ? '' : t.testType).toLowerCase();
+    return ty === 'dns-trace' || ty === 'dnstrace' || tt === 'dnstrace';
+  }
+
   function isVoipRtpTest(t) {
     if (!t) return false;
     const ty = String(t.type == null ? '' : t.type).toLowerCase();
@@ -7209,6 +7504,7 @@
     if (tt === 'a2s' || tt === 'network' || /(^|[^a-z])a2s([^a-z]|$)/.test(tt)) return true;
     if (isAgentToAgentTest(t)) return true;
     if (isDnsServerTest(t)) return true;
+    if (isDnsTraceTest(t)) return true;
     if (isVoipRtpTest(t)) return true;
     if (ty === 'onewaynetwork' || ty === 'oneway' || tt === 'onewaynetwork' || /oneway|one[\s-]*way|one.*way.*network/.test(tt) || /oneway|one[\s-]*way/.test(ty)) return true;
     return false;
@@ -7260,8 +7556,8 @@
       return nC * s + nE * (0.5 * s);
     }
     if (isThousandEysFixed5MilliTestType(t)) {
-      // Fixed 5 (cloud) / 2.5 (enterprise) milli; DNS Server scales by server count.
-      const factor = isDnsServerTest(t) ? getDnsServerCount(t) : 1;
+      // Fixed 5 (cloud) / 2.5 (enterprise) milli; DNS Server/Trace scale by server count.
+      const factor = (isDnsServerTest(t) || isDnsTraceTest(t)) ? getDnsServerCount(t) : 1;
       return (nC * 5 + nE * 2.5) * factor;
     }
     return null;
@@ -11207,10 +11503,13 @@
     const id = epAgentPickId(el);
     const idTokens = epAgentIdTokens(el);
     if (id) idTokens.add(id);
+    const ll = tepAgentLatLng(raw);
     return {
       id,
       name: String(epAgentPickField(raw, ['name', 'agentName', 'machineName', 'computerName', 'hostname', 'deviceName']) || '(unnamed agent)'),
       location: String(epAgentPickField(raw, ['locationName', 'location', 'city', 'geo']) || ''),
+      lat: ll ? ll.lat : null,
+      lng: ll ? ll.lng : null,
       license: String(epAgentPickField(raw, ['licenceType', 'licenseType', 'license', 'licenceTier', 'licenseTier', 'tier']) || ''),
       platform: String(epAgentPickField(raw, ['platform', 'os', 'operatingSystem']) || ''),
       osVersion: String(epAgentPickField(raw, ['osVersion', 'osVer', 'systemVersion']) || ''),
@@ -11241,6 +11540,27 @@
     const id = agent && agent.id;
     if (!id) return '#';
     return `${ENDPOINT_AGENT_VIEW_BASE}?useV=2&id=${encodeURIComponent(String(id))}`;
+  }
+
+  const ENTERPRISE_AGENT_SETTINGS_BASE = '/network-app-synthetics/agent-settings/enterprise/';
+  /**
+   * Settings page for an enterprise agent. The agents list search is client-side
+   * (it doesn't reflect in the URL), so we pass the agent name as a best-effort
+   * `searchQuery` param in case the page seeds its search filter from it, plus the
+   * agent id.
+   */
+  function buildEnterpriseAgentSettingsUrl(a) {
+    const id = a && (a.physicalId || a.agentId);
+    const name = a && a.agentName;
+    let url = ENTERPRISE_AGENT_SETTINGS_BASE + '?section=agents';
+    if (name) url += '&searchQuery=' + encodeURIComponent(String(name));
+    if (id != null && String(id) !== '') url += '&agentId=' + encodeURIComponent(String(id));
+    return url;
+  }
+
+  /** Google Maps pin link for a precise coordinate. */
+  function tepGoogleMapsUrl(lat, lng) {
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(lat + ',' + lng);
   }
 
   /** The agent id currently in focus on the page (agent-views URL `id=` param), or null. */
@@ -11696,8 +12016,11 @@
       ? `<div class="tep-map-tip-labels">${a.labels.map((l) => `<span>${tepEscapeHtmlText(l)}</span>`).join('')}</div>` : '';
     const metricsHtml = metrics.length
       ? `<div class="tep-map-tip-metrics">${metrics.map((m) => `<span>${m}</span>`).join('')}</div>` : '';
+    const geo = (a.lat != null && a.lng != null)
+      ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(tepGoogleMapsUrl(a.lat, a.lng))}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></a>`
+      : '';
     return `<div class="tep-map-tip-agent" data-idx="${idx}" role="link" tabindex="0" title="Open this agent in ThousandEyes">
-      <div class="tep-map-tip-name">${tepEscapeHtmlText(a.name)}</div>
+      <div class="tep-map-tip-name">${tepEscapeHtmlText(a.name)}${geo}</div>
       ${users}
       <div class="tep-map-tip-meta">${bits.join('')}</div>
       ${metricsHtml}
@@ -11825,9 +12148,13 @@
       if (!stay) scheduleHide(); // leaving marker→card gap or the card itself
     });
     // Click / keyboard-activate an agent row inside the hover card.
-    tip.addEventListener('click', (e) => { openTipAgent(e.target.closest('.tep-map-tip-agent')); });
+    tip.addEventListener('click', (e) => {
+      if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
+      openTipAgent(e.target.closest('.tep-map-tip-agent'));
+    });
     tip.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('.tep-map-tip-geo')) return;
       const row = e.target.closest('.tep-map-tip-agent');
       if (row) { e.preventDefault(); openTipAgent(row); }
     });
@@ -12065,7 +12392,8 @@
       entTotal++;
       // Prefer the agent's configured coordinates; fall back to geocoding text.
       let lat = a.lat, lng = a.lng;
-      if (lat == null || lng == null) {
+      const hasRealCoords = lat != null && lng != null;
+      if (!hasRealCoords) {
         const g = a.location ? epGeocode(a.location) : null;
         if (!g) continue;
         lat = g.lat; lng = g.lng;
@@ -12082,32 +12410,45 @@
       }
       list.push({
         kind: 'enterprise', name: a.agentName || 'Agent', location: locText,
-        lat, lng, health: tepEnterpriseHealth(a.status), url: null,
+        lat, lng, health: tepEnterpriseHealth(a.status), url: buildEnterpriseAgentSettingsUrl(a),
+        // Only offer a maps link when the coordinates are the agent's real ones.
+        mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
       });
     }
     for (const a of allEndpointAgents) {
       epTotal++;
-      const g = epAgentGeo(a);
-      if (!g) continue;
+      // Prefer the agent's real coordinates; fall back to geocoding its location text.
+      let lat = a.lat, lng = a.lng;
+      const hasRealCoords = lat != null && lng != null;
+      if (!hasRealCoords) {
+        const g = epAgentGeo(a);
+        if (!g) continue;
+        lat = g.lat; lng = g.lng;
+      }
       epMapped++;
       list.push({
         kind: 'endpoint', name: a.name, location: a.location || '',
-        lat: g.lat, lng: g.lng, health: tepEndpointHealth(a.lastSeenMs),
+        lat, lng, health: tepEndpointHealth(a.lastSeenMs),
         lastSeenMs: a.lastSeenMs, url: buildEndpointAgentViewUrl(a),
+        mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
       });
     }
     return { list, entTotal, entMapped, epTotal, epMapped };
   }
 
   function tepDashTipRow(it, idx) {
-    const clickable = it.kind === 'endpoint' && it.url && it.url !== '#';
+    const clickable = !!(it.url && it.url !== '#');
     const cls = 'tep-map-tip-agent' + (clickable ? ' tep-dash-tip-clickable' : ' tep-dash-tip-noclick');
     const hc = tepHealthColor(it.health);
     const badge = `<span class="tep-dash-kind tep-dash-kind--${it.kind}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
     const health = `<span class="tep-map-tip-health" style="color:${hc.fill}">${tepEscapeHtmlText(tepHealthLabel(it))}</span>`;
-    const attrs = clickable ? ` data-idx="${idx}" role="link" tabindex="0" title="Open this agent in ThousandEyes"` : '';
+    const title = it.kind === 'enterprise' ? 'Open this agent\u2019s settings' : 'Open this agent in ThousandEyes';
+    const attrs = clickable ? ` data-idx="${idx}" role="link" tabindex="0" title="${title}"` : '';
+    const geo = it.mapUrl
+      ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></a>`
+      : '';
     return `<div class="${cls}"${attrs}>
-      <div class="tep-map-tip-name">${tepEscapeHtmlText(it.name)}${badge}</div>
+      <div class="tep-map-tip-name">${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${health}</div>
     </div>`;
   }
@@ -12119,8 +12460,7 @@
     let body = cluster.items.slice(0, cap).map((it, i) => tepDashTipRow(it, i)).join('');
     if (n > cap) body += `<div class="tep-map-tip-more">+${n - cap} more…</div>`;
     body = `<div class="tep-map-tip-body">${body}</div>`;
-    const hasEp = cluster.items.some((it) => it.kind === 'endpoint' && it.url && it.url !== '#');
-    const foot = hasEp ? 'Click an endpoint agent to open it' : 'Enterprise agents — hover for details';
+    const foot = 'Click an agent to open it';
     return `<div class="tep-map-tip-head">${head}</div>${body}<div class="tep-map-tip-foot">${foot}</div>`;
   }
 
@@ -12249,9 +12589,13 @@
       const stay = to && to.closest && (to.closest('.tep-agent-map-marker') || to.closest('.tep-agent-map-tip'));
       if (!stay) scheduleHide();
     });
-    tip.addEventListener('click', (e) => { openTipAgent(e.target.closest('.tep-map-tip-agent')); });
+    tip.addEventListener('click', (e) => {
+      if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
+      openTipAgent(e.target.closest('.tep-map-tip-agent'));
+    });
     tip.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('.tep-map-tip-geo')) return;
       const row = e.target.closest('.tep-map-tip-agent');
       if (row) { e.preventDefault(); openTipAgent(row); }
     });
@@ -12364,7 +12708,27 @@
       dashFullResizeFn = () => { fitFullWrap(); apply(); };
       window.addEventListener('resize', dashFullResizeFn);
     }
-    epDashMapZoom = { s: 1, tx: 0, ty: 0 };
+    if (full && markerEls.length) {
+      // Default framing: centre on all agents and zoom so the agent spread fills
+      // ~65% of the view (17.5% margin on each side).
+      const AGENT_FRAME_EDGE = 0.175, spanTarget = 1 - 2 * AGENT_FRAME_EDGE;
+      const w = wrap.clientWidth, h = wrap.clientHeight, vh = host.clientHeight;
+      let minFx = 1, maxFx = 0, minFy = 1, maxFy = 0;
+      for (const m of markerEls) {
+        if (m._fx < minFx) minFx = m._fx;
+        if (m._fx > maxFx) maxFx = m._fx;
+        if (m._fy < minFy) minFy = m._fy;
+        if (m._fy > maxFy) maxFy = m._fy;
+      }
+      const fxSpan = Math.max(1e-4, maxFx - minFx), fySpan = Math.max(1e-4, maxFy - minFy);
+      const sx = spanTarget / fxSpan;
+      const sy = (h > 0 && vh > 0) ? (spanTarget * vh) / (fySpan * h) : sx;
+      const s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
+      const cfx = (minFx + maxFx) / 2, cfy = (minFy + maxFy) / 2;
+      epDashMapZoom = { s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s };
+    } else {
+      epDashMapZoom = { s: 1, tx: 0, ty: 0 };
+    }
     apply();
 
     // Inline view shows a caption line; fullscreen uses the KPI widgets instead.
@@ -12428,8 +12792,12 @@
       + segs.map((s) => `<span style="width:${(s.v / total * 100).toFixed(1)}%;background:${s.color}"></span>`).join('')
       + '</div>';
   }
-  function tepWidgetCard(title, inner, extraClass) {
-    return `<div class="tep-dash-widget ${extraClass || ''}"><div class="tep-dash-widget-title">${title}</div>${inner}</div>`;
+  function tepWidgetCard(title, inner, extraClass, href) {
+    const body = `<div class="tep-dash-widget-title">${title}</div>${inner}`;
+    if (href) {
+      return `<a class="tep-dash-widget tep-dash-widget--link ${extraClass || ''}" href="${href}" target="_blank" rel="noopener noreferrer" title="Open ${title} page">${body}</a>`;
+    }
+    return `<div class="tep-dash-widget ${extraClass || ''}">${body}</div>`;
   }
   function tepWidgetPending() {
     return '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">connect API</div>';
@@ -12447,7 +12815,7 @@
       + tepWidgetCard('Endpoint Agents',
         `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
         + `<div class="tep-dash-widget-sub" title="online = seen in the last 24 h">${s.epOnline} online · ${s.epOffline} offline</div>`)
-      + tepWidgetCard('Alerts', '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert')
+      + tepWidgetCard('Alerts', '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert', `${window.location.origin}/alerts/list?tab=active`)
       + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>')
       + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>');
     void fillDashWidgetsAsync();
@@ -12469,7 +12837,7 @@
     if (alertsEl) {
       const a = await tepFetchAlertsSummary().catch(() => null);
       alertsEl.innerHTML = a
-        ? `<div class="tep-dash-widget-main">${a.active}<small> active</small></div><div class="tep-dash-widget-sub">${a.recent} recent</div>`
+        ? `<div class="tep-dash-widget-main">${a.active}<small> active</small></div><div class="tep-dash-widget-sub">${a.recent} in last 24h</div>`
         : tepWidgetPending();
     }
     const eventsEl = document.getElementById('tep-w-events');
@@ -12480,8 +12848,70 @@
         : tepWidgetPending();
     }
   }
-  // Providers pending TE in-app API discovery (return { active, recent } / { active }).
-  async function tepFetchAlertsSummary() { return null; }
+  const TEP_ALERTS_SEARCH_PATH = '/namespace/alerts/alert-service/alerts/_search';
+  const TEP_ALERTS_LIST_PATH = '/namespace/alerts/alert-service/alerts';
+
+  function tepAlertStartMs(a) {
+    const v = a && (a.start != null ? a.start : (a.dateStart != null ? a.dateStart : a.startDate));
+    if (v == null) return 0;
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000; // sec → ms heuristic
+    const p = Date.parse(String(v));
+    return Number.isFinite(p) ? p : 0;
+  }
+
+  /** Active alert summary for the fullscreen-map widget: { active, recent }. */
+  async function tepFetchAlertsSummary() {
+    // Mirror the SPA's proven requests exactly (rowsPerPage=100, not 1000 — the
+    // service 404s oversized page requests). Try the row-returning `_search`
+    // first, then fall back to the count-only list variant.
+    const candidates = [
+      `${TEP_ALERTS_SEARCH_PATH}?rowsPerPage=100&state=TRIGGER`,
+      `${TEP_ALERTS_LIST_PATH}?state=TRIGGER&rowsPerPage=0&from=978336000000&to=now`,
+    ];
+    for (const url of candidates) {
+      let resp = null;
+      try {
+        resp = await ajax(url, { method: 'GET' });
+      } catch (e) {
+        log(`Alerts widget: fetch error — ${e.message}`, 'tep-log-info');
+        continue;
+      }
+      if (!resp || !resp.ok) {
+        log(`Alerts widget: ${url} → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+        continue;
+      }
+      const text = await resp.text().catch(() => '');
+      if (!text.trim()) { log('Alerts widget: 200 empty response', 'tep-log-info'); continue; }
+      let data; try { data = JSON.parse(text); } catch (_) { log('Alerts widget: non-JSON response', 'tep-log-info'); continue; }
+      const arr = Array.isArray(data) ? data
+        : (Array.isArray(data.results) ? data.results
+          : (Array.isArray(data.alerts) ? data.alerts
+            : (Array.isArray(data.items) ? data.items : (Array.isArray(data.content) ? data.content : null))));
+      const totalNum = data && (data.total != null ? Number(data.total)
+        : (data.totalCount != null ? Number(data.totalCount)
+          : (data.totalRows != null ? Number(data.totalRows) : NaN)));
+      // Count-only response (rowsPerPage=0): no rows, just the total.
+      if (!Array.isArray(arr)) {
+        if (Number.isFinite(totalNum)) {
+          log(`Alerts widget: ${totalNum} active (count-only)`, 'tep-log-ok');
+          return { active: totalNum, recent: 0 };
+        }
+        log(`Alerts widget: unexpected shape (keys: ${topLevelKeysLabel(data)})`, 'tep-log-info');
+        continue;
+      }
+      const triggered = arr.filter((a) => {
+        const st = String((a && (a.state || a.alertState)) || 'TRIGGER').toUpperCase();
+        return (st === 'TRIGGER' || st === 'ACTIVE') && !(a && a.snoozed);
+      });
+      const active = Number.isFinite(totalNum) && totalNum >= triggered.length ? totalNum : triggered.length;
+      const cutoff = Date.now() - 24 * 3600 * 1000;
+      const recent = triggered.filter((a) => tepAlertStartMs(a) >= cutoff).length;
+      log(`Alerts widget: ${active} active, ${recent} in 24h (fetched ${arr.length} row(s))`, 'tep-log-ok');
+      return { active, recent };
+    }
+    return null;
+  }
   async function tepFetchEventsSummary() { return null; }
 
   // ---- Fullscreen map ----------------------------------------------------
@@ -14792,6 +15222,39 @@
         restoreSelectedTags().catch((e) => log(`Tags restore: ${e.message}`, 'tep-log-err'));
       });
     }
+    installTagsNetworkCapture();
+    syncTagsSniffMeta();
+    const tagsCopyDebug = root.querySelector('#tep-tags-copy-debug');
+    if (tagsCopyDebug) {
+      tagsCopyDebug.addEventListener('click', async () => {
+        const text = buildTagsDebugReport();
+        try {
+          await navigator.clipboard.writeText(text);
+          toast('API discovery report copied', 'ok');
+        } catch (_) {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+            toast('API discovery report copied', 'ok');
+          } catch (e2) {
+            toast('Copy failed — see console ([TE Optics tags])', 'err');
+          }
+          ta.remove();
+        }
+      });
+    }
+    const tagsClearSniff = root.querySelector('#tep-tags-clear-sniff');
+    if (tagsClearSniff) {
+      tagsClearSniff.addEventListener('click', () => {
+        clearTagsSniff();
+        toast('Tag capture history cleared', 'ok');
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -14816,7 +15279,7 @@
   // ---------------------------------------------------------------------------
   initAuth();
 })();
-  </script>
+</script>
 
   <script>
     // Read embedded panel.js source (no fetch needed)
