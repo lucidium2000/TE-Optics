@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.75';
+  const TEP_VERSION = '2.76';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1534,6 +1534,20 @@
     .tep-agent-map-marker svg { display: block; overflow: visible; }
     .tep-agent-map-marker svg circle { fill: #f97316; stroke: #ffedd5; stroke-width: 2; }
     .tep-agent-map-marker:hover { filter: drop-shadow(0 0 6px rgba(249,115,22,.95)); }
+    /* Online/healthy agents gently "breathe" to show they're live. The marker
+       element itself is translate()-positioned, so the pulse is applied to the
+       inner SVG to avoid clobbering that transform. */
+    @keyframes tep-marker-breathe {
+      0%, 100% { transform: scale(1);    opacity: 1;   }
+      50%      { transform: scale(1.14); opacity: .78; }
+    }
+    .tep-agent-map-marker--online svg {
+      transform-origin: 50% 50%;
+      animation: tep-marker-breathe 1.4s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tep-agent-map-marker--online svg { animation: none; }
+    }
     .tep-agent-map-marker--cluster svg text {
       fill: #fff7ed; font: 700 11px -apple-system, Segoe UI, Roboto, sans-serif;
       text-anchor: middle; dominant-baseline: central;
@@ -1585,6 +1599,14 @@
     a.tep-dash-widget--link:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,.5); transform: translateY(-1px); }
     a.tep-dash-widget--link .tep-dash-widget-title::after { content: '↗'; margin-left: auto; opacity: .65; font-size: 12px; }
     .tep-dash-widget-pending { color: #64748b; font-style: italic; }
+    /* Circular health ring (SaaS Health widget) — arc length = availability %. */
+    .tep-saas-health { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .tep-saas-health .tep-dash-widget-sub { margin-top: 3px; }
+    .tep-health-ring { position: relative; width: 52px; height: 52px; flex: 0 0 52px; }
+    .tep-health-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
+    .tep-health-ring-track { fill: none; stroke: #1e293b; stroke-width: 3.5; }
+    .tep-health-ring-fill { fill: none; stroke-width: 3.5; stroke-linecap: round; transition: stroke-dasharray .6s cubic-bezier(.2,.8,.2,1), stroke .3s ease; }
+    .tep-health-ring-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; }
     .tep-dash-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .tep-dashmap-full-mapbody { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
     /* Fullscreen map keeps its natural aspect (sized to contain via JS); never squashed. */
@@ -1631,6 +1653,7 @@
     .tep-map-tip-agent:hover { background: rgba(249,115,22,.16); }
     .tep-map-tip-agent:hover .tep-map-tip-name { color: #fdba74; }
     .tep-map-tip-name { font-weight: 700; color: #f8fafc; }
+    .tep-map-tip-typeicon { flex-shrink: 0; vertical-align: -2px; margin-right: 4px; }
     .tep-map-tip-user { color: #e2e8f0; margin-top: 1px; }
     .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: #94a3b8; }
     .tep-map-tip-meta svg { vertical-align: -2px; }
@@ -2715,7 +2738,7 @@
             <div class="tep-manage-toolbar" style="justify-content:space-between;">
               <div class="tep-dash-map-legend-key" aria-hidden="true">
                 <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:2"/></svg>Enterprise</span>
-                <span class="tep-dash-legend-item"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M12 2 L14.35 8.76 L21.51 8.91 L15.8 13.24 L17.88 20.09 L12 16 L6.12 20.09 L8.2 13.24 L2.49 8.91 L9.65 8.76 Z" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/></svg>User</span>
+                <span class="tep-dash-legend-item"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 20.5a8 8 0 0 1 16 0Z" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/><circle cx="12" cy="7.5" r="4.2" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/></svg>User</span>
                 <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6" style="fill:#3b82f6;stroke:#dbeafe;stroke-width:2"/></svg>Cluster</span>
                 <span class="tep-dash-legend-item"><span class="tep-dash-legend-swatch" style="background:linear-gradient(90deg,#22c55e,#ef4444);"></span>healthy → unhealthy</span>
               </div>
@@ -11728,7 +11751,10 @@
       const pos = tepLonLatToPct(cl.lng, cl.lat);
       const m = document.createElement('div');
       const count = cl.agents.length;
-      m.className = 'tep-agent-map-marker' + (count > 1 ? ' tep-agent-map-marker--cluster' : '');
+      // Pulse the marker when at least one agent here was seen in the last 24h.
+      const online = cl.agents.some((a) => a.lastSeenMs && (Date.now() - a.lastSeenMs) <= 24 * 3600e3);
+      m.className = 'tep-agent-map-marker' + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
+        + (online ? ' tep-agent-map-marker--online' : '');
       m._fx = pos.xPct / 100;
       m._fy = pos.yPct / 100;
       m.dataset.lat = String(cl.lat);
@@ -11959,6 +11985,13 @@
     const light = mix.map((c) => Math.round(c + (255 - c) * 0.55));
     return { fill: `rgb(${mix.join(',')})`, stroke: `rgb(${light.join(',')})` };
   }
+  /** Small "user" glyph (head + shoulders) for endpoint-agent map markers.
+   *  styleAttr (a full style="…" string) is applied to both shapes so the
+   *  health colour fills the whole icon. Drawn in a 24×24 viewBox. */
+  function tepUserIconInner(styleAttr) {
+    return '<path d="M4 20.5a8 8 0 0 1 16 0Z" ' + styleAttr + '/>'
+      + '<circle cx="12" cy="7.5" r="4.2" ' + styleAttr + '/>';
+  }
   function tepHealthLabel(it) {
     if (it.kind === 'enterprise') {
       if (it.health === 'healthy') return 'online';
@@ -12085,6 +12118,11 @@
     const clickable = !!(it.url && it.url !== '#');
     const cls = 'tep-map-tip-agent' + (clickable ? ' tep-dash-tip-clickable' : ' tep-dash-tip-noclick');
     const hc = tepHealthColor(it.health);
+    const iconStyle = `style="fill:${hc.fill};stroke:${hc.stroke};stroke-width:2"`;
+    // Match the map marker: rounded square = enterprise, head/shoulders = user.
+    const typeIcon = it.kind === 'enterprise'
+      ? `<svg class="tep-map-tip-typeicon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" ${iconStyle}/></svg>`
+      : `<svg class="tep-map-tip-typeicon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">${tepUserIconInner(iconStyle)}</svg>`;
     const badge = `<span class="tep-dash-kind tep-dash-kind--${it.kind}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
     const health = `<span class="tep-map-tip-health" style="color:${hc.fill}">${tepEscapeHtmlText(tepHealthLabel(it))}</span>`;
     const title = it.kind === 'enterprise' ? 'Open this agent\u2019s settings' : 'Open this agent in ThousandEyes';
@@ -12093,7 +12131,7 @@
       ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></a>`
       : '';
     return `<div class="${cls}"${attrs}>
-      <div class="tep-map-tip-name">${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
+      <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${health}</div>
     </div>`;
   }
@@ -12159,13 +12197,15 @@
     }
     // Order each cluster's agents most recently online → oldest.
     for (const cl of clusters) tepSortByRecency(cl.items);
-    const STAR = 'M12 2 L14.35 8.76 L21.51 8.91 L15.8 13.24 L17.88 20.09 L12 16 L6.12 20.09 L8.2 13.24 L2.49 8.91 L9.65 8.76 Z';
     const markerEls = [];
     for (const cl of clusters) {
       const pos = tepLonLatToPct(cl.lng, cl.lat);
       const count = cl.items.length;
       const m = document.createElement('div');
-      m.className = 'tep-agent-map-marker tep-dash-map-marker' + (count > 1 ? ' tep-agent-map-marker--cluster' : '');
+      // Pulse when any agent at this marker is online/healthy.
+      const anyOnline = cl.items.some((it) => it.health === 'healthy');
+      m.className = 'tep-agent-map-marker tep-dash-map-marker' + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
+        + (anyOnline ? ' tep-agent-map-marker--online' : '');
       m._fx = pos.xPct / 100;
       m._fy = pos.yPct / 100;
       m._cluster = cl;
@@ -12176,14 +12216,14 @@
         m.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="10" style="fill:'
           + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"/><text x="12" y="12">' + count + '</text></svg>';
       } else {
-        // Single agent → shape by type (square=enterprise, star=user), colour by health.
+        // Single agent → shape by type (square=enterprise, user icon=user), colour by health.
         const it = cl.items[0];
         const c = tepHealthColor(it.health);
         const style = 'style="fill:' + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"';
         m.setAttribute('aria-label', (it.name || 'Agent') + ' — ' + (it.kind === 'enterprise' ? 'enterprise' : 'user'));
         m.innerHTML = it.kind === 'enterprise'
           ? '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" ' + style + '/></svg>'
-          : '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="' + STAR + '" ' + style + '/></svg>';
+          : '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' + tepUserIconInner(style) + '</svg>';
       }
       overlay.appendChild(m);
       markerEls.push(m);
@@ -12398,7 +12438,7 @@
       const legend = document.createElement('div');
       legend.className = 'tep-agent-map-legend';
       legend.textContent = entMapped + '/' + entTotal + ' enterprise · ' + epMapped + '/' + epTotal
-        + ' user agent(s) mapped · squares = enterprise, stars = users, blue circles = clusters'
+        + ' user agent(s) mapped · squares = enterprise, user icons = users, blue circles = clusters'
         + ' · scroll or +/\u2212 to zoom · click a user agent to open it';
       host.appendChild(legend);
     }
@@ -12478,22 +12518,314 @@
         `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
         + `<div class="tep-dash-widget-sub" title="online = seen in the last 24 h">${s.epOnline} online · ${s.epOffline} offline</div>`)
       + tepWidgetCard('Alerts', '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert', `${window.location.origin}/alerts/list?tab=active`)
-      + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>')
+      + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>', '', `${window.location.origin}/events/`)
       + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>');
     void fillDashWidgetsAsync();
   }
+  /** Normalise an availability value to a 0–100 percent, or null if implausible.
+   *  TE reports availability as either a 0–1 fraction or an already-0–100 percent. */
+  function tepAvailToPct(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) return null;
+    if (n <= 1) return n * 100;   // fraction (0.998 → 99.8)
+    if (n <= 100) return n;       // already a percent
+    return null;                  // out of range → ignore
+  }
+  // TE's HTTP Server "Availability" metric id (NAS dashboards). Match the metric,
+  // not the widget's label — any widget using this metric counts.
+  const TEP_WEB_AVAIL_RE = /WEB_AVAILABILITY/i;
+  // Keys that carry a computed value inside a widget's runtime data store.
+  const TEP_VALUE_KEY_RE = /^(value|val|current|latest|avg|average|mean|score|availability|avail|y|metricValue|result)$/i;
+  // Config/presentation containers that must NOT be mined for values (e.g. a
+  // fixedYScale min/max of 95/100 is chrome, not data).
+  const TEP_SKIP_VALUE_KEYS = new Set(['config', 'viewConfig', 'meta', 'generalFilters', 'layout', 'fixedYScale', 'widgets', 'storeMap']);
+
+  /** A widget's configured metric id, from either config.metric or a bare metric. */
+  function tepWidgetMetricId(node) {
+    if (node && node.config && typeof node.config.metric === 'string') return node.config.metric;
+    if (node && typeof node.metric === 'string') return node.metric;
+    return '';
+  }
+  /** Pull plausible availability numbers out of a widget's runtime data store,
+   *  ignoring config/presentation chrome. */
+  function tepGrabAvailNumbers(node, out, depth) {
+    if (node == null || depth > 8) return;
+    if (Array.isArray(node)) { for (const x of node) tepGrabAvailNumbers(x, out, depth + 1); return; }
+    if (typeof node !== 'object') return;
+    for (const k of Object.keys(node)) {
+      if (TEP_SKIP_VALUE_KEYS.has(k)) continue;
+      const v = node[k];
+      if ((typeof v === 'number' || typeof v === 'string') && TEP_VALUE_KEY_RE.test(k)) {
+        const p = tepAvailToPct(v);
+        if (p != null) out.push(p);
+      } else if (v && typeof v === 'object') {
+        tepGrabAvailNumbers(v, out, depth + 1);
+      }
+    }
+  }
+  /** Walk a captured dashboard payload collecting every widget whose metric is
+   *  HTTP Server Availability, with any live values found in its data store. */
+  function tepCollectWebAvailWidgets(node, results, depth) {
+    if (node == null || depth > 12) return;
+    if (Array.isArray(node)) { for (const x of node) tepCollectWebAvailWidgets(x, results, depth + 1); return; }
+    if (typeof node !== 'object') return;
+    const metric = tepWidgetMetricId(node);
+    if (metric && TEP_WEB_AVAIL_RE.test(metric)) {
+      const values = [];
+      tepGrabAvailNumbers(node.storeMap, values, 0);
+      tepGrabAvailNumbers(node.data, values, 0);
+      tepGrabAvailNumbers(node.series, values, 0);
+      results.push({
+        widgetId: node.widgetId || node.id || null,
+        label: (node.viewConfig && node.viewConfig.description) || (node.meta && node.meta.title) || '',
+        values,
+      });
+    }
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (v && typeof v === 'object') tepCollectWebAvailWidgets(v, results, depth + 1);
+    }
+  }
+  /** Scrape the focused dashboard's captured JSON for HTTP Server Availability
+   *  widgets and average their values. Returns
+   *  { avg|null, count, widgetsDetected }. */
+  function tepScrapeDashboardHttpAvailability() {
+    let focusId = null;
+    try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
+    const seen = new Set();
+    const widgets = [];
+    const consider = (data, urlOrPath) => {
+      if (!data || typeof data !== 'object' || seen.has(data)) return;
+      if (focusId && urlOrPath != null && !snapshotMatchesFocusDashboardId(urlOrPath, data, focusId)) return;
+      seen.add(data);
+      tepCollectWebAvailWidgets(data, widgets, 0);
+    };
+    try {
+      for (const e of TEP_DASH_CAPTURE.entries) consider(e && e.data, e && e.url);
+      for (const e of TEP_DASH_SNIFF_BODIES) consider(e && e.data, e && e.path);
+    } catch (_) { /* */ }
+    // A widget can appear in more than one capture — keep the best (valued) copy.
+    const byId = new Map();
+    for (const w of widgets) {
+      const key = w.widgetId || ('label:' + w.label);
+      const prev = byId.get(key);
+      if (!prev || (w.values.length && !prev.values.length)) byId.set(key, w);
+    }
+    const uniq = [...byId.values()];
+    const perWidgetAvgs = uniq
+      .filter((w) => w.values.length)
+      .map((w) => w.values.reduce((s, x) => s + x, 0) / w.values.length);
+    if (perWidgetAvgs.length) {
+      const avg = perWidgetAvgs.reduce((s, x) => s + x, 0) / perWidgetAvgs.length;
+      try { log(`SaaS widget: averaged ${perWidgetAvgs.length} HTTP Server Availability widget(s) on the focused dashboard → ${avg.toFixed(2)}%`, 'tep-log-ok'); } catch (_) { /* */ }
+      return { avg, count: perWidgetAvgs.length, widgetsDetected: uniq.length };
+    }
+    if (uniq.length) {
+      try { log(`SaaS widget: found ${uniq.length} HTTP Server Availability widget(s) but no live values in the captured payload (open the dashboard live so its data store is populated).`, 'tep-log-info'); } catch (_) { /* */ }
+    }
+    return { avg: null, count: 0, widgetsDetected: uniq.length };
+  }
+
+  const TEP_DASH_DATA_PATH = '/namespace/dash-api/dash/self-service/data';
+  const TEP_NAS_METRICS_DEFAULT = ['NAS-WEB_AVAILABILITY', 'NAS-WEB_TTFB', 'NAS-WEB_THROUGHPUT', 'NAS-NET_LOSS', 'NAS-NET_LATENCY'];
+  const TEP_NAS_FILTER_IDS = ['NAS-TEST', 'NAS-AGENT', 'NAS-TEST_TAG', 'NAS-AGENT_TAG'];
+
+  /** The focused dashboard object (with template.widgets) from the capture buffer. */
+  function tepFocusedDashboardObject() {
+    let focusId = null;
+    try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
+    const best = pickBestDashboardLikePayload(focusId);
+    let d = best && best.data;
+    d = unwrapIfSingleElementArray(d);
+    if (Array.isArray(d)) d = d.find((x) => x && String(x.id || x.dashboardId) === String(focusId)) || d[0];
+    return { dash: d && typeof d === 'object' ? d : null, dashboardId: focusId || (d && (d.id || d.dashboardId)) || null };
+  }
+  /** Every NAS-* metric id referenced anywhere in the dashboard (for dataSourceFilters). */
+  function tepDashboardNasMetricIds(dash) {
+    const set = new Set();
+    const walk = (n, depth) => {
+      if (n == null || depth > 12) return;
+      if (Array.isArray(n)) { for (const x of n) walk(x, depth + 1); return; }
+      if (typeof n !== 'object') return;
+      const m = (n.config && n.config.metric) || n.metric;
+      if (typeof m === 'string' && /^NAS-/.test(m)) set.add(m);
+      for (const k of Object.keys(n)) if (n[k] && typeof n[k] === 'object') walk(n[k], depth + 1);
+    };
+    walk(dash, 0);
+    return set.size ? [...set] : TEP_NAS_METRICS_DEFAULT.slice();
+  }
+  /** Leaf widgets on the dashboard whose metric is HTTP Server Availability. */
+  function tepFindAvailNumberWidgets(dash) {
+    const roots = (dash && dash.template && Array.isArray(dash.template.widgets)) ? dash.template.widgets
+      : (Array.isArray(dash && dash.widgets) ? dash.widgets : []);
+    const found = [];
+    const walk = (node, parent) => {
+      if (!node || typeof node !== 'object') return;
+      const metric = node.config && node.config.metric;
+      const isLeaf = !Array.isArray(node.widgets);
+      if (isLeaf && typeof metric === 'string' && TEP_WEB_AVAIL_RE.test(metric)) found.push({ node, parent });
+      if (Array.isArray(node.widgets)) for (const c of node.widgets) walk(c, node);
+    };
+    for (const r of roots) walk(r, null);
+    return found;
+  }
+  /** Rebuild the self-service/data POST body for one availability widget (mirrors
+   *  the request TE's dashboard makes). */
+  function tepBuildWidgetDataBody(entry, dash, dashboardId, metricIds) {
+    const { node, parent } = entry;
+    const cfg = (node.config && typeof node.config === 'object') ? node.config : {};
+    const body = { ...cfg };
+    delete body.metric;
+    delete body.aggregationType;
+    if (!body.generalFilters && parent && parent.config && parent.config.generalFilters) {
+      body.generalFilters = parent.config.generalFilters;
+    }
+    const last = (dash && dash.defaultTimespan && Number(dash.defaultTimespan.timespanDuration)) || 3600;
+    body.dashboardId = dashboardId;
+    body.dataSourceFilters = {
+      dataSourceId: 'NAS',
+      filters: TEP_NAS_FILTER_IDS.map((fid) => ({
+        filterId: fid, metricIds, values: [],
+        generalFilter: { filterDimensionId: fid, operator: 'IN', values: [] },
+      })),
+    };
+    body.parentWidgetId = parent ? (parent.widgetId || parent.id || null) : null;
+    body.shouldConvertAlertStoreToStore = true;
+    body.storeMap = {};
+    body.timeSpanConfig = { now: Date.now(), last, useGlobalTimespan: false };
+    body.widgetId = node.widgetId || node.id;
+    body.widgetType = node.type || 'numbers';
+    body.metricId = cfg.metric;
+    body.measureId = cfg.aggregationType || 'NAS-MEAN';
+    return body;
+  }
+  /** Pull availability percentages out of a self-service/data response.
+   *  The value lives in data.points[].v (0–100), one point per round; config
+   *  .startRound is the current period (a second point is the compare period). */
+  function tepExtractAvailFromWidgetData(json) {
+    const out = [];
+    const cfg = json && json.config;
+    const d = json && json.data;
+    const points = d && Array.isArray(d.points) ? d.points : null;
+    if (points && points.length) {
+      // Prefer the current period (startRound); else fall back to the latest round.
+      let targetRound = cfg && Number.isFinite(Number(cfg.startRound)) ? Number(cfg.startRound) : null;
+      if (targetRound == null) {
+        for (const p of points) {
+          const r = Number(p && p.r);
+          if (Number.isFinite(r) && (targetRound == null || r > targetRound)) targetRound = r;
+        }
+      }
+      for (const p of points) {
+        if (!p || typeof p !== 'object') continue;
+        if (targetRound != null && Number(p.r) !== targetRound) continue;
+        const v = Number(p.v);
+        if (Number.isFinite(v) && v >= 0 && v <= 100) out.push(v);
+      }
+      if (out.length) return out;
+    }
+    // Fallback for other shapes: generic value-key scan.
+    tepGrabAvailNumbers(d || json, out, 0);
+    return out;
+  }
+  /** Fetch + average one availability widget's value. Returns a percent or null. */
+  async function tepFetchWidgetAvailability(entry, dash, dashboardId, metricIds) {
+    const node = entry.node;
+    const widgetId = node.widgetId || node.id;
+    const metricId = node.config && node.config.metric;
+    if (!widgetId || !metricId) return null;
+    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(widgetId)}&metricId=${encodeURIComponent(metricId)}&__bg=1`;
+    const body = tepBuildWidgetDataBody(entry, dash, dashboardId, metricIds);
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`SaaS widget: data fetch error for ${widgetId} — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) { log(`SaaS widget: data ${widgetId} → ${resp ? resp.status : 'error'}`, 'tep-log-info'); return null; }
+    const text = await resp.text().catch(() => '');
+    let json; try { json = JSON.parse(text); } catch (_) { log(`SaaS widget: non-JSON data for ${widgetId}`, 'tep-log-info'); return null; }
+    const vals = tepExtractAvailFromWidgetData(json);
+    if (!vals.length) {
+      log(`SaaS widget: no availability number found in ${widgetId} response (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
+      return null;
+    }
+    return vals.reduce((s, x) => s + x, 0) / vals.length;
+  }
+  /** Fetch live HTTP Server Availability for every matching widget on the focused
+   *  dashboard and average them. Returns { avg, count } or null. */
+  async function tepFetchDashboardHttpAvailability() {
+    const { dash, dashboardId } = tepFocusedDashboardObject();
+    if (!dash || !dashboardId) return null;
+    const widgets = tepFindAvailNumberWidgets(dash);
+    if (!widgets.length) return null;
+    const metricIds = tepDashboardNasMetricIds(dash);
+    const results = await Promise.all(widgets.map((w) => tepFetchWidgetAvailability(w, dash, dashboardId, metricIds).catch(() => null)));
+    const vals = results.filter((v) => v != null && isFinite(v));
+    if (!vals.length) return { avg: null, count: 0, widgetsDetected: widgets.length };
+    const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
+    log(`SaaS widget: fetched + averaged ${vals.length}/${widgets.length} HTTP Server Availability widget(s) → ${avg.toFixed(2)}%`, 'tep-log-ok');
+    return { avg, count: vals.length, widgetsDetected: widgets.length };
+  }
+
+  /** Circular health ring whose arc length is the availability percent and whose
+   *  colour follows availability health (green → amber → red). */
+  function tepHealthRingHtml(pct, centerLabel) {
+    const p = Math.max(0, Math.min(100, Number(pct) || 0));
+    const level = p >= 99 ? 'healthy' : (p >= 95 ? 'warning' : 'unhealthy');
+    const c = tepHealthColor(level);
+    const label = centerLabel
+      ? `<span class="tep-health-ring-label" style="color:${c.fill}">${tepEscapeHtmlText(centerLabel)}</span>`
+      : '';
+    return `<div class="tep-health-ring">
+      <svg viewBox="0 0 36 36" aria-hidden="true">
+        <circle class="tep-health-ring-track" cx="18" cy="18" r="15.5" pathLength="100"/>
+        <circle class="tep-health-ring-fill" cx="18" cy="18" r="15.5" pathLength="100" style="stroke:${c.fill};stroke-dasharray:${p.toFixed(1)} 100"/>
+      </svg>${label}
+    </div>`;
+  }
+
   /**
    * Fill the Alerts / Events / SaaS widgets. Alerts & Events need TE's in-app
    * alert/event APIs (endpoints TBD via discovery) → they degrade to "—". SaaS
-   * summarises the loaded HTTP tests (live pass/fail also pending the results API).
+   * finds every widget on the focused dashboard using the HTTP Server Availability
+   * metric (NAS-WEB_AVAILABILITY), fetches each one's value from TE's
+   * dash-api self-service/data endpoint, and averages them.
    */
   async function fillDashWidgetsAsync() {
     const saasEl = document.getElementById('tep-w-saas');
     if (saasEl) {
-      const httpN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'http').length;
-      saasEl.innerHTML = httpN
-        ? `<div class="tep-dash-widget-main">${httpN}<small> HTTP tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">live health pending API</div>`
-        : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">open Tests to load HTTP tests</div>';
+      let done = false;
+      try {
+        const fetched = await tepFetchDashboardHttpAvailability();
+        if (fetched && fetched.count) {
+          saasEl.innerHTML = '<div class="tep-saas-health">'
+            + `<div><div class="tep-dash-widget-main">${fetched.avg.toFixed(1)}<small>% avail</small></div>`
+            + `<div class="tep-dash-widget-sub" title="Live average across ${fetched.count} HTTP Server Availability widget(s) on this dashboard">avg of ${fetched.count} SaaS metric${fetched.count === 1 ? '' : 's'}</div></div>`
+            + tepHealthRingHtml(fetched.avg, '')
+            + '</div>';
+          done = true;
+        } else if (fetched && fetched.widgetsDetected) {
+          saasEl.innerHTML = `<div class="tep-dash-widget-main">${fetched.widgetsDetected}<small> SaaS widget${fetched.widgetsDetected === 1 ? '' : 's'}</small></div>`
+            + '<div class="tep-dash-widget-sub tep-dash-widget-pending">availability fetch returned no value</div>';
+          done = true;
+        }
+      } catch (e) {
+        log(`SaaS widget: availability fetch failed — ${e.message}`, 'tep-log-info');
+      }
+      if (!done) {
+        const scr = tepScrapeDashboardHttpAvailability();
+        if (scr && scr.widgetsDetected) {
+          saasEl.innerHTML = `<div class="tep-dash-widget-main">${scr.widgetsDetected}<small> SaaS widget${scr.widgetsDetected === 1 ? '' : 's'}</small></div>`
+            + '<div class="tep-dash-widget-sub tep-dash-widget-pending">open this dashboard to load availability</div>';
+        } else {
+          const httpN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'http').length;
+          saasEl.innerHTML = httpN
+            ? `<div class="tep-dash-widget-main">${httpN}<small> HTTP tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">no HTTP availability on this dashboard</div>`
+            : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">open a dashboard with HTTP availability</div>';
+        }
+      }
     }
     const alertsEl = document.getElementById('tep-w-alerts');
     if (alertsEl) {
@@ -12506,7 +12838,7 @@
     if (eventsEl) {
       const e = await tepFetchEventsSummary().catch(() => null);
       eventsEl.innerHTML = e
-        ? `<div class="tep-dash-widget-main">${e.active}<small> active</small></div>`
+        ? `<div class="tep-dash-widget-main">${e.active}<small> events</small></div><div class="tep-dash-widget-sub" title="High-impact events (nesx-api)">high impact</div>`
         : tepWidgetPending();
     }
   }
@@ -12574,7 +12906,66 @@
     }
     return null;
   }
-  async function tepFetchEventsSummary() { return null; }
+  const TEP_EVENTS_PATH = '/namespace/nesx-api/internal/v1/events';
+  /** Count of current high-impact events for the fullscreen-map widget.
+   *  Mirrors the Events page request: { active } or null on failure. */
+  async function tepFetchEventsSummary() {
+    const qs = new URLSearchParams({
+      page: '1', pageSize: '100', impact: 'HIGH', sortBy: 'startTime', sortOrder: 'desc',
+      search: '', shouldHideNetworkAndDNS: 'true', recurring: 'false', grouping: 'RECURRENCE',
+    });
+    const url = `${TEP_EVENTS_PATH}?${qs.toString()}`;
+    // nesx-api does strict content negotiation — 406s unless Accept matches the
+    // SPA's "application/json, text/plain, */*".
+    const headers = { 'Accept': 'application/json, text/plain, */*' };
+    const aid = teInitData && teInitData._currentAid;
+    if (aid != null && aid !== '') headers['x-thousandeyes-aid'] = String(aid);
+    const uid = readBrowserCookie('teUid');
+    if (uid) headers['x-thousandeyes-uid'] = uid;
+    const hero = readBrowserCookie('teHeroUserId');
+    if (hero) headers['x-thousandeyes-heroid'] = hero;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'GET', headers });
+    } catch (e) {
+      log(`Events widget: fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) { log(`Events widget: ${url} → ${resp ? resp.status : 'error'}`, 'tep-log-info'); return null; }
+    const text = await resp.text().catch(() => '');
+    if (!text.trim()) { log('Events widget: 200 empty response', 'tep-log-info'); return null; }
+    let data; try { data = JSON.parse(text); } catch (_) { log('Events widget: non-JSON response', 'tep-log-info'); return null; }
+    const readTotal = (o) => {
+      if (!o || typeof o !== 'object') return null;
+      for (const k of ['total', 'totalCount', 'totalElements', 'totalRows', 'count', 'numberOfElements']) {
+        const n = Number(o[k]);
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    };
+    let total = readTotal(data);
+    if (total == null && data && typeof data === 'object') {
+      total = readTotal(data.page) ?? readTotal(data.meta) ?? readTotal(data.pageInfo) ?? readTotal(data.data) ?? readTotal(data.paging);
+    }
+    const firstArray = (o) => {
+      if (Array.isArray(o)) return o;
+      if (!o || typeof o !== 'object') return null;
+      for (const k of ['events', 'items', 'results', 'content', 'data', 'rows']) {
+        if (Array.isArray(o[k])) return o[k];
+        if (o[k] && typeof o[k] === 'object') {
+          for (const k2 of ['events', 'items', 'results', 'content', 'rows']) {
+            if (Array.isArray(o[k][k2])) return o[k][k2];
+          }
+        }
+      }
+      return null;
+    };
+    const arr = firstArray(data);
+    if (total == null && Array.isArray(arr)) total = arr.length;
+    if (total == null) { log(`Events widget: unexpected shape (keys: ${topLevelKeysLabel(data)})`, 'tep-log-info'); return null; }
+    log(`Events widget: ${total} high-impact event(s)`, 'tep-log-ok');
+    return { active: total };
+  }
 
   // ---- Fullscreen map ----------------------------------------------------
   let dashFullResizeFn = null;
