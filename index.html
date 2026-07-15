@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">2.76</span>
+        TE Optics<span class="install-version" aria-label="Build">2.82</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -431,7 +431,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.76';
+  const TEP_VERSION = '2.82';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -485,6 +485,21 @@
     }
   }
 
+  /**
+   * True on the Alerts pages — active alert list (/alerts, /alerts/list) and the
+   * alert-rules management page (/manage/alerts...). Both share the Alerts panel:
+   * backup/restore of alert rules plus an active-alerts viewer and rule manager.
+   */
+  function isManageAlertsPage() {
+    try {
+      const p = window.location.pathname || '';
+      return p === '/alerts' || p.startsWith('/alerts/')
+        || p === '/manage/alerts' || p.startsWith('/manage/alerts/');
+    } catch (_) {
+      return false;
+    }
+  }
+
   /** True on the routing/BGP pages — used to default the Manage type filter to BGP. */
   function isRoutingPage() {
     try {
@@ -511,6 +526,10 @@
   let tepFromEndpointTests = false;
 
   const TEP_DASH_CAPTURE = { entries: [], max: 24 };
+  /** self-service/data widget responses the dashboard fetches (per-widget metric
+   *  values). Keyed later by metricId so the SaaS widget can read HTTP Server
+   *  Availability straight from what the page already loaded. */
+  const TEP_DASH_METRIC_DATA = { entries: [], max: 300 };
   /** @type {{ path: string, status: number, ct: string, snippet: string, t: number }[]} */
   const TEP_DASH_PROBE_HISTORY = [];
   /** @type {{ path: string, status: number, keys: string, t: number }[]} */
@@ -746,6 +765,29 @@
     });
   }
 
+  /** True for the dash-api endpoint that returns a widget's rendered metric data. */
+  function isSelfServiceDataUrl(u) {
+    return typeof u === 'string' && u.includes('/namespace/dash-api/dash/self-service/data');
+  }
+  /** Store one self-service/data response, tagged with its widgetId/metricId (from
+   *  the query string, falling back to the echoed config) and the focused dashboard. */
+  function recordSelfServiceData(url, data) {
+    let widgetId = '', metricId = '';
+    try {
+      const abs = url.includes('//') ? url : ('http://local.invalid' + (url.startsWith('/') ? url : '/' + url));
+      const q = new URL(abs).searchParams;
+      widgetId = q.get('widgetId') || '';
+      metricId = q.get('metricId') || '';
+    } catch (_) { /* */ }
+    const cfg = data && data.config;
+    if (!widgetId && cfg && cfg.widgetId) widgetId = String(cfg.widgetId);
+    if (!metricId && cfg && cfg.metricId) metricId = String(cfg.metricId);
+    let dashId = null;
+    try { dashId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
+    TEP_DASH_METRIC_DATA.entries.unshift({ t: Date.now(), widgetId, metricId, dashId, data });
+    TEP_DASH_METRIC_DATA.entries = TEP_DASH_METRIC_DATA.entries.slice(0, TEP_DASH_METRIC_DATA.max);
+  }
+
   /**
    * Best payload from URL-keyword captures OR sniffed high-scoring JSON (any /ajax path).
    * When focusDashboardId is set (from the page URL), only entries that match that id are used
@@ -940,6 +982,15 @@
         const pathKey = pathOnlyFromUrl(reqUrl || '');
         const sniffOn = window.__TEP_OPTICS_SNIFF_AJAX__ !== false;
 
+        if (reqUrl && isSelfServiceDataUrl(reqUrl)) {
+          const c = res.clone();
+          if (c.ok) {
+            const t = await c.text();
+            const p = tryParseJsonText(t);
+            if (p != null) recordSelfServiceData(reqUrl, p);
+          }
+        }
+
         if (reqUrl && shouldCaptureDashboardUrl(reqUrl)) {
           const clone = res.clone();
           const ct = (clone.headers && clone.headers.get && clone.headers.get('content-type')) || '';
@@ -991,6 +1042,10 @@
           const sniffOn = window.__TEP_OPTICS_SNIFF_AJAX__ !== false;
           const ct = this.getResponseHeader('content-type') || '';
           const st = this.status;
+          if (isSelfServiceDataUrl(reqUrl) && st >= 200 && st < 300) {
+            const p = tryParseJsonText(String(this.responseText || ''));
+            if (p != null) recordSelfServiceData(reqUrl, p);
+          }
           if (shouldCaptureDashboardUrl(reqUrl)) {
             const raw = String(this.responseText || '');
             const parsed = tryParseJsonText(raw);
@@ -1603,6 +1658,201 @@
   }
 
   installTagsNetworkCapture();
+
+  // ---------------------------------------------------------------------------
+  // Alerts route (/alerts, /manage/alerts) — network sniff for API discovery.
+  // The active-alert read endpoint is known; the alert-RULES read/write endpoint
+  // is resolved at runtime but may vary per tenant. Capture method + path + body
+  // of every alert-related request so the exact endpoint can be confirmed by
+  // doing the action once in the native TE UI and copying the report.
+  // ---------------------------------------------------------------------------
+  const TEP_ALERTS_REQUEST_SNIFF = [];   // POST/PUT/PATCH/DELETE with bodies
+  const TEP_ALERTS_RESPONSE_SNIFF = [];  // every alert-related request (method+status+path)
+  const TEP_ALERTS_REQUEST_SNIFF_MAX = 60;
+  const TEP_ALERTS_RESPONSE_SNIFF_MAX = 120;
+
+  function isAlertsRelatedPath(pathKey) {
+    const p = (pathKey || '').toLowerCase();
+    if (!p) return false;
+    if (!(p.startsWith('/ajax/') || p.startsWith('/namespace/'))) return false;
+    if (p.includes('/pageview')) return false;
+    return p.includes('alert');
+  }
+
+  function syncAlertsSniffMeta() {
+    try {
+      const el = document.getElementById('tep-alerts-sniff-meta');
+      if (!el) return;
+      const writes = TEP_ALERTS_REQUEST_SNIFF.length;
+      const total = TEP_ALERTS_RESPONSE_SNIFF.length;
+      if (writes) {
+        el.textContent = `Captured ${writes} alert write request(s) and ${total} alert request(s) total. Copy the report to see the write method, path and body.`;
+      } else if (total) {
+        el.textContent = `Captured ${total} alert request(s) (reads only so far). Edit/enable/delete a rule in the TE UI to capture the write endpoint, then copy the report.`;
+      } else {
+        el.textContent = 'Sniff history empty — interact with alerts/rules in the TE UI to capture API calls, then copy the report.';
+      }
+    } catch (_) { /* */ }
+  }
+
+  function pushAlertsRequestSniff(row) {
+    TEP_ALERTS_REQUEST_SNIFF.unshift(row);
+    if (TEP_ALERTS_REQUEST_SNIFF.length > TEP_ALERTS_REQUEST_SNIFF_MAX) TEP_ALERTS_REQUEST_SNIFF.length = TEP_ALERTS_REQUEST_SNIFF_MAX;
+    try { console.info('[TE Optics alerts] write', row.method, row.path, (row.body || '').slice(0, 300)); } catch (_) { /* */ }
+    syncAlertsSniffMeta();
+  }
+
+  function recordAlertsSniff(pathKey, status, method) {
+    if (!isAlertsRelatedPath(pathKey)) return;
+    TEP_ALERTS_RESPONSE_SNIFF.unshift({ path: pathKey, status, method: method || '', t: Date.now() });
+    if (TEP_ALERTS_RESPONSE_SNIFF.length > TEP_ALERTS_RESPONSE_SNIFF_MAX) TEP_ALERTS_RESPONSE_SNIFF.length = TEP_ALERTS_RESPONSE_SNIFF_MAX;
+    try { console.info('[TE Optics alerts]', method || '?', status, pathKey); } catch (_) { /* */ }
+    syncAlertsSniffMeta();
+  }
+
+  function installAlertsNetworkCapture() {
+    if (!isManageAlertsPage()) return;
+    if (window.__TEP_OPTICS_ALERTS_CAPTURE__) return;
+    window.__TEP_OPTICS_ALERTS_CAPTURE__ = true;
+
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function (...args) {
+      let method = 'GET';
+      let reqUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
+      let reqBody = null;
+      if (args[0] instanceof Request) {
+        reqUrl = args[0].url;
+        method = (args[0].method || 'GET').toUpperCase();
+      } else if (args[1] && args[1].method) {
+        method = String(args[1].method).toUpperCase();
+      }
+      if (args[1] && typeof args[1].body === 'string') reqBody = args[1].body;
+      try {
+        const pathKey = pathOnlyFromUrl(reqUrl || '');
+        if (isAlertsRelatedPath(pathKey) && /^(POST|PUT|PATCH|DELETE)$/.test(method)) {
+          pushAlertsRequestSniff({ path: pathKey, method, body: (reqBody || '').slice(0, 12000), t: Date.now() });
+        }
+      } catch (_) { /* */ }
+      const res = await origFetch(...args);
+      try {
+        const pathKey = pathOnlyFromUrl(reqUrl || '');
+        recordAlertsSniff(pathKey, res.status, method);
+      } catch (_) { /* */ }
+      return res;
+    };
+
+    const XHROpen = XMLHttpRequest.prototype.open;
+    const XHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, url, ...rest) {
+      try {
+        this.__tep_alerts_url = typeof url === 'string' ? url : String(url);
+        this.__tep_alerts_method = (m || 'GET').toUpperCase();
+      } catch (_) {
+        this.__tep_alerts_url = '';
+        this.__tep_alerts_method = 'GET';
+      }
+      return XHROpen.call(this, m, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      try {
+        const pathKey = pathOnlyFromUrl(this.__tep_alerts_url || '');
+        const method = this.__tep_alerts_method || 'GET';
+        if (isAlertsRelatedPath(pathKey) && /^(POST|PUT|PATCH|DELETE)$/.test(method) && typeof body === 'string') {
+          pushAlertsRequestSniff({ path: pathKey, method, body: body.slice(0, 12000), t: Date.now() });
+        }
+      } catch (_) { /* */ }
+      this.addEventListener('load', function () {
+        try {
+          const pathKey = pathOnlyFromUrl(this.__tep_alerts_url || '');
+          recordAlertsSniff(pathKey, this.status, this.__tep_alerts_method || 'GET');
+        } catch (_) { /* */ }
+      });
+      return XHRSend.call(this, body);
+    };
+
+    try { console.info('[TE Optics alerts] network capture active — view an alert or edit/enable/delete a rule, then use Diagnostics → Copy API discovery report'); } catch (_) { /* */ }
+  }
+
+  function clearAlertsSniff() {
+    TEP_ALERTS_REQUEST_SNIFF.length = 0;
+    TEP_ALERTS_RESPONSE_SNIFF.length = 0;
+    syncAlertsSniffMeta();
+  }
+
+  function buildAlertsDebugReport() {
+    const lines = [];
+    lines.push('=== TE Optics alerts API discovery ===');
+    lines.push('generatedAt: ' + new Date().toISOString());
+    lines.push('href: ' + (typeof location !== 'undefined' ? location.href : ''));
+    lines.push('pathname: ' + (typeof location !== 'undefined' ? location.pathname : ''));
+    try {
+      const m = document.cookie && document.cookie.match(/(?:^|;\s*)teAccount=([^;]*)/);
+      lines.push('teAccountCookie: ' + (m ? decodeURIComponent(m[1]) : '(none)'));
+    } catch (_) {
+      lines.push('teAccountCookie: (error reading cookie)');
+    }
+    lines.push('teInitData._currentAid: ' + (teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '(unset)'));
+    lines.push('teInitData.testAlertRulesUrl: ' + (teInitData && teInitData.testAlertRulesUrl != null ? String(teInitData.testAlertRulesUrl) : '(unset)'));
+    lines.push('resolvedAlertRulesBase: ' + (alertRulesResolvedBase || '(not resolved yet — click Load alert rules)'));
+    lines.push('csrfHeader: ' + (csrfToken ? csrfToken.headerName + ' set' : '(none)'));
+    lines.push('');
+    lines.push('HOW TO USE: in the native ThousandEyes alerts UI, view an alert and/or');
+    lines.push('edit, enable, disable, or delete ONE alert rule. Then copy this report.');
+    lines.push('The captured WRITE request below shows the exact endpoint, method, and body.');
+    lines.push('');
+    lines.push('--- Captured alert WRITE requests (POST/PUT/PATCH/DELETE) ---');
+    if (!TEP_ALERTS_REQUEST_SNIFF.length) {
+      lines.push('(none captured yet — edit/enable/delete a rule in the UI, then copy again)');
+    } else {
+      for (const r of TEP_ALERTS_REQUEST_SNIFF) {
+        lines.push(`${r.method} ${r.path}`);
+        if (r.body) lines.push('  body: ' + r.body.slice(0, 4000));
+      }
+    }
+    lines.push('');
+    lines.push('--- All alert-related requests (method + status + path) ---');
+    if (!TEP_ALERTS_RESPONSE_SNIFF.length) {
+      lines.push('(none captured yet)');
+    } else {
+      for (const s of TEP_ALERTS_RESPONSE_SNIFF) lines.push(`${s.method || '?'} ${s.status} ${s.path}`);
+    }
+    lines.push('');
+    lines.push('--- Resource timing: recent alert-related /ajax/ + /namespace/ URLs ---');
+    try {
+      const seen = new Set();
+      for (const e of performance.getEntriesByType('resource')) {
+        if (!e.name || typeof e.name !== 'string') continue;
+        let p;
+        try {
+          const u = new URL(e.name, window.location.origin);
+          if (u.origin !== window.location.origin) continue;
+          p = u.pathname + u.search;
+        } catch (_) { continue; }
+        if (!isAlertsRelatedPath(p)) continue;
+        if (seen.has(p)) continue;
+        seen.add(p);
+        lines.push(p);
+      }
+      if (!seen.size) lines.push('(none)');
+    } catch (_) {
+      lines.push('(performance API unavailable)');
+    }
+    lines.push('');
+    lines.push('Known/assumed alert APIs:');
+    lines.push('  POST /namespace/alerts/alert-service/alerts/_search?rowsPerPage=100&state=TRIGGER   (active alerts — proven; needs JSON body)');
+    lines.push('  GET  /ajax/alert-rules/list                          (standard rule list — proven)');
+    lines.push('  POST /ajax/alert-rules/save                          (create/update standard rule — proven; ruleId=null → create)');
+    lines.push('  DELETE /ajax/alert-rules/{ruleId}                    (delete standard rule — proven)');
+    lines.push('  GET  /ajax/settings/alerts/endpoint/list             (endpoint rule list — proven)');
+    lines.push('  GET  /ajax/settings/alerts/endpoint/browser-session-rules   (endpoint browser session rules — proven)');
+    lines.push('  DELETE /ajax/settings/alerts/endpoint/rule/{ruleId}  (delete endpoint rule — assumed)');
+    lines.push('  GET  /ajax/settings/alerts/rule/{ruleId}/editor/     (standard rule editor detail)');
+    lines.push('  resolvedWriteBase: ' + alertRulesWriteBase());
+    lines.push('  candidates tried: ' + alertRulesUrlCandidates().join(', '));
+    return lines.join('\n');
+  }
+
+  installAlertsNetworkCapture();
 
   // ---------------------------------------------------------------------------
   // Config — uses TE's internal /ajax/ API (same-origin, session cookies)
@@ -2655,6 +2905,20 @@
     .tep-test-list { max-height: calc(100vh - 340px); overflow-y: auto; }
     .tep-test-count { font-size: 11px; color: #64748b; margin-bottom: 8px; }
 
+    /* Alerts panel — severity + state badges (reuse tep-type-badge sizing) */
+    .tep-sev-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
+    }
+    .tep-sev-critical { background: #4c1220; color: #fca5a5; }
+    .tep-sev-major    { background: #4a1d0c; color: #fdba74; }
+    .tep-sev-minor    { background: #3b3510; color: #facc15; }
+    .tep-sev-warning  { background: #3b3510; color: #facc15; }
+    .tep-sev-info     { background: #1e3a5f; color: #60a5fa; }
+    .tep-sev-default  { background: #334155; color: #94a3b8; }
+    .tep-alert-active-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #f87171; flex-shrink: 0; }
+    .tep-alert-cleared-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #4ade80; flex-shrink: 0; }
+
     /* Edit form inline */
     .tep-edit-form { margin-top: 8px; padding-top: 8px; border-top: 1px solid #334155; }
     .tep-edit-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
@@ -3470,6 +3734,132 @@
         </div>
       </div>
 
+      <!-- ============== ALERTS TOOLS (/alerts, /manage/alerts) ============== -->
+      <div class="tep-view-panel" id="tep-panel-alerts">
+
+        <!-- Active alerts viewer -->
+        <div class="tep-manage-block" id="tep-alerts-block-active">
+          <button type="button" class="tep-create-toggle" id="tep-alerts-active-toggle" aria-expanded="false" aria-controls="tep-alerts-active-expand">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Active Alerts
+          </button>
+          <div class="tep-manage-expand tep-create-expand" id="tep-alerts-active-expand" hidden>
+            <div class="tep-manage-toolbar">
+              <select id="tep-alerts-active-state">
+                <option value="TRIGGER" selected>Triggered (active)</option>
+                <option value="ALL">All (incl. cleared)</option>
+              </select>
+              <input id="tep-alerts-active-search" placeholder="Search alerts&hellip;">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-alerts-active-load" title="Refresh active alerts" aria-label="Refresh active alerts">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" /><path d="M3 21v-5h5" />
+                </svg>
+              </button>
+            </div>
+            <div class="tep-test-count" id="tep-alerts-active-meta">Not loaded yet.</div>
+            <div class="tep-test-list" id="tep-alerts-active-list">
+              <span class="tep-log-info">Click refresh to load active alerts.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alert rules backup & restore -->
+        <div class="tep-create-block" id="tep-alerts-block-backup">
+          <button type="button" class="tep-create-toggle" id="tep-arules-toggle" aria-expanded="false" aria-controls="tep-arules-expand">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Alert Rules Backup &amp; Restore
+          </button>
+          <div class="tep-manage-expand tep-create-expand" id="tep-arules-expand" hidden>
+            <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">Back up every alert rule (name, expression, thresholds, severity, notification config) to a JSON file, or selectively restore rule definitions from a backup. Restore creates the selected rules as new alert rules.</p>
+            <div class="tep-dash-card tep-dash-restore-card">
+              <label class="tep-label" for="tep-arules-json">Alert rules JSON <span id="tep-arules-json-count" class="tep-dash-hint" style="font-weight:normal;"></span></label>
+              <details class="tep-dash-json-details" id="tep-arules-json-details">
+                <summary>
+                  <span class="tep-dash-json-sum tep-dash-json-sum-empty" id="tep-arules-json-summary">No JSON yet — click Load alert rules</span>
+                  <span class="tep-dash-json-chev" aria-hidden="true">&#9654;</span>
+                </summary>
+                <div class="tep-dash-json-details-body">
+                  <textarea class="tep-textarea tep-dash-json" id="tep-arules-json" spellcheck="false" placeholder="[ ]"></textarea>
+                </div>
+              </details>
+              <div class="tep-dash-actions">
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-arules-load">Load alert rules</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-arules-download">Backup to file&hellip;</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-arules-import-btn">Import backup file&hellip;</button>
+                <input type="file" id="tep-arules-import-file" accept="application/json,.json" style="display:none;">
+              </div>
+            </div>
+            <div class="tep-br-pick" id="tep-arules-pick-wrap" hidden>
+              <div class="tep-br-pick-head">
+                <label class="tep-label tep-br-pick-label">Rules to restore</label>
+                <span class="tep-br-pick-count" id="tep-arules-pick-count">0 selected</span>
+              </div>
+              <div class="tep-br-pick-toolbar">
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-arules-pick-all">All</button>
+                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-arules-pick-none">None</button>
+              </div>
+              <div class="tep-br-pick-list" id="tep-arules-pick-list"></div>
+            </div>
+            <label class="tep-label" for="tep-arules-restore-mode" style="margin-top:12px;">On restore</label>
+            <select class="tep-select" id="tep-arules-restore-mode" style="width:100%;">
+              <option value="safe" selected>Safe — clear test &amp; notification bindings (best for a different account)</option>
+              <option value="keep">Keep bindings from the JSON (same account only; may fail cross-account)</option>
+            </select>
+            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Server-owned fields (id, dates) are always stripped. In <strong>Safe</strong> mode, test assignments and notification/integration references are cleared because those ids are account-specific — you re-assign rules to tests afterward in the TE UI. Restore creates <strong>standard</strong> (cloud/enterprise/network) rules; endpoint-agent rules are included in backups but can&rsquo;t yet be recreated via restore.</p>
+            <div class="tep-dash-row" style="margin-top:14px;">
+              <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-arules-restore" style="flex:1;" disabled>Restore selected alert rules&hellip;</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alert rules manager -->
+        <div class="tep-manage-block" id="tep-alerts-block-manage">
+          <button type="button" class="tep-create-toggle" id="tep-armg-toggle" aria-expanded="true" aria-controls="tep-armg-expand">
+            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Manage Alert Rules
+          </button>
+          <div class="tep-manage-expand tep-create-expand" id="tep-armg-expand">
+            <div class="tep-manage-toolbar">
+              <input id="tep-armg-search" placeholder="Search alert rules&hellip;">
+              <select id="tep-armg-sort" style="width:auto;">
+                <option value="type" selected>Sort: Type, then recent</option>
+                <option value="modified">Sort: Recently modified</option>
+                <option value="name">Sort: Name</option>
+              </select>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-armg-load" title="Refresh alert rules" aria-label="Refresh alert rules">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" /><path d="M3 21v-5h5" />
+                </svg>
+              </button>
+            </div>
+            <div class="tep-bulk-bar" id="tep-armg-bulk-bar">
+              <span id="tep-armg-bulk-count">0 selected</span>
+              <select id="tep-armg-bulk-action">
+                <option value="">— Bulk Action —</option>
+                <option value="backup">Backup to file</option>
+                <option value="delete">Delete</option>
+              </select>
+              <button type="button" class="tep-bulk-apply" id="tep-armg-bulk-apply">Apply</button>
+            </div>
+            <div class="tep-test-count" id="tep-armg-meta">Not loaded yet.</div>
+            <div class="tep-test-list" id="tep-armg-list">
+              <span class="tep-log-info">Click refresh to load alert rules.</span>
+            </div>
+          </div>
+        </div>
+
+        <details class="tep-dash-details" id="tep-alerts-diagnostics" style="margin-top:4px;">
+          <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
+          <div class="tep-dash-details-inner tep-dash-advanced-inner">
+            <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">
+              If Load/Restore/Enable/Delete fail, the internal endpoint may differ on your tenant. Do the action once in the native ThousandEyes alerts UI (view an alert, edit/enable/delete a rule), then copy this report — it lists the method, path, and request body of every alert-related call so the exact endpoint can be confirmed.
+            </p>
+            <div class="tep-dash-actions" style="margin-top:0;">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-alerts-copy-debug">Copy API discovery report</button>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-alerts-clear-sniff">Clear captures</button>
+            </div>
+            <p class="tep-dash-hint" id="tep-alerts-sniff-meta" style="margin:10px 0 0;font-size:11px;color:#64748b;">Sniff history empty — interact with alerts/rules in the TE UI to capture API calls, then copy the report.</p>
+          </div>
+        </details>
+      </div>
+
       <!-- Author: Christopher Hunt -->
       <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
         <strong style="color:#cbd5e1;">TE Optics</strong>
@@ -3516,8 +3906,15 @@
 
     const pTags = root.querySelector('#tep-panel-tags');
     if (pTags) pTags.classList.remove('active');
+    const pAlerts = root.querySelector('#tep-panel-alerts');
+    if (pAlerts) pAlerts.classList.remove('active');
 
-    if (isManageTagsPage() && pTags) {
+    if (isManageAlertsPage() && pAlerts) {
+      if (h2) {
+        h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      }
+      pAlerts.classList.add('active');
+    } else if (isManageTagsPage() && pTags) {
       if (h2) {
         h2.innerHTML = `<span>TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
       }
@@ -4642,6 +5039,943 @@
       }
       log(`Tags restore complete: ${ok} created, ${fail} failed${assigned ? `, ${assigned} cloud agent assignment(s) applied` : ''}`, fail ? 'tep-log-err' : 'tep-log-ok');
       toast(`Restored ${ok} tag(s)${assigned ? `, ${assigned} cloud assignment(s)` : ''}${fail ? `, ${fail} failed` : ''}`, fail ? 'err' : 'ok');
+    } finally {
+      dismiss();
+    }
+  }
+
+  // ===========================================================================
+  // Alerts (/alerts, /manage/alerts) — active-alert viewer, alert-rule
+  // backup/restore, and an alert-rule manager. Mirrors the Tags backup/restore
+  // pipeline and the dashboard "Manage" list. The active-alert read endpoint is
+  // proven (dashboard widget); the alert-RULES endpoint is resolved at runtime
+  // from teInitData.testAlertRulesUrl with well-known fallbacks.
+  // ===========================================================================
+  // GET list endpoint (confirmed via API discovery): /ajax/alert-rules/list.
+  // Older/alternate shapes kept as fallbacks in case a tenant differs.
+  const ALERT_RULES_URL_CANDIDATES = [
+    '/ajax/alert-rules/list',
+    '/namespace/alerts/alert-service/alert-rules',
+    '/ajax/alert-rules',
+    '/ajax/alerts/alert-rules',
+  ];
+  // Endpoint-agent alert rules live behind a SEPARATE API (not /ajax/alert-rules/list).
+  const ALERT_RULES_ENDPOINT_LIST = '/ajax/settings/alerts/endpoint/list';
+  const ALERT_RULES_ENDPOINT_BROWSER = '/ajax/settings/alerts/endpoint/browser-session-rules';
+  const ALERT_RULES_ENDPOINT_RULE_BASE = '/ajax/settings/alerts/endpoint/rule';
+
+  /** Which API a rule came from: 'endpoint' rules use the /ajax/settings/alerts/endpoint/* API. */
+  function alertRuleSource(r) {
+    return (r && r._tepSource) === 'endpoint' ? 'endpoint' : 'standard';
+  }
+  let alertRulesResolvedBase = '';   // path that returned rules — reused for writes
+  let alertRulesBackupData = null;
+  let alertRulesBackupName = '';
+  let selectedAlertRuleRestoreKeys = new Set();
+  // Manage list state
+  let alertRulesCatalog = [];
+  let alertRulesListEverLoaded = false;
+  let selectedAlertRuleManageIds = new Set();
+  // Active alerts state
+  let activeAlertsCatalog = [];
+  let activeAlertsEverLoaded = false;
+
+  /** Ordered, de-duplicated list of GET candidates for the alert-rules collection. */
+  function alertRulesUrlCandidates() {
+    const out = [];
+    const push = (u) => {
+      if (typeof u !== 'string') return;
+      const s = u.trim();
+      if (!s) return;
+      // Only accept same-origin path-style URLs (ignore absolute cross-origin).
+      let path = s;
+      try {
+        if (/^https?:\/\//i.test(s)) {
+          const parsed = new URL(s);
+          if (parsed.origin !== window.location.origin) return;
+          path = parsed.pathname + parsed.search;
+        }
+      } catch (_) { /* keep as-is */ }
+      if (!path.startsWith('/')) return;
+      // Only try same-origin API namespaces; teInitData.testAlertRulesUrl is a
+      // UI route (e.g. "/settings/alerts?") that returns HTML, not JSON.
+      if (!(path.startsWith('/ajax/') || path.startsWith('/namespace/'))) return;
+      if (!out.includes(path)) out.push(path);
+    };
+    if (alertRulesResolvedBase) push(alertRulesResolvedBase);
+    if (teInitData && typeof teInitData === 'object') {
+      push(teInitData.alertRulesUrl);
+    }
+    ALERT_RULES_URL_CANDIDATES.forEach(push);
+    return out;
+  }
+
+  /**
+   * Write base for alert-rule create/update/delete. The list is served from
+   * `/ajax/alert-rules/list`; writes go to the collection root `/ajax/alert-rules`
+   * (POST to create, POST to `/{id}` to update, DELETE `/{id}`), matching TE's
+   * /ajax/tests convention.
+   */
+  function alertRulesWriteBase() {
+    const base = alertRulesResolvedBase || alertRulesUrlCandidates()[0] || '/ajax/alert-rules';
+    return base.replace(/\/list$/, '');
+  }
+
+  function normalizeAlertRulesRoot(body) {
+    let arr = [];
+    if (Array.isArray(body)) arr = body;
+    else if (body && typeof body === 'object') {
+      if (Array.isArray(body.alertRules)) arr = body.alertRules;
+      else if (Array.isArray(body.rules)) arr = body.rules;
+      else if (Array.isArray(body.list)) arr = body.list;
+      else if (Array.isArray(body.items)) arr = body.items;
+      else if (Array.isArray(body.content)) arr = body.content;
+      else if (Array.isArray(body.results)) arr = body.results;
+      else if (Array.isArray(body.data)) arr = body.data;
+      else if (body._embedded && Array.isArray(body._embedded.alertRules)) arr = body._embedded.alertRules;
+      else if (body.id != null || body.ruleName != null || body.expression != null) arr = [body];
+    }
+    return arr.filter((x) => x && typeof x === 'object');
+  }
+
+  function alertRuleIdOf(r) {
+    if (!r || typeof r !== 'object') return '';
+    const v = r.id != null ? r.id : (r.alertRuleId != null ? r.alertRuleId : r.ruleId);
+    return v == null ? '' : String(v);
+  }
+
+  function alertRuleNameOf(r) {
+    const n = r && (r.name || r.ruleName || r.alertRuleName || r.title);
+    return n != null && String(n).trim() ? String(n).trim() : '(unnamed rule)';
+  }
+
+  function alertRuleTypeOf(r) {
+    const t = r && (r.alertTypeDisplayName || r.alertType || r.type || r.testType || r.ruleType);
+    if (t != null && String(t).trim()) return String(t).trim();
+    return alertRuleSource(r) === 'endpoint' ? 'Endpoint' : 'rule';
+  }
+
+  /** Modified time in ms (rule bodies use unix-seconds `modifiedTime`). 0 if absent. */
+  function alertRuleModifiedMs(r) {
+    const v = r && (r.modifiedTime != null ? r.modifiedTime : (r.modifiedDate != null ? r.modifiedDate : r.dateModified));
+    if (v == null) return 0;
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000; // sec → ms heuristic
+    const p = Date.parse(String(v));
+    return Number.isFinite(p) ? p : 0;
+  }
+
+  /** Short summary of which tests a rule targets. */
+  function alertRuleTargetSummary(r) {
+    if (!r || typeof r !== 'object') return '';
+    if (r.flagDefault || r.default) return 'Default (new tests)';
+    if (r.flagAnyTest) return 'All tests';
+    const ids = Array.isArray(r.testIds) ? r.testIds : (Array.isArray(r.tests) ? r.tests : null);
+    if (ids) return `${ids.length} test${ids.length === 1 ? '' : 's'}`;
+    return '';
+  }
+
+  function formatAlertRuleLabel(r) {
+    return { name: alertRuleNameOf(r), type: alertRuleTypeOf(r) };
+  }
+
+  /**
+   * Deep-link to a rule's settings/editor. TE exposes the alert-rules settings at
+   * teInitData.testAlertRulesUrl ("/settings/alerts?"); append the ruleId so the
+   * rule opens. Falls back to the manage-rules page.
+   */
+  function alertRuleSettingsHref(rule) {
+    const id = alertRuleIdOf(rule);
+    // Endpoint rules live on the Endpoint tab of the manage-rules page.
+    if (alertRuleSource(rule) === 'endpoint') {
+      return window.location.origin + '/manage/alerts/rules?tab=Endpoint' + (id ? '&ruleId=' + encodeURIComponent(id) : '');
+    }
+    let base = (teInitData && typeof teInitData.testAlertRulesUrl === 'string' && teInitData.testAlertRulesUrl.trim())
+      ? teInitData.testAlertRulesUrl.trim()
+      : '/settings/alerts?';
+    if (!base.startsWith('/')) base = '/settings/alerts?';
+    let path = base;
+    if (id) {
+      if (base.includes('?')) {
+        path = base.endsWith('?') || base.endsWith('&') ? base + 'ruleId=' + encodeURIComponent(id) : base + '&ruleId=' + encodeURIComponent(id);
+      } else {
+        path = base + '?ruleId=' + encodeURIComponent(id);
+      }
+    }
+    return window.location.origin + path;
+  }
+
+  function alertRuleRestoreRowKey(r, i) {
+    const id = alertRuleIdOf(r);
+    if (id) return `id:${id}`;
+    return `r:${alertRuleNameOf(r)}::${alertRuleTypeOf(r)}::${i}`;
+  }
+
+  // ---- Backup/restore picker (mirrors tags) --------------------------------
+  function updateAlertRulesPickCount() {
+    const countEl = $('#tep-arules-pick-count');
+    if (countEl) countEl.textContent = `${selectedAlertRuleRestoreKeys.size} selected`;
+    const runBtn = $('#tep-arules-restore');
+    if (runBtn) runBtn.disabled = !alertRulesBackupData || selectedAlertRuleRestoreKeys.size === 0;
+  }
+
+  function renderAlertRulesPicker(arr) {
+    const listEl = $('#tep-arules-pick-list');
+    if (!listEl) return;
+    const rows = Array.isArray(arr) ? arr : [];
+    if (!rows.length) {
+      listEl.innerHTML = '<span class="tep-log-info">No alert rules in backup.</span>';
+      updateAlertRulesPickCount();
+      return;
+    }
+    listEl.innerHTML = '';
+    rows.forEach((r, i) => {
+      const key = alertRuleRestoreRowKey(r, i);
+      const { name, type } = formatAlertRuleLabel(r);
+      const row = document.createElement('label');
+      row.className = 'tep-br-pick-row';
+      const checked = selectedAlertRuleRestoreKeys.has(key);
+      row.innerHTML = `<input type="checkbox" data-key="${tepEscapeHtmlText(key)}" ${checked ? 'checked' : ''}><span class="tep-br-pick-name" title="${tepEscapeHtmlText(name)}">${tepEscapeHtmlText(name)}</span><span class="tep-br-pick-meta">${tepEscapeHtmlText(type)}</span>`;
+      const cb = row.querySelector('input');
+      if (cb) {
+        cb.addEventListener('change', (e) => {
+          if (e.target.checked) selectedAlertRuleRestoreKeys.add(key);
+          else selectedAlertRuleRestoreKeys.delete(key);
+          updateAlertRulesPickCount();
+        });
+      }
+      listEl.appendChild(row);
+    });
+    updateAlertRulesPickCount();
+  }
+
+  function refreshAlertRulesJsonSummary() {
+    const ta = $('#tep-arules-json');
+    const summary = $('#tep-arules-json-summary');
+    const countEl = $('#tep-arules-json-count');
+    if (!ta || !summary) return;
+    const raw = (ta.value || '').trim();
+    if (!raw) {
+      summary.textContent = 'No JSON yet — click Load alert rules';
+      summary.className = 'tep-dash-json-sum tep-dash-json-sum-empty';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      summary.textContent = `JSON parse error: ${e.message}`;
+      summary.className = 'tep-dash-json-sum tep-dash-json-sum-err';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    const arr = normalizeAlertRulesRoot(parsed);
+    const n = arr.length;
+    const names = arr.slice(0, 3).map((x) => formatAlertRuleLabel(x).name).join(', ');
+    summary.textContent = `${n} rule${n === 1 ? '' : 's'}${names ? ` — ${names}${n > 3 ? ', …' : ''}` : ''}`;
+    summary.className = 'tep-dash-json-sum tep-dash-json-sum-ok';
+    if (countEl) countEl.textContent = `(${n} rule${n === 1 ? '' : 's'})`;
+  }
+
+  function syncAlertRulesPickerFromEditor(preselectAll) {
+    const ta = $('#tep-arules-json');
+    const pickWrap = $('#tep-arules-pick-wrap');
+    if (!ta) return;
+    let parsed;
+    try { parsed = JSON.parse(ta.value || ''); } catch (_) { parsed = null; }
+    const arr = normalizeAlertRulesRoot(parsed);
+    alertRulesBackupData = arr.length ? arr : null;
+    if (!arr.length) {
+      selectedAlertRuleRestoreKeys.clear();
+      if (pickWrap) pickWrap.hidden = true;
+      renderAlertRulesPicker([]);
+      return;
+    }
+    const keys = arr.map((r, i) => alertRuleRestoreRowKey(r, i));
+    const keySet = new Set(keys);
+    for (const k of Array.from(selectedAlertRuleRestoreKeys)) {
+      if (!keySet.has(k)) selectedAlertRuleRestoreKeys.delete(k);
+    }
+    if (preselectAll || selectedAlertRuleRestoreKeys.size === 0) {
+      keys.forEach((k) => selectedAlertRuleRestoreKeys.add(k));
+    }
+    if (pickWrap) pickWrap.hidden = false;
+    renderAlertRulesPicker(arr);
+  }
+
+  function setAllAlertRulesPick(checked) {
+    const arr = normalizeAlertRulesRoot(alertRulesBackupData);
+    selectedAlertRuleRestoreKeys.clear();
+    if (checked) arr.forEach((r, i) => selectedAlertRuleRestoreKeys.add(alertRuleRestoreRowKey(r, i)));
+    renderAlertRulesPicker(arr);
+  }
+
+  /**
+   * GET the alert-rules collection, trying each candidate path until one returns
+   * JSON that normalizes to an array. Records the working base for later writes.
+   */
+  /** GET the standard (cloud/enterprise/network/BGP) alert-rules collection. */
+  async function fetchStandardAlertRules() {
+    const candidates = alertRulesUrlCandidates();
+    let lastErr = 'no candidate endpoints';
+    for (const base of candidates) {
+      let resp = null;
+      try {
+        resp = await ajax(base, { method: 'GET' });
+      } catch (e) {
+        lastErr = e.message;
+        log(`Alert rules: GET ${base} → error ${e.message}`, 'tep-log-info');
+        continue;
+      }
+      const text = await resp.text().catch(() => '');
+      if (!resp.ok) {
+        lastErr = `${resp.status}: ${text.slice(0, 160)}`;
+        log(`Alert rules: GET ${base} → ${resp.status}`, 'tep-log-info');
+        if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+        continue;
+      }
+      let data;
+      try { data = JSON.parse(text); } catch (_) { log(`Alert rules: GET ${base} → non-JSON`, 'tep-log-info'); continue; }
+      const arr = normalizeAlertRulesRoot(data);
+      arr.forEach((r) => { try { r._tepSource = 'standard'; } catch (_) { /* */ } });
+      alertRulesResolvedBase = base;
+      log(`Alert rules: loaded ${arr.length} standard rule(s) from ${base}`, 'tep-log-ok');
+      return { arr, base };
+    }
+    throw new Error(lastErr);
+  }
+
+  /** GET endpoint-agent alert rules (separate API); best-effort, returns [] on failure. */
+  async function fetchEndpointAlertRules() {
+    const out = [];
+    const seen = new Set();
+    for (const url of [ALERT_RULES_ENDPOINT_LIST, ALERT_RULES_ENDPOINT_BROWSER]) {
+      try {
+        const resp = await ajax(url, { method: 'GET' });
+        const text = await resp.text().catch(() => '');
+        if (!resp.ok) { log(`Alert rules: GET ${url} → ${resp.status}`, 'tep-log-info'); continue; }
+        let data; try { data = JSON.parse(text); } catch (_) { log(`Alert rules: GET ${url} → non-JSON`, 'tep-log-info'); continue; }
+        const arr = normalizeAlertRulesRoot(data);
+        for (const r of arr) {
+          try { r._tepSource = 'endpoint'; } catch (_) { /* */ }
+          const id = alertRuleIdOf(r);
+          const key = id ? `id:${id}` : `n:${alertRuleNameOf(r)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(r);
+        }
+        log(`Alert rules: loaded ${arr.length} endpoint rule(s) from ${url}`, 'tep-log-ok');
+      } catch (e) {
+        log(`Alert rules: GET ${url} → error ${e.message}`, 'tep-log-info');
+      }
+    }
+    return out;
+  }
+
+  /** Load standard + endpoint alert rules, merged into one catalog. */
+  async function fetchAlertRulesFromApi() {
+    const std = await fetchStandardAlertRules(); // throws if standard list unreachable
+    let endpoint = [];
+    try { endpoint = await fetchEndpointAlertRules(); } catch (_) { endpoint = []; }
+    return { arr: std.arr.concat(endpoint), base: std.base };
+  }
+
+  async function loadAlertRulesBackup() {
+    const ta = $('#tep-arules-json');
+    const dismiss = toastProcessing('Loading alert rules…');
+    try {
+      const { arr } = await fetchAlertRulesFromApi();
+      // Strip internal (_-prefixed) tags so the backup JSON stays clean.
+      const clean = arr.map((r) => { const c = {}; for (const [k, v] of Object.entries(r)) { if (!k.startsWith('_')) c[k] = v; } return c; });
+      if (ta) ta.value = JSON.stringify(clean, null, 2);
+      alertRulesBackupName = '';
+      selectedAlertRuleRestoreKeys.clear();
+      refreshAlertRulesJsonSummary();
+      syncAlertRulesPickerFromEditor(true);
+      toast(`Loaded ${arr.length} alert rule(s)`, 'ok');
+    } catch (e) {
+      log(`Alert rules load failed: ${e.message}`, 'tep-log-err');
+      toast(`Load failed: ${e.message} — see Diagnostics`, 'err');
+    } finally {
+      dismiss();
+    }
+  }
+
+  function downloadAlertRulesBackup() {
+    const ta = $('#tep-arules-json');
+    if (!ta || !ta.value.trim()) {
+      toast('Nothing to download — click Load alert rules first', 'err');
+      return;
+    }
+    const suggested = `te-alert-rules-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const name = window.prompt('Download filename:', suggested) || suggested;
+    const blob = new Blob([ta.value], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { a.remove(); } catch (_) { /* */ }
+      try { URL.revokeObjectURL(url); } catch (_) { /* */ }
+    }, 500);
+    toast('Download started', 'ok');
+  }
+
+  function importAlertRulesBackupFile(file) {
+    if (!file) return;
+    const ta = $('#tep-arules-json');
+    const r = new FileReader();
+    r.onload = () => {
+      if (ta) ta.value = String(r.result || '');
+      alertRulesBackupName = file.name || '';
+      selectedAlertRuleRestoreKeys.clear();
+      refreshAlertRulesJsonSummary();
+      syncAlertRulesPickerFromEditor(true);
+      const arr = normalizeAlertRulesRoot((() => { try { return JSON.parse(ta ? ta.value : ''); } catch (_) { return null; } })());
+      toast(arr.length ? `Imported ${arr.length} rule(s) from ${file.name}` : `Imported ${file.name}`, arr.length ? 'ok' : 'err');
+    };
+    r.onerror = () => toast('Failed to read file', 'err');
+    r.readAsText(file);
+  }
+
+  /**
+   * Prepare a rule for POST /ajax/alert-rules/save as a NEW rule. Always clears
+   * server-owned identity/audit fields (ruleId=null → create). In Safe mode also
+   * clears account-specific bindings (tests, notification integration ids, label/
+   * tag filters) so the rule imports cleanly into a different account.
+   */
+  function cleanAlertRuleForRestore(rule, mode) {
+    const out = {};
+    for (const [k, v] of Object.entries(rule)) {
+      if (k.startsWith('_')) continue;
+      out[k] = v;
+    }
+    // Create as new: drop identity + audit fields.
+    out.ruleId = null;
+    out.ruleRefId = null;
+    out.creatorId = null;
+    out.editorId = null;
+    out.deleted = false;
+    delete out.id;
+    delete out.createdTime;
+    delete out.modifiedTime;
+    // aid: target current account when known; otherwise let the session default.
+    if (teInitData && teInitData._currentAid != null && teInitData._currentAid !== '') {
+      out.aid = parseInt(teInitData._currentAid, 10) || teInitData._currentAid;
+    } else {
+      delete out.aid;
+    }
+    if (mode !== 'keep') {
+      out.testIds = [];
+      out.catalogEntryIds = [];
+      out.flagDefault = 0;
+      out.default = false;
+      for (const k of ['emailIds', 'webhookIds', 'appDynamicsIds', 'customWebhookIds', 'pgdutyServiceIds', 'thirdPartyRestApiIds', 'serviceNowIds']) {
+        if (k in out) out[k] = [];
+      }
+      for (const k of ['flagNotifyPagerDuty', 'flagNotifyWebhook', 'flagNotifyThirdPartyRestApi', 'flagNotifyEmail']) {
+        if (k in out) out[k] = 0;
+      }
+      if ('labelsFilter' in out) out.labelsFilter = [];
+      if ('tagsFilter' in out) out.tagsFilter = [];
+      if ('labelMetaCondition' in out) out.labelMetaCondition = null;
+      if ('tagMetaCondition' in out) out.tagMetaCondition = null;
+      if (out.locationMetaCondition && typeof out.locationMetaCondition === 'object') {
+        out.locationMetaCondition = { ...out.locationMetaCondition, value: [] };
+      }
+    }
+    return out;
+  }
+
+  async function restoreSelectedAlertRules() {
+    const arrAll = normalizeAlertRulesRoot(alertRulesBackupData);
+    const arr = arrAll.filter((r, i) => selectedAlertRuleRestoreKeys.has(alertRuleRestoreRowKey(r, i)));
+    if (!arr.length) {
+      toast('Select at least one alert rule to restore', 'err');
+      return;
+    }
+    const modeSel = $('#tep-arules-restore-mode');
+    const mode = modeSel ? modeSel.value : 'safe';
+    const base = alertRulesWriteBase();
+    if (!base) { toast('Alert-rules endpoint unknown — click Load first', 'err'); return; }
+    const saveUrl = `${base}/save`;
+    if (!confirm(`Restore ${arr.length} alert rule(s) to this account as new rules?${mode === 'safe' ? ' Test & notification bindings are cleared.' : ' Bindings from the JSON are kept (may fail cross-account).'} Continue?`)) return;
+    const dismiss = toastProcessing(`Restoring ${arr.length} rule(s)…`);
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (const src of arr) {
+        const body = cleanAlertRuleForRestore(src, mode);
+        const label = formatAlertRuleLabel(src).name;
+        try {
+          const resp = await ajax(saveUrl, { method: 'POST', body: JSON.stringify(body) });
+          const text = await resp.text().catch(() => '');
+          if (resp.ok || resp.status === 201) {
+            ok++;
+          } else {
+            fail++;
+            log(`Alert rule restore: "${label}" failed ${resp.status}: ${text.slice(0, 200)}`, 'tep-log-err');
+            if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+          }
+        } catch (e) {
+          fail++;
+          log(`Alert rule restore: "${label}" error: ${e.message}`, 'tep-log-err');
+        }
+      }
+      log(`Alert rules restore complete: ${ok} created, ${fail} failed`, fail ? 'tep-log-err' : 'tep-log-ok');
+      toast(`Restored ${ok} rule(s)${fail ? `, ${fail} failed (see Diagnostics)` : ''}`, fail ? 'err' : 'ok');
+      if (ok) void refreshAlertRulesManageList();
+    } finally {
+      dismiss();
+    }
+  }
+
+  // ---- Alert-rule manager (mirrors dashboard cleanup list) -----------------
+  function getAlertRulesManageQuery() {
+    const el = $('#tep-armg-search');
+    return el ? String(el.value || '').trim().toLowerCase() : '';
+  }
+
+  function getAlertRulesManageFiltered() {
+    const q = getAlertRulesManageQuery();
+    let rows = alertRulesCatalog.slice();
+    if (q) {
+      rows = rows.filter((r) => {
+        const hay = `${alertRuleNameOf(r)} ${alertRuleTypeOf(r)} ${alertRuleIdOf(r)}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    const sortEl = $('#tep-armg-sort');
+    const sort = sortEl ? sortEl.value : 'type';
+    rows.sort((a, b) => {
+      if (sort === 'name') {
+        return alertRuleNameOf(a).localeCompare(alertRuleNameOf(b), undefined, { sensitivity: 'base' });
+      }
+      if (sort === 'modified') {
+        const d = alertRuleModifiedMs(b) - alertRuleModifiedMs(a);
+        if (d !== 0) return d;
+        return alertRuleNameOf(a).localeCompare(alertRuleNameOf(b), undefined, { sensitivity: 'base' });
+      }
+      // Default: group by type, then most-recently modified first within a type.
+      const t = alertRuleTypeOf(a).localeCompare(alertRuleTypeOf(b), undefined, { sensitivity: 'base' });
+      if (t !== 0) return t;
+      const d = alertRuleModifiedMs(b) - alertRuleModifiedMs(a);
+      if (d !== 0) return d;
+      return alertRuleNameOf(a).localeCompare(alertRuleNameOf(b), undefined, { sensitivity: 'base' });
+    });
+    return rows;
+  }
+
+  function syncAlertRulesManageMeta() {
+    const meta = $('#tep-armg-meta');
+    if (!meta) return;
+    if (!alertRulesListEverLoaded) { meta.textContent = 'Not loaded yet.'; return; }
+    const total = alertRulesCatalog.length;
+    const visible = getAlertRulesManageFiltered().length;
+    meta.textContent = `Showing ${visible} of ${total} rule(s)`;
+  }
+
+  function updateAlertRulesManageBulkUI() {
+    const bar = $('#tep-armg-bulk-bar');
+    const count = $('#tep-armg-bulk-count');
+    if (count) count.textContent = `${selectedAlertRuleManageIds.size} selected`;
+    if (bar) bar.classList.toggle('active', selectedAlertRuleManageIds.size > 0);
+  }
+
+  function setAlertRulesManageBusy(busy) {
+    ['tep-armg-search', 'tep-armg-sort', 'tep-armg-load', 'tep-armg-bulk-action', 'tep-armg-bulk-apply'].forEach((id) => {
+      const el = root.querySelector('#' + id);
+      if (el) el.disabled = !!busy;
+    });
+  }
+
+  function alertRuleSeverityClass(sev) {
+    const s = String(sev || '').toLowerCase();
+    if (s.includes('crit')) return 'tep-sev-critical';
+    if (s.includes('major')) return 'tep-sev-major';
+    if (s.includes('minor')) return 'tep-sev-minor';
+    if (s.includes('warn')) return 'tep-sev-warning';
+    if (s.includes('info')) return 'tep-sev-info';
+    return 'tep-sev-default';
+  }
+
+  function renderAlertRulesManageList() {
+    const host = $('#tep-armg-list');
+    if (!host) return;
+    host.textContent = '';
+    if (!alertRulesListEverLoaded) {
+      host.innerHTML = '<span class="tep-log-info">Click refresh to load alert rules.</span>';
+      return;
+    }
+    if (!alertRulesCatalog.length) {
+      host.innerHTML = '<span class="tep-log-info">No alert rules found — check the log, or use Diagnostics if this looks wrong.</span>';
+      return;
+    }
+    const rows = getAlertRulesManageFiltered();
+    if (!rows.length) {
+      host.innerHTML = '<span class="tep-log-info">No alert rules match filter.</span>';
+      return;
+    }
+    for (const rule of rows) {
+      const id = alertRuleIdOf(rule);
+      const name = alertRuleNameOf(rule);
+      const type = alertRuleTypeOf(rule);
+      const sev = rule && (rule.severity || rule.alertSeverity || '');
+      const target = alertRuleTargetSummary(rule);
+      const modMs = alertRuleModifiedMs(rule);
+      const modLabel = modMs ? new Date(modMs).toLocaleDateString() : '';
+      const href = alertRuleSettingsHref(rule);
+      const card = document.createElement('div');
+      card.className = 'tep-test-card';
+      card.dataset.alertRuleId = id;
+      const sevHtml = sev ? `<span class="tep-sev-badge ${alertRuleSeverityClass(sev)}">${tepEscapeHtmlText(String(sev))}</span>` : '';
+      card.innerHTML = `
+        <div class="tep-test-card-header">
+          <input type="checkbox" class="tep-test-card-check tep-armg-cb" data-armg-id="${tepEscapeHtmlText(id)}" ${selectedAlertRuleManageIds.has(id) ? 'checked' : ''} ${id ? '' : 'disabled'}>
+          <span class="tep-type-badge tep-type-other">${tepEscapeHtmlText(type)}</span>
+          <a class="tep-test-card-name tep-test-link" href="${tepEscapeHtmlText(href)}" target="_blank" rel="noopener noreferrer" title="Open settings for “${tepEscapeHtmlText(name)}”">${tepEscapeHtmlText(name)}</a>
+          <div class="tep-test-actions">
+            <button type="button" class="tep-btn-danger tep-test-action-icon" data-armg-action="delete" title="Delete rule" aria-label="Delete rule"${id ? '' : ' disabled'}><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>
+          </div>
+        </div>
+        <div class="tep-test-card-meta">
+          ${sevHtml}
+          ${target ? `<span title="Test targets">${tepEscapeHtmlText(target)}</span>` : ''}
+          ${modLabel ? `<span title="Last modified">${tepEscapeHtmlText(modLabel)}</span>` : ''}
+          ${id ? `<span title="Alert rule id">${tepEscapeHtmlText(id)}</span>` : ''}
+        </div>`;
+
+      const cb = card.querySelector('.tep-armg-cb');
+      if (cb && !cb.disabled) {
+        cb.addEventListener('change', (e) => {
+          if (e.target.checked) selectedAlertRuleManageIds.add(id);
+          else selectedAlertRuleManageIds.delete(id);
+          updateAlertRulesManageBulkUI();
+        });
+      }
+      const delBtn = card.querySelector('[data-armg-action="delete"]');
+      if (delBtn && !delBtn.disabled) {
+        delBtn.addEventListener('click', async () => {
+          if (!confirm(`Permanently delete this alert rule?\n\n${name}\n${id}\n\nThis cannot be undone.`)) return;
+          setAlertRulesManageBusy(true);
+          try {
+            const res = await deleteAlertRuleById(id);
+            if (res && res.ok) {
+              alertRulesCatalog = alertRulesCatalog.filter((r) => alertRuleIdOf(r) !== id);
+              selectedAlertRuleManageIds.delete(id);
+              updateAlertRulesManageBulkUI();
+              syncAlertRulesManageMeta();
+              renderAlertRulesManageList();
+              toast('Alert rule deleted', 'ok');
+            } else {
+              toast('Delete failed — see log/Diagnostics', 'err');
+            }
+          } finally {
+            setAlertRulesManageBusy(false);
+          }
+        });
+      }
+      host.appendChild(card);
+    }
+  }
+
+  async function refreshAlertRulesManageList() {
+    const meta = $('#tep-armg-meta');
+    if (!teInitData) { toast('Session not ready — use Retry Auth', 'err'); return; }
+    setAlertRulesManageBusy(true);
+    if (meta) meta.textContent = 'Loading alert rules…';
+    try {
+      const { arr } = await fetchAlertRulesFromApi();
+      alertRulesCatalog = arr;
+      alertRulesListEverLoaded = true;
+      // Drop selections that no longer exist.
+      const ids = new Set(arr.map((r) => alertRuleIdOf(r)));
+      for (const id of Array.from(selectedAlertRuleManageIds)) if (!ids.has(id)) selectedAlertRuleManageIds.delete(id);
+      updateAlertRulesManageBulkUI();
+      syncAlertRulesManageMeta();
+      renderAlertRulesManageList();
+      if (arr.length) toast(`Loaded ${arr.length} alert rule(s)`, 'ok');
+      else toast('No alert rules found — check log', 'err');
+    } catch (e) {
+      alertRulesListEverLoaded = true;
+      if (meta) meta.textContent = 'Load failed — see Diagnostics.';
+      renderAlertRulesManageList();
+      log('Alert rules manage list: ' + e.message, 'tep-log-err');
+      toast('Failed to load alert rules', 'err');
+    } finally {
+      setAlertRulesManageBusy(false);
+    }
+  }
+
+  async function deleteAlertRuleById(id) {
+    if (!id) return { ok: false };
+    // Route by source: standard rules → DELETE /ajax/alert-rules/{id} (confirmed);
+    // endpoint rules → DELETE /ajax/settings/alerts/endpoint/rule/{id} (best-effort).
+    const rule = alertRulesCatalog.find((r) => alertRuleIdOf(r) === String(id));
+    const isEndpoint = rule && alertRuleSource(rule) === 'endpoint';
+    const url = isEndpoint
+      ? `${ALERT_RULES_ENDPOINT_RULE_BASE}/${encodeURIComponent(id)}`
+      : `${alertRulesWriteBase()}/${encodeURIComponent(id)}`;
+    try {
+      const resp = await ajax(url, { method: 'DELETE' });
+      if (resp.ok || resp.status === 204) return { ok: true };
+      const text = await resp.text().catch(() => '');
+      log(`Alert rule delete ${id} → DELETE ${url} failed ${resp.status}: ${text.slice(0, 200)}`, 'tep-log-err');
+      if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+      return { ok: false };
+    } catch (e) {
+      log(`Alert rule delete ${id} error: ${e.message}`, 'tep-log-err');
+      return { ok: false };
+    }
+  }
+
+  /** Backup the selected alert rules to a JSON file (mirrors tests "Backup to file"). */
+  function backupSelectedAlertRulesToFile(selected) {
+    if (!selected || !selected.length) {
+      toast('Select one or more rules first', 'err');
+      return;
+    }
+    const copies = selected.map((r) => {
+      const c = {};
+      for (const [k, v] of Object.entries(r)) { if (!k.startsWith('_')) c[k] = v; }
+      return c;
+    });
+    const json = JSON.stringify(copies, null, 2);
+    const suggested = `te-alert-rules-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const name = window.prompt('Download filename:', suggested) || suggested;
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { a.remove(); } catch (_) { /* */ }
+      try { URL.revokeObjectURL(url); } catch (_) { /* */ }
+    }, 500);
+    log(`Alert rules backup: downloaded ${copies.length} rule(s) as ${name}`, 'tep-log-ok');
+    toast(`Backed up ${copies.length} rule(s)`, 'ok');
+  }
+
+  async function bulkApplyAlertRulesManage() {
+    const actionEl = $('#tep-armg-bulk-action');
+    const action = actionEl ? actionEl.value : '';
+    if (!action) { toast('Choose a bulk action', 'err'); return; }
+    const ids = [...selectedAlertRuleManageIds].filter(Boolean);
+    if (!ids.length) { toast('Check one or more rules first', 'err'); return; }
+
+    if (action === 'backup') {
+      const rulesById = new Map(alertRulesCatalog.map((r) => [alertRuleIdOf(r), r]));
+      const selected = ids.map((id) => rulesById.get(id)).filter(Boolean);
+      if (actionEl) actionEl.value = '';
+      backupSelectedAlertRulesToFile(selected);
+      return;
+    }
+
+    if (action !== 'delete') { toast('Unsupported bulk action', 'err'); return; }
+    if (!confirm(`Permanently delete ${ids.length} alert rule(s)? This cannot be undone.`)) return;
+    setAlertRulesManageBusy(true);
+    const dismiss = toastProcessing(`Deleting ${ids.length} rule(s)…`);
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (const id of ids) {
+        const res = await deleteAlertRuleById(id);
+        if (res && res.ok) {
+          ok++;
+          alertRulesCatalog = alertRulesCatalog.filter((r) => alertRuleIdOf(r) !== id);
+          selectedAlertRuleManageIds.delete(id);
+        } else { fail++; }
+      }
+      updateAlertRulesManageBulkUI();
+      syncAlertRulesManageMeta();
+      renderAlertRulesManageList();
+      log(`Bulk delete: ${ok} ok, ${fail} failed`, fail ? 'tep-log-err' : 'tep-log-ok');
+      toast(`Deleted ${ok} rule(s)${fail ? `, ${fail} failed` : ''}`, fail ? 'err' : 'ok');
+    } finally {
+      dismiss();
+      setAlertRulesManageBusy(false);
+    }
+  }
+
+  // ---- Active alerts viewer ------------------------------------------------
+  function alertMainName(a) {
+    const n = a && (a.ruleName || a.alertRuleName || a.name || a.ruleExpression);
+    return n != null && String(n).trim() ? String(n).trim() : '(alert)';
+  }
+
+  function alertTestName(a) {
+    const t = a && (a.testName || a.test || (a.testDetails && a.testDetails.testName));
+    return t != null ? String(t) : '';
+  }
+
+  function alertStateLabel(a) {
+    const st = String((a && (a.state || a.alertState)) || '').toUpperCase();
+    if (st === 'TRIGGER' || st === 'ACTIVE') return 'ACTIVE';
+    if (st === 'CLEAR' || st === 'CLEARED') return 'CLEARED';
+    return st || 'ACTIVE';
+  }
+
+  function getActiveAlertsFiltered() {
+    const el = $('#tep-alerts-active-search');
+    const q = el ? String(el.value || '').trim().toLowerCase() : '';
+    if (!q) return activeAlertsCatalog.slice();
+    return activeAlertsCatalog.filter((a) => {
+      const hay = `${alertMainName(a)} ${alertTestName(a)} ${(a && (a.severity || '')) || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  function syncActiveAlertsMeta() {
+    const meta = $('#tep-alerts-active-meta');
+    if (!meta) return;
+    if (!activeAlertsEverLoaded) { meta.textContent = 'Not loaded yet.'; return; }
+    const total = activeAlertsCatalog.length;
+    const visible = getActiveAlertsFiltered().length;
+    meta.textContent = `Showing ${visible} of ${total} alert(s)`;
+  }
+
+  function renderActiveAlertsList() {
+    const host = $('#tep-alerts-active-list');
+    if (!host) return;
+    host.textContent = '';
+    if (!activeAlertsEverLoaded) {
+      host.innerHTML = '<span class="tep-log-info">Click refresh to load active alerts.</span>';
+      return;
+    }
+    if (!activeAlertsCatalog.length) {
+      host.innerHTML = '<span class="tep-log-info">No alerts for this filter. Nice — nothing firing.</span>';
+      return;
+    }
+    const rows = getActiveAlertsFiltered();
+    if (!rows.length) {
+      host.innerHTML = '<span class="tep-log-info">No alerts match filter.</span>';
+      return;
+    }
+    for (const a of rows) {
+      const name = alertMainName(a);
+      const testName = alertTestName(a);
+      const stateLabel = alertStateLabel(a);
+      const isActive = stateLabel === 'ACTIVE';
+      const sev = a && (a.severity || a.alertSeverity || '');
+      const startMs = tepAlertStartMs(a);
+      const started = startMs ? new Date(startMs).toLocaleString() : '';
+      // Rule id of the alert (NOT the alert instance id) → link to its settings.
+      const ruleId = a && (a.alertRuleId != null ? a.alertRuleId : (a.ruleId != null ? a.ruleId : a.ruleRefId));
+      const nameHtml = ruleId != null && String(ruleId) !== ''
+        ? `<a class="tep-test-card-name tep-test-link" href="${tepEscapeHtmlText(alertRuleSettingsHref({ ruleId }))}" target="_blank" rel="noopener noreferrer" title="Open the rule settings for this alert">${tepEscapeHtmlText(name)}</a>`
+        : `<span class="tep-test-card-name" title="${tepEscapeHtmlText(name)}">${tepEscapeHtmlText(name)}</span>`;
+      const card = document.createElement('div');
+      card.className = 'tep-test-card';
+      const sevHtml = sev ? `<span class="tep-sev-badge ${alertRuleSeverityClass(sev)}">${tepEscapeHtmlText(String(sev))}</span>` : '';
+      card.innerHTML = `
+        <div class="tep-test-card-header">
+          <span class="${isActive ? 'tep-alert-active-dot' : 'tep-alert-cleared-dot'}" title="${tepEscapeHtmlText(stateLabel)}"></span>
+          ${nameHtml}
+          ${sevHtml}
+        </div>
+        <div class="tep-test-card-meta">
+          <span class="${isActive ? 'tep-test-status-text--off' : 'tep-test-status-text--on'}" style="font-weight:700;">${tepEscapeHtmlText(stateLabel)}</span>
+          ${testName ? `<span title="Test">${tepEscapeHtmlText(testName)}</span>` : ''}
+          ${started ? `<span title="Started">${tepEscapeHtmlText(started)}</span>` : ''}
+        </div>`;
+      host.appendChild(card);
+    }
+  }
+
+  /**
+   * Extract the alert rows array from a _search / list response. Returns [] for a
+   * well-formed but empty result (e.g. nothing firing → {total:0}), and null only
+   * when the body has no array anywhere (unrecognized shape).
+   */
+  function alertRowsFromResponse(data) {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== 'object') return null;
+    for (const k of ['results', 'alerts', 'items', 'content', 'data', 'rows']) {
+      if (Array.isArray(data[k])) return data[k];
+    }
+    // Count-only / empty responses carry a numeric total and no rows.
+    const total = data.total != null ? Number(data.total)
+      : (data.totalCount != null ? Number(data.totalCount)
+        : (data.totalRows != null ? Number(data.totalRows) : NaN));
+    if (Number.isFinite(total)) return [];
+    // Last resort: first array-valued property anywhere at the top level.
+    for (const v of Object.values(data)) if (Array.isArray(v)) return v;
+    return null;
+  }
+
+  /**
+   * Fetch alerts for one state via POST _search (the SPA's proven call), falling
+   * back to the GET list variant. `state` is 'TRIGGER' or 'CLEAR'. Returns
+   * { ok, rows }: ok=true means a 200 was received (rows may legitimately be []).
+   */
+  async function fetchAlertsByState(state) {
+    const searchUrl = `${TEP_ALERTS_SEARCH_PATH}?rowsPerPage=100&state=${state}`;
+    const body = {
+      any: [],
+      sort: [{ start: 'DESC' }],
+      timeRange: state === 'CLEAR' ? { from: 'now-24h', to: 'now' } : { from: 978336000000, to: 'now' },
+      rowsPerPage: 100,
+      state,
+    };
+    try {
+      const resp = await ajax(searchUrl, { method: 'POST', body: JSON.stringify(body) });
+      const text = await resp.text().catch(() => '');
+      if (resp.ok) {
+        let data; try { data = JSON.parse(text); } catch (_) { data = null; }
+        const arr = alertRowsFromResponse(data);
+        return { ok: true, rows: Array.isArray(arr) ? arr : [] };
+      }
+      log(`Active alerts: POST ${searchUrl} → ${resp.status}`, 'tep-log-info');
+      if (isLikelyPermissionDenied(resp.status, text)) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
+    } catch (e) {
+      log(`Active alerts: POST ${searchUrl} → error ${e.message}`, 'tep-log-info');
+    }
+    // Fallback: GET list variant (returns 200 on some tenants).
+    const getUrl = `${TEP_ALERTS_LIST_PATH}?state=${state}&rowsPerPage=100`;
+    try {
+      const resp = await ajax(getUrl, { method: 'GET' });
+      const text = await resp.text().catch(() => '');
+      if (resp.ok) {
+        let data; try { data = JSON.parse(text); } catch (_) { data = null; }
+        const arr = alertRowsFromResponse(data);
+        return { ok: true, rows: Array.isArray(arr) ? arr : [] };
+      }
+      log(`Active alerts: GET ${getUrl} → ${resp.status}`, 'tep-log-info');
+    } catch (e) {
+      log(`Active alerts: GET ${getUrl} → error ${e.message}`, 'tep-log-info');
+    }
+    return { ok: false, rows: [] };
+  }
+
+  async function refreshActiveAlertsList() {
+    const meta = $('#tep-alerts-active-meta');
+    const stateSel = $('#tep-alerts-active-state');
+    const wantAll = stateSel && stateSel.value === 'ALL';
+    if (meta) meta.textContent = 'Loading alerts…';
+    const dismiss = toastProcessing('Loading alerts…');
+    try {
+      const triggered = await fetchAlertsByState('TRIGGER');
+      if (!triggered.ok) throw new Error('alerts request failed (see log/Diagnostics)');
+      let rows = triggered.rows.slice();
+      if (wantAll) {
+        const cleared = await fetchAlertsByState('CLEAR');
+        if (cleared.ok) rows = rows.concat(cleared.rows);
+      }
+      activeAlertsCatalog = rows;
+      activeAlertsEverLoaded = true;
+      syncActiveAlertsMeta();
+      renderActiveAlertsList();
+      log(`Active alerts: ${rows.length} loaded`, 'tep-log-ok');
+      toast(`Loaded ${rows.length} alert(s)`, 'ok');
+    } catch (e) {
+      activeAlertsEverLoaded = true;
+      if (meta) meta.textContent = 'Load failed — see Diagnostics.';
+      renderActiveAlertsList();
+      log('Active alerts load: ' + e.message, 'tep-log-err');
+      toast('Failed to load alerts', 'err');
     } finally {
       dismiss();
     }
@@ -6075,6 +7409,13 @@
         applyDefaultAuthenticatedStatus();
         log('Endpoint mode: session OK. API diagnostics sniff is on — use Diagnostics below or filter console for [TE Optics endpoint].', 'tep-log-ok');
         void loadEndpointTests();
+        startUsageSummaryPlanUnitsPoll();
+      } else if (isManageAlertsPage()) {
+        installAlertsNetworkCapture();
+        setStatus('Authenticated — alerts tools', 'ok');
+        log('Alerts mode: session OK. Loading alert rules and active alerts…', 'tep-log-ok');
+        void refreshAlertRulesManageList();
+        void refreshActiveAlertsList();
         startUsageSummaryPlanUnitsPoll();
       } else {
         setStatus('Authenticated — loading agents…', 'ok');
@@ -13071,26 +14412,41 @@
     const roots = (dash && dash.template && Array.isArray(dash.template.widgets)) ? dash.template.widgets
       : (Array.isArray(dash && dash.widgets) ? dash.widgets : []);
     const found = [];
-    const walk = (node, parent) => {
+    // Walk to leaf (data) widgets; a leaf's effective metric is its own
+    // config.metric or the nearest ancestor's (colorGrid/timeseries containers
+    // declare the metric on the parent, not the leaf).
+    const walk = (node, ancestors) => {
       if (!node || typeof node !== 'object') return;
-      const metric = node.config && node.config.metric;
-      const isLeaf = !Array.isArray(node.widgets);
-      if (isLeaf && typeof metric === 'string' && TEP_WEB_AVAIL_RE.test(metric)) found.push({ node, parent });
-      if (Array.isArray(node.widgets)) for (const c of node.widgets) walk(c, node);
+      const children = Array.isArray(node.widgets) ? node.widgets : null;
+      if (children) {
+        const chain = [node, ...ancestors];
+        for (const c of children) walk(c, chain);
+        return;
+      }
+      let metric = null, metricDeclarer = null;
+      for (const n of [node, ...ancestors]) {
+        const m = n && n.config && n.config.metric;
+        if (typeof m === 'string') { metric = m; metricDeclarer = n; break; }
+      }
+      if (metric && TEP_WEB_AVAIL_RE.test(metric)) {
+        found.push({ node, parent: ancestors[0] || null, metricDeclarer, metric });
+      }
     };
-    for (const r of roots) walk(r, null);
+    for (const r of roots) walk(r, []);
     return found;
   }
   /** Rebuild the self-service/data POST body for one availability widget (mirrors
    *  the request TE's dashboard makes). */
   function tepBuildWidgetDataBody(entry, dash, dashboardId, metricIds) {
-    const { node, parent } = entry;
-    const cfg = (node.config && typeof node.config === 'object') ? node.config : {};
-    const body = { ...cfg };
+    const { node, parent, metricDeclarer, metric } = entry;
+    const leafCfg = (node.config && typeof node.config === 'object') ? node.config : {};
+    const decCfg = (metricDeclarer && metricDeclarer.config && typeof metricDeclarer.config === 'object') ? metricDeclarer.config : {};
+    const body = { ...decCfg, ...leafCfg }; // leaf config wins over the declarer's
     delete body.metric;
     delete body.aggregationType;
-    if (!body.generalFilters && parent && parent.config && parent.config.generalFilters) {
-      body.generalFilters = parent.config.generalFilters;
+    if (!body.generalFilters) {
+      body.generalFilters = leafCfg.generalFilters || decCfg.generalFilters
+        || (parent && parent.config && parent.config.generalFilters) || {};
     }
     const last = (dash && dash.defaultTimespan && Number(dash.defaultTimespan.timespanDuration)) || 3600;
     body.dashboardId = dashboardId;
@@ -13107,8 +14463,8 @@
     body.timeSpanConfig = { now: Date.now(), last, useGlobalTimespan: false };
     body.widgetId = node.widgetId || node.id;
     body.widgetType = node.type || 'numbers';
-    body.metricId = cfg.metric;
-    body.measureId = cfg.aggregationType || 'NAS-MEAN';
+    body.metricId = metric;
+    body.measureId = leafCfg.aggregationType || decCfg.aggregationType || 'NAS-MEAN';
     return body;
   }
   /** Pull availability percentages out of a self-service/data response.
@@ -13144,7 +14500,7 @@
   async function tepFetchWidgetAvailability(entry, dash, dashboardId, metricIds) {
     const node = entry.node;
     const widgetId = node.widgetId || node.id;
-    const metricId = node.config && node.config.metric;
+    const metricId = entry.metric;
     if (!widgetId || !metricId) return null;
     const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(widgetId)}&metricId=${encodeURIComponent(metricId)}&__bg=1`;
     const body = tepBuildWidgetDataBody(entry, dash, dashboardId, metricIds);
@@ -13165,9 +14521,35 @@
     }
     return vals.reduce((s, x) => s + x, 0) / vals.length;
   }
-  /** Fetch live HTTP Server Availability for every matching widget on the focused
-   *  dashboard and average them. Returns { avg, count } or null. */
+  /** Read HTTP Server Availability from the self-service/data responses the
+   *  dashboard already fetched (works for any widget type — the page built the
+   *  correct request). One value per widgetId, latest capture wins. */
+  function tepAvailFromCapturedMetricData() {
+    let focusId = null;
+    try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
+    const byWidget = new Map();
+    for (const e of TEP_DASH_METRIC_DATA.entries) {
+      if (!e || !e.metricId || !TEP_WEB_AVAIL_RE.test(e.metricId)) continue;
+      if (focusId && e.dashId && String(e.dashId) !== String(focusId)) continue;
+      const vals = tepExtractAvailFromWidgetData(e.data);
+      if (!vals.length) continue;
+      const key = e.widgetId || ('t' + e.t);
+      if (!byWidget.has(key)) byWidget.set(key, vals.reduce((s, x) => s + x, 0) / vals.length); // entries newest-first
+    }
+    const perWidget = [...byWidget.values()];
+    if (!perWidget.length) return null;
+    const avg = perWidget.reduce((s, x) => s + x, 0) / perWidget.length;
+    log(`SaaS widget: averaged ${perWidget.length} captured HTTP Server Availability widget(s) → ${avg.toFixed(2)}%`, 'tep-log-ok');
+    return { avg, count: perWidget.length, widgetsDetected: perWidget.length };
+  }
+  /** HTTP Server Availability for the focused dashboard: prefer the widget data
+   *  the page already loaded; fall back to actively fetching leaf availability
+   *  widgets. Returns { avg, count, widgetsDetected } or null. */
   async function tepFetchDashboardHttpAvailability() {
+    // Primary: whatever the dashboard already rendered (any widget type).
+    const captured = tepAvailFromCapturedMetricData();
+    if (captured && captured.count) return captured;
+    // Fallback: rebuild the request for leaf widgets that declare the metric.
     const { dash, dashboardId } = tepFocusedDashboardObject();
     if (!dash || !dashboardId) return null;
     const widgets = tepFindAvailNumberWidgets(dash);
@@ -15723,6 +17105,108 @@
       tagsClearSniff.addEventListener('click', () => {
         clearTagsSniff();
         toast('Tag capture history cleared', 'ok');
+      });
+    }
+  }
+
+  if (isManageAlertsPage()) {
+    const wireAlertsToggle = (btnId, expandId) => {
+      const btn = root.querySelector('#' + btnId);
+      const expand = root.querySelector('#' + expandId);
+      if (!btn || !expand) return;
+      btn.addEventListener('click', () => {
+        const hidden = expand.hasAttribute('hidden');
+        if (hidden) { expand.removeAttribute('hidden'); btn.setAttribute('aria-expanded', 'true'); }
+        else { expand.setAttribute('hidden', ''); btn.setAttribute('aria-expanded', 'false'); }
+      });
+    };
+    wireAlertsToggle('tep-alerts-active-toggle', 'tep-alerts-active-expand');
+    wireAlertsToggle('tep-arules-toggle', 'tep-arules-expand');
+    wireAlertsToggle('tep-armg-toggle', 'tep-armg-expand');
+
+    // Active alerts
+    const aaLoad = root.querySelector('#tep-alerts-active-load');
+    if (aaLoad) aaLoad.addEventListener('click', () => { void refreshActiveAlertsList(); });
+    const aaState = root.querySelector('#tep-alerts-active-state');
+    if (aaState) aaState.addEventListener('change', () => { void refreshActiveAlertsList(); });
+    const aaSearch = root.querySelector('#tep-alerts-active-search');
+    if (aaSearch) aaSearch.addEventListener('input', () => { syncActiveAlertsMeta(); renderActiveAlertsList(); });
+
+    // Alert rules backup/restore
+    const arLoad = root.querySelector('#tep-arules-load');
+    if (arLoad) arLoad.addEventListener('click', () => { void loadAlertRulesBackup(); });
+    const arDownload = root.querySelector('#tep-arules-download');
+    if (arDownload) arDownload.addEventListener('click', downloadAlertRulesBackup);
+    const arImportBtn = root.querySelector('#tep-arules-import-btn');
+    const arImportInput = root.querySelector('#tep-arules-import-file');
+    if (arImportBtn && arImportInput) {
+      arImportBtn.addEventListener('click', () => { try { arImportInput.click(); } catch (_) { /* */ } });
+      arImportInput.addEventListener('change', (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (file) importAlertRulesBackupFile(file);
+        try { arImportInput.value = ''; } catch (_) { /* */ }
+      });
+    }
+    const arJsonTa = root.querySelector('#tep-arules-json');
+    if (arJsonTa) {
+      arJsonTa.addEventListener('input', () => {
+        refreshAlertRulesJsonSummary();
+        syncAlertRulesPickerFromEditor(false);
+      });
+    }
+    const arPickAll = root.querySelector('#tep-arules-pick-all');
+    if (arPickAll) arPickAll.addEventListener('click', () => setAllAlertRulesPick(true));
+    const arPickNone = root.querySelector('#tep-arules-pick-none');
+    if (arPickNone) arPickNone.addEventListener('click', () => setAllAlertRulesPick(false));
+    const arRestore = root.querySelector('#tep-arules-restore');
+    if (arRestore) {
+      arRestore.addEventListener('click', () => {
+        restoreSelectedAlertRules().catch((e) => log(`Alert rules restore: ${e.message}`, 'tep-log-err'));
+      });
+    }
+
+    // Alert rules manager
+    const argLoad = root.querySelector('#tep-armg-load');
+    if (argLoad) argLoad.addEventListener('click', () => { void refreshAlertRulesManageList(); });
+    const argSearch = root.querySelector('#tep-armg-search');
+    if (argSearch) argSearch.addEventListener('input', () => { syncAlertRulesManageMeta(); renderAlertRulesManageList(); });
+    const argSort = root.querySelector('#tep-armg-sort');
+    if (argSort) argSort.addEventListener('change', () => { renderAlertRulesManageList(); });
+    const argBulkApply = root.querySelector('#tep-armg-bulk-apply');
+    if (argBulkApply) argBulkApply.addEventListener('click', () => { void bulkApplyAlertRulesManage(); });
+
+    // Diagnostics
+    installAlertsNetworkCapture();
+    syncAlertsSniffMeta();
+    const alertsCopyDebug = root.querySelector('#tep-alerts-copy-debug');
+    if (alertsCopyDebug) {
+      alertsCopyDebug.addEventListener('click', async () => {
+        const text = buildAlertsDebugReport();
+        try {
+          await navigator.clipboard.writeText(text);
+          toast('API discovery report copied', 'ok');
+        } catch (_) {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+            toast('API discovery report copied', 'ok');
+          } catch (e2) {
+            toast('Copy failed — see console ([TE Optics alerts])', 'err');
+          }
+          ta.remove();
+        }
+      });
+    }
+    const alertsClearSniff = root.querySelector('#tep-alerts-clear-sniff');
+    if (alertsClearSniff) {
+      alertsClearSniff.addEventListener('click', () => {
+        clearAlertsSniff();
+        toast('Alert capture history cleared', 'ok');
       });
     }
   }
