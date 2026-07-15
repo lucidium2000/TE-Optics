@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '2.74';
+  const TEP_VERSION = '2.75';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1558,7 +1558,9 @@
     .tep-dash-map-marker { filter: drop-shadow(0 0 3px rgba(0,0,0,.6)); }
     .tep-dash-map-marker:hover { filter: drop-shadow(0 0 6px rgba(255,255,255,.65)); }
     /* Fullscreen dashboard map + KPI widget row */
-    .tep-dashmap-full { position: fixed; inset: 0; z-index: 2147483000; background: #0b1220; }
+    /* z-index above the dark-mode blend overlays (…645/…646) + isolate, so dark
+       mode never blends/tints the map. Mounted on <html> for the same reason. */
+    .tep-dashmap-full { position: fixed; inset: 0; z-index: 2147483647; isolation: isolate; background: #0b1220; }
     .tep-dashmap-full-widgets {
       position: absolute; top: 12px; left: 12px; right: 60px; z-index: 4;
       display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; pointer-events: none;
@@ -11672,6 +11674,22 @@
     return `<div class="tep-map-tip-head">${head}</div>${body}<div class="tep-map-tip-foot">${foot}</div>`;
   }
 
+  /** Sort key for ordering agents "most recent online → oldest" in map hover
+   *  cards. Endpoint agents sort by last-seen time; enterprise agents (no
+   *  last-seen timestamp) treat "online" as most-recent and offline/unknown as
+   *  oldest. */
+  function tepAgentRecency(x) {
+    if (!x) return 0;
+    if (x.lastSeenMs) return x.lastSeenMs;
+    if (x.health === 'healthy') return Number.MAX_SAFE_INTEGER; // online now
+    return 0; // never seen / offline / unknown
+  }
+  /** Sort an array of agents in place, most recently online first. */
+  function tepSortByRecency(arr) {
+    arr.sort((a, b) => tepAgentRecency(b) - tepAgentRecency(a));
+    return arr;
+  }
+
   /** Render the endpoint-agents world map into listEl (zoom/pan; click to sort by distance). */
   function renderEndpointAgentsMap(listEl, agents, countEl) {
     listEl.innerHTML = '';
@@ -11703,6 +11721,8 @@
       if (!clusters.has(key)) clusters.set(key, { lat: g.lat, lng: g.lng, agents: [] });
       clusters.get(key).agents.push(a);
     }
+    // Order each cluster's agents most recently online → oldest.
+    for (const cl of clusters.values()) tepSortByRecency(cl.agents);
     const markerEls = [];
     for (const cl of clusters.values()) {
       const pos = tepLonLatToPct(cl.lng, cl.lat);
@@ -12137,6 +12157,8 @@
       }
       if (!placed) clusters.push({ lat: it.lat, lng: it.lng, items: [it] });
     }
+    // Order each cluster's agents most recently online → oldest.
+    for (const cl of clusters) tepSortByRecency(cl.items);
     const STAR = 'M12 2 L14.35 8.76 L21.51 8.91 L15.8 13.24 L17.88 20.09 L12 16 L6.12 20.09 L8.2 13.24 L2.49 8.91 L9.65 8.76 Z';
     const markerEls = [];
     for (const cl of clusters) {
@@ -12228,9 +12250,16 @@
     // --- Zoom / pan (viewBox-based, vector-crisp) ---------------------------
     const MIN = 1, MAX = 8;
     function clampPan() {
-      const w = wrap.clientWidth, h = wrap.clientHeight;
-      epDashMapZoom.tx = Math.min(0, Math.max(w - w * epDashMapZoom.s, epDashMapZoom.tx));
-      epDashMapZoom.ty = Math.min(0, Math.max(h - h * epDashMapZoom.s, epDashMapZoom.ty));
+      const w = wrap.clientWidth, hh = wrap.clientHeight, s = epDashMapZoom.s;
+      epDashMapZoom.tx = Math.min(0, Math.max(w - w * s, epDashMapZoom.tx));
+      // In fullscreen the wrap is taller than the visible area (mapbody) and is
+      // centred within it, so the pan range must account for that crop offset —
+      // otherwise the map can't be dragged vertically until zoomed in.
+      const vh = full ? host.clientHeight : hh;
+      const wrapTop = (vh - hh) / 2;         // 0 when the wrap fits (inline)
+      const tyMax = -wrapTop;                // content top reaches the viewport top
+      const tyMin = vh - wrapTop - hh * s;   // content bottom reaches the viewport bottom
+      epDashMapZoom.ty = Math.min(tyMax, Math.max(tyMin, epDashMapZoom.ty));
     }
     function layoutMarkers() {
       const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -12281,7 +12310,11 @@
       if (!down) return;
       const dx = e.clientX - down.x, dy = e.clientY - down.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
-      if (epDashMapZoom.s > 1) { epDashMapZoom.tx = down.tx + dx; epDashMapZoom.ty = down.ty + dy; apply(); }
+      // Always drive the pan; clampPan bounds it (allows vertical drag even at
+      // zoom 1 in fullscreen, where the wrap is cropped top/bottom).
+      epDashMapZoom.tx = down.tx + dx;
+      epDashMapZoom.ty = down.ty + dy;
+      apply();
     });
     wrap.addEventListener('pointerup', (e) => {
       if (!down) return;
@@ -12333,11 +12366,13 @@
       dashFullResizeFn = () => { fitFullWrap(); apply(); };
       window.addEventListener('resize', dashFullResizeFn);
     }
-    if (full && markerEls.length) {
-      // Default framing: centre on all agents and zoom so the agent spread fills
-      // ~65% of the view (17.5% margin on each side).
-      const AGENT_FRAME_EDGE = 0.175, spanTarget = 1 - 2 * AGENT_FRAME_EDGE;
-      const w = wrap.clientWidth, h = wrap.clientHeight, vh = host.clientHeight;
+    if (markerEls.length && wrap.clientWidth > 0 && wrap.clientHeight > 0) {
+      // Default framing (inline + fullscreen): centre on all agents and zoom so
+      // the agent spread fills ~60% of the view (20% margin on each side).
+      const AGENT_FRAME_EDGE = 0.20, spanTarget = 1 - 2 * AGENT_FRAME_EDGE;
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      // Fullscreen crops the tall wrap to the mapbody height; inline shows it all.
+      const vh = full ? host.clientHeight : h;
       let minFx = 1, maxFx = 0, minFy = 1, maxFy = 0;
       for (const m of markerEls) {
         if (m._fx < minFx) minFx = m._fx;
@@ -12350,7 +12385,9 @@
       const sy = (h > 0 && vh > 0) ? (spanTarget * vh) / (fySpan * h) : sx;
       const s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
       const cfx = (minFx + maxFx) / 2, cfy = (minFy + maxFy) / 2;
-      epDashMapZoom = { s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s };
+      // Fullscreen shifts the centre down 5% to clear the top widget overlay.
+      const topShift = full ? 0.05 * vh : 0;
+      epDashMapZoom = { s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift };
     } else {
       epDashMapZoom = { s: 1, tx: 0, ty: 0 };
     }
@@ -12560,7 +12597,9 @@
       + '<button type="button" class="tep-dashmap-full-min" id="tep-dashmap-min" title="Minimize (Esc)" aria-label="Minimize map">'
       + '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>'
       + '</button>';
-    document.body.appendChild(ov);
+    // Mount on <html> (like the panel) so it sits above dark mode's blend
+    // overlays instead of being tinted/inverted by them.
+    document.documentElement.appendChild(ov);
     dashMapFullEl = ov;
     document.documentElement.style.overflow = 'hidden';
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
@@ -14535,6 +14574,9 @@
         if (!dashMapAutoLoaded) {
           dashMapAutoLoaded = true;
           void loadDashboardMapAgents(false);
+        } else {
+          // Re-render so the map frames to the agents now that it is visible/sized.
+          refreshDashMapViews();
         }
       }
     });
