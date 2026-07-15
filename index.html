@@ -225,6 +225,32 @@
     .legal-footer h3:first-child { margin-top: 0; }
     .legal-footer a { color: #60a5fa; text-decoration: underline; text-underline-offset: 2px; }
     .legal-footer a:hover { color: #93c5fd; }
+    .collapsible-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      cursor: pointer;
+      list-style: none;
+      outline: none;
+    }
+    .collapsible-summary::-webkit-details-marker { display: none; }
+    .collapsible-summary h2 { display: inline; }
+    .collapsible-chevron {
+      flex: none;
+      color: #94a3b8;
+      font-size: 0.95rem;
+      transition: transform 0.2s ease;
+    }
+    details.collapsible[open] .collapsible-chevron { transform: rotate(180deg); }
+    .step--changelog {
+      display: block;
+      text-decoration: none;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .step--changelog:hover { border-color: #475569; background: #243247; }
+    .step--changelog p { margin-top: 0.75rem; }
   </style>
 </head>
 <body>
@@ -312,8 +338,11 @@
       </div>
     </div>
 
-    <div class="step step--howto">
-      <h2>How to Use</h2>
+    <details class="step step--howto collapsible">
+      <summary class="collapsible-summary">
+        <h2>How to Use</h2>
+        <span class="collapsible-chevron" aria-hidden="true">&#x25BE;</span>
+      </summary>
       <p>
         Think of TE Optics as a <strong>power sidebar</strong> that “snaps” to what you’re doing in <code>app.thousandeyes.com</code>.
         Open it anywhere, and it surfaces the right tools for that page.
@@ -336,7 +365,15 @@
       <p style="margin:0.6rem 0 0;">
         Tip: paste multiple targets (one per line) to spin up a whole batch in one go.
       </p>
-    </div>
+    </details>
+
+    <a class="step step--changelog" href="https://github.com/lucidium2000/TE-Optics/commits/main/" target="_blank" rel="noopener noreferrer">
+      <span class="collapsible-summary">
+        <h2>Changelog</h2>
+        <span class="collapsible-chevron" aria-hidden="true">&#x2197;</span>
+      </span>
+      <p>See the full commit history and latest releases on GitHub.</p>
+    </a>
 
     <div class="note">
       <strong>How it works:</strong> The script runs directly inside the
