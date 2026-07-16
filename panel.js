@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.08';
+  const TEP_VERSION = '3.09';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16117,7 +16117,19 @@
     const r = await ajax(url, { method: 'POST' });
     const text = await r.text().catch(() => '');
     log(`LIVE TEST: endpoint run-once POST ${url} → ${r.status} ${text.slice(0, 200)}`, 'tep-log-info');
-    if (!r.ok) throw new Error(`${r.status}: ${text.slice(0, 200)}`);
+    if (!r.ok) {
+      // A 403 with an empty body usually means the backend rejected the
+      // request before generating a normal JSON error (a permissions/role or
+      // plan-entitlement check on manually triggering endpoint tests, rather
+      // than anything wrong with the request itself) — log response headers
+      // too, since the body alone gives no diagnostic signal for that case.
+      if (r.status === 403) {
+        const hdrs = [];
+        try { r.headers.forEach((v, k) => hdrs.push(`${k}: ${v}`)); } catch (_) { /* */ }
+        log(`LIVE TEST: endpoint run-once 403 headers: ${hdrs.join(' | ') || '(none captured)'}`, 'tep-log-info');
+      }
+      throw new Error(`${r.status}: ${text.slice(0, 200)}`);
+    }
     let data = null; try { data = JSON.parse(text); } catch (_) { /* empty/non-JSON ok */ }
     return data;
   }
