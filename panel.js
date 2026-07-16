@@ -1939,6 +1939,26 @@
       0%, 100% { box-shadow: 0 0 0 2px #4285F4, 0 0 0 0 rgba(66,133,244,.5); }
       50%      { box-shadow: 0 0 0 2px #4285F4, 0 0 0 8px rgba(66,133,244,0); }
     }
+    /* ESTIMATED flow: TE gave no confirmed city for this agent's 8.8.8.8 hop,
+       so the line goes to the nearest Google edge as a guess, not real data.
+       Amber + dashed (vs. the solid blue "confirmed" gradient) so it always
+       reads as a guess at a glance. */
+    .tep-livetest-flowsvg .tep-livetest-flow--est {
+      stroke: #f59e0b; stroke-dasharray: 3 6; filter: drop-shadow(0 0 4px rgba(245,158,11,.7));
+    }
+    .tep-livetest-flowsvg .tep-livetest-flow-glow--est { stroke: #f59e0b; opacity: .14; }
+    .tep-livetest-dest--est .tep-livetest-g {
+      color: #f59e0b; box-shadow: 0 0 0 2px #f59e0b, 0 2px 8px rgba(0,0,0,.55);
+    }
+    .tep-gcard-est-tag {
+      display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 3px;
+      background: rgba(245,158,11,.18); color: #f59e0b; font-size: 9.5px; font-weight: 800;
+      letter-spacing: .3px; text-transform: uppercase; vertical-align: middle;
+    }
+    .tep-gcard-estnote {
+      margin-top: 6px; padding: 6px 7px; border-radius: 6px; background: rgba(245,158,11,.1);
+      border: 1px solid rgba(245,158,11,.3); color: #fcd34d; font-size: 10.5px; line-height: 1.4;
+    }
     /* Rich hover card for a Google (8.8.8.8) destination PoP node. */
     .tep-gcard { min-width: 210px; max-width: 300px; }
     .tep-gcard-head {
@@ -13808,8 +13828,11 @@
     return `<div class="tep-map-tip-head">${head}</div>${body}<div class="tep-map-tip-foot">${foot}</div>`;
   }
 
-  /** Rich hover card for a Google (8.8.8.8) destination PoP node on the LIVE TEST map. */
-  function tepGoogleNodeCardHtml(info, locStr, agents) {
+  /** Rich hover card for a Google (8.8.8.8) destination PoP node on the LIVE TEST map.
+   *  hasEstimated: true when at least one agent reaching this node has no
+   *  TE-confirmed city — its flow/row is marked "(est.)" rather than presented
+   *  as a real resolved location. */
+  function tepGoogleNodeCardHtml(info, locStr, agents, hasEstimated) {
     info = info || {};
     const esc = tepEscapeHtmlText;
     const row = (label, val) => (val != null && val !== '')
@@ -13825,6 +13848,9 @@
     rows.push(row('Prefix', info.prefix));
     if (info.cloudProvider) rows.push(row('Cloud', info.cloudProvider + (info.cloudRegion ? ' · ' + info.cloudRegion : '')));
     if (info.geonameId != null) rows.push(row('GeoNames', info.geonameId));
+    const estNote = hasEstimated
+      ? `<div class="tep-gcard-estnote">⚠ TE didn't report a precise city for one or more agents below — their flow is an estimate of the nearest Google edge, not a confirmed location.</div>`
+      : '';
     let agentsHtml = '';
     if (agents && agents.length) {
       const cap = 40;
@@ -13832,13 +13858,14 @@
         const ms = Number.isFinite(a.ms) ? `${Math.round(a.ms)}ms` : '';
         const loss = (Number.isFinite(a.loss) && a.loss > 0) ? ` · ${Math.round(a.loss * 10) / 10}% loss` : '';
         const col = tepLiveNodeColor(a.ms, a.loss).stroke;
-        return `<div class="tep-gcard-agent"><span>${esc(a.name || 'Agent')}</span>`
+        const est = a.estimated ? ' <span class="tep-gcard-est-tag">est.</span>' : '';
+        return `<div class="tep-gcard-agent"><span>${esc(a.name || 'Agent')}${est}</span>`
           + `<b style="color:${col}">${esc(ms + loss)}</b></div>`;
       }).join('');
       const more = agents.length > cap ? `<div class="tep-gcard-more">+${agents.length - cap} more…</div>` : '';
       agentsHtml = `<div class="tep-gcard-agents"><div class="tep-gcard-subhead">${agents.length} agent${agents.length > 1 ? 's' : ''} testing here</div>${items}${more}</div>`;
     }
-    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${agentsHtml}</div>`;
+    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${estNote}${agentsHtml}</div>`;
   }
 
   /** Render the combined enterprise+endpoint agent map. host defaults to the inline
@@ -13995,7 +14022,8 @@
       flowSvg.appendChild(defs);
       wrap.insertBefore(flowSvg, overlay);  // lines below markers
       const destSeen = new Map();
-      const destAgents = new Map();   // coordKey → [{ name, ms, loss }] reaching this PoP
+      const destAgents = new Map();   // coordKey → [{ name, ms, loss, estimated }] reaching this PoP
+      const destHasEstimated = new Set();   // coordKeys reached by at least one estimated flow
       for (const it of list) {
         if (it.kind !== 'enterprise' || it.agentId == null) continue;
         // Draw only once this agent's latency has been pulled.
@@ -14010,13 +14038,17 @@
         const isNewFlow = !liveFlowDrawn.has(aKey);
         if (isNewFlow) liveFlowDrawn.add(aKey);
         const drawCls = isNewFlow ? ' tep-draw' : '';
+        // Estimated destinations (TE gave no city, so we guessed the nearest
+        // Google edge to the source) render dashed/amber instead of the solid
+        // blue "confirmed" style, so a guess is never mistaken for real data.
+        const estCls = dest.estimated ? ' tep-livetest-flow--est' : '';
         const pathId = 'tep-flow-' + (liveFlowSeq++);
         const glow = document.createElementNS(SVGNS, 'path');
-        glow.setAttribute('class', 'tep-livetest-flow-glow' + drawCls);
+        glow.setAttribute('class', 'tep-livetest-flow-glow' + drawCls + estCls);
         if (isNewFlow) glow.setAttribute('pathLength', '100');  // normalise for the draw reveal
         flowSvg.appendChild(glow);
         const path = document.createElementNS(SVGNS, 'path');
-        path.setAttribute('class', 'tep-livetest-flow' + drawCls);
+        path.setAttribute('class', 'tep-livetest-flow' + drawCls + estCls);
         path.setAttribute('id', pathId);
         flowSvg.appendChild(path);
         // Bright comet travelling from the agent toward Google along the path.
@@ -14040,7 +14072,8 @@
           srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
         const key = dest.lat.toFixed(2) + ',' + dest.lng.toFixed(2);
         if (!destAgents.has(key)) destAgents.set(key, []);
-        destAgents.get(key).push({ name: it.name, ms: lat.ms, loss: lat.loss });
+        destAgents.get(key).push({ name: it.name, ms: lat.ms, loss: lat.loss, estimated: !!dest.estimated });
+        if (dest.estimated) destHasEstimated.add(key);
         if (!destSeen.has(key)) {
           const isNewDest = !liveDestDrawn.has(key);
           if (isNewDest) liveDestDrawn.add(key);
@@ -14056,9 +14089,12 @@
           destSeen.set(key, dobj);
         }
       }
-      // Attach the rich hover card (with the agents reaching each PoP) to every G.
+      // Attach the rich hover card (with the agents reaching each PoP) to every G,
+      // and flag any node reached by at least one estimated (not TE-confirmed) flow.
       for (const [key, dobj] of destSeen) {
-        dobj.el._gcard = tepGoogleNodeCardHtml(dobj.el._destInfo, dobj.el._destLoc, destAgents.get(key) || []);
+        const estimatedHere = destHasEstimated.has(key);
+        if (estimatedHere) dobj.el.classList.add('tep-livetest-dest--est');
+        dobj.el._gcard = tepGoogleNodeCardHtml(dobj.el._destInfo, dobj.el._destLoc, destAgents.get(key) || [], estimatedHere);
       }
     }
     buildFlow();
@@ -16194,6 +16230,27 @@
     'auckland': [-36.8485, 174.7633], 'tel-aviv': [32.0853, 34.7818],
   };
 
+  /** This agent's own coordinates (same lookup buildDashboardMapAgents uses):
+   *  real configured lat/lng first, else geocode its location text. */
+  function liveTestAgentOwnCoords(agentId) {
+    const a = agents.find((x) => x.agentType === 'Enterprise' && String(x.agentId) === String(agentId));
+    if (!a) return null;
+    if (a.lat != null && a.lng != null) return { lat: a.lat, lng: a.lng };
+    const g = a.location ? epGeocode(a.location) : null;
+    return g ? { lat: g.lat, lng: g.lng } : null;
+  }
+
+  /** Nearest curated Google metro to a given point (haversine over METRO_COORDS). */
+  function liveTestNearestMetro(lat, lng) {
+    let bestCity = null, bestKm = Infinity;
+    for (const city in METRO_COORDS) {
+      const c = METRO_COORDS[city];
+      const km = tepHaversineKm(lat, lng, c[0], c[1]);
+      if (km < bestKm) { bestKm = km; bestCity = city; }
+    }
+    return bestCity ? { lat: METRO_COORDS[bestCity][0], lng: METRO_COORDS[bestCity][1], city: bestCity, km: bestKm } : null;
+  }
+
   /**
    * Resolve a TE "City, Region, Country" locationName string → {lat,lng}.
    * geonameId is intentionally NOT used here (see the note above METRO_COORDS —
@@ -16360,15 +16417,26 @@
       const geo = liveTestResolveDestGeo(loc.locationName);
       if (geo && Number.isFinite(geo.lat) && Number.isFinite(geo.lng)) {
         const info = destInfoFrom(loc.node, loc.locationName, loc.geonameId);
-        liveTestDestByAgent.set(key, { lat: geo.lat, lng: geo.lng, label: LIVE_TEST_TARGET, location: info.location, info });
+        liveTestDestByAgent.set(key, { lat: geo.lat, lng: geo.lng, label: LIVE_TEST_TARGET, location: info.location, info, estimated: false });
         stored++;
         log(`LIVE TEST: agent ${key} → 8.8.8.8 @ ${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}`, 'tep-log-ok');
+        continue;
+      }
+      // TE only resolved this agent's 8.8.8.8 hop to a country or state/region
+      // centroid (no PoP city) — real anycast traffic still lands at whichever
+      // Google edge is nearest the SOURCE agent, so estimate that instead of
+      // showing nothing. Clearly flagged `estimated: true` end-to-end (dashed
+      // line, "(est.)" in the hover card) so it's never read as TE-confirmed.
+      const src = liveTestAgentOwnCoords(key);
+      const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
+      if (nearest) {
+        const info = destInfoFrom(loc.node, loc.locationName, loc.geonameId);
+        liveTestDestByAgent.set(key, { lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: info.location, info, estimated: true });
+        stored++;
+        log(`LIVE TEST: agent ${key} → 8.8.8.8 est. nearest edge "${nearest.city}" (TE only gave "${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}")`, 'tep-log-info');
       } else if (!liveTestGeoSkip.has(key)) {
-        // TE only resolved this agent's 8.8.8.8 hop to a country or state/region
-        // centroid (no PoP city); omit the path rather than collapse it onto that
-        // shared, misleading point.
         liveTestGeoSkip.add(key);
-        log(`LIVE TEST: agent ${key} → 8.8.8.8 geo "${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}" has no city-level match — path omitted (no PoP city)`, 'tep-log-info');
+        log(`LIVE TEST: agent ${key} → 8.8.8.8 geo "${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}" has no city-level match and no source coords to estimate from — path omitted`, 'tep-log-info');
       }
     }
     return stored;
