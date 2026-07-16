@@ -16474,6 +16474,7 @@
   }
 
   let liveTestLatencyLoggedShape = false;   // reset per run; logs the raw body once
+  let liveTestPathVisLoggedShape = false;   // reset per run; logs the raw path-vis graph shape once
 
   /**
    * Fetch per-agent latency for the enterprise instant test, keyed by agent id
@@ -16532,19 +16533,19 @@
     return n;
   }
 
-  // TE's path-vis graph gives only geonameId + a human "City, Region, Country"
+  // TE's path-vis graph gives a geonameId + a human "City, Region, Country"
   // string (no lat/lng); the world map resolves those client-side. CSP blocks
-  // external geocoders, so we resolve locally. The LIVE TEST target is always
-  // 8.8.8.8, whose final hop lands in a Google anycast metro — this table covers
-  // the realistic set, keyed by exact geonameId first, then by city name.
-  const GEONAME_COORDS = {
-    '4180439': [33.7490, -84.3880],   // Atlanta, GA
-    '4174757': [27.9475, -82.4584],   // Tampa, FL
-    '4299276': [38.2542, -85.7594],   // Louisville, KY
-    '4487042': [35.7721, -78.6386],   // Raleigh, NC
-    '5128581': [40.7128, -74.0060],   // New York, NY
-    '5375480': [37.3861, -122.0839],  // Mountain View, CA
-  };
+  // external geocoders, so we resolve locally.
+  //
+  // We deliberately do NOT resolve by geonameId. A live capture showed agents
+  // with wildly different locationName text (a bare "US", and an agent
+  // genuinely in Thāne, India) both "resolving" successfully through a small
+  // hand-curated geonameId table — meaning TE's per-source geonameId isn't
+  // reliably city-precise; it falls back to a shared/generic id that any
+  // curated table will eventually collide with, collapsing unrelated agents
+  // onto the same hardcoded point. locationName is the reliable, genuinely
+  // per-source signal (it correctly varies across agents in the same capture),
+  // so it's the only thing we resolve on.
   const METRO_COORDS = {
     'atlanta': [33.7490, -84.3880], 'ashburn': [39.0437, -77.4875], 'mountain view': [37.3861, -122.0839],
     'new york': [40.7128, -74.0060], 'chicago': [41.8781, -87.6298], 'san francisco': [37.7749, -122.4194],
@@ -16605,33 +16606,36 @@
   };
 
   /**
-   * Resolve a TE geonameId / "City, Region, Country" string → {lat,lng}.
-   * Returns null when the geo is only country-level (e.g. "US", geonameId
-   * 6252001): TE couldn't pin the anycast PoP, so we must NOT collapse those
-   * agents onto the country centroid (that was the "generic US" marker).
+   * Resolve a TE "City, Region, Country" locationName string → {lat,lng}.
+   * geonameId is intentionally NOT used here (see the note above METRO_COORDS —
+   * it isn't reliably per-source). Returns null unless we land on an actual
+   * city-level point: TE couldn't pin the anycast PoP, so we must NOT collapse
+   * those agents onto a country OR region/state centroid (both are the same
+   * "generic marker" problem — a state centroid is just as misleading as a
+   * country one, and just as prone to dumping every unresolved agent in that
+   * state onto one identical dot).
    */
-  function liveTestResolveDestGeo(geonameId, locationName) {
-    const gid = geonameId != null ? String(geonameId) : '';
-    // 1) Exact geonameId (precise Google PoP coords we've curated).
-    if (gid && GEONAME_COORDS[gid]) { const c = GEONAME_COORDS[gid]; return { lat: c[0], lng: c[1] }; }
+  function liveTestResolveDestGeo(locationName) {
     if (locationName) {
       const parts = String(locationName).split(',').map((s) => s.trim()).filter(Boolean);
-      // 2) Curated Google-metro table (precise city centroids).
+      // 1) Curated Google-metro table (precise city centroids).
       const city = (parts[0] || '').replace(/\barea\b/i, '').trim().toLowerCase();
       if (city && METRO_COORDS[city]) { const c = METRO_COORDS[city]; return { lat: c[0], lng: c[1] }; }
       // A single token ("US" / "United States") is country-level → skip.
       if (parts.length >= 2) {
-        // 3) Broad gazetteer — but reject a country-centroid match, since that's
-        //    the misleading generic marker, not a real PoP city.
+        // 2) Broad gazetteer — but require actual city precision. epGeocode can
+        //    also return 'region' (a US state centroid) when only the state is
+        //    known; that's just as much a shared, misleading point as 'country'
+        //    and must be rejected the same way.
         try {
           const g = epGeocode(locationName);
-          if (g && g.precision !== 'country' && Number.isFinite(g.lat) && Number.isFinite(g.lng)) {
+          if (g && g.precision === 'city' && Number.isFinite(g.lat) && Number.isFinite(g.lng)) {
             return { lat: g.lat, lng: g.lng };
           }
         } catch (_) { /* */ }
       }
     }
-    return null;   // unresolved / country-level only → no path drawn
+    return null;   // unresolved / no city-level match → no path drawn
   }
 
   /**
@@ -16681,6 +16685,29 @@
     const destNodes = nodes.filter((n) => n && n.ipAddress === LIVE_TEST_TARGET
       && (n.destination === true || (n.sourceIdToLocation && typeof n.sourceIdToLocation === 'object')));
     if (!destNodes.length) return 0;
+
+    // One-shot raw-shape dump so we can confirm what TE actually sends for the
+    // 8.8.8.8 destination node(s) — every prior fix here has been a guess at the
+    // field shape; this logs the real thing straight into the panel's log tab.
+    if (!liveTestPathVisLoggedShape) {
+      liveTestPathVisLoggedShape = true;
+      log(`LIVE TEST path-vis: ${nodes.length} node(s), ${destNodes.length} 8.8.8.8 dest node(s)`, 'tep-log-info');
+      destNodes.slice(0, 5).forEach((dn, i) => {
+        const s2l = dn.sourceIdToLocation && typeof dn.sourceIdToLocation === 'object' ? dn.sourceIdToLocation : {};
+        const keys = Object.keys(s2l);
+        const sample = keys.slice(0, 6).map((k) => `${k}→${JSON.stringify(s2l[k])}`).join(' | ');
+        log(`  destNode[${i}]: destination=${dn.destination} geonameId=${dn.geonameId} location="${dn.location}" `
+          + `sourceIdToLocation keys=${keys.length} sample: ${sample}`, 'tep-log-info');
+      });
+      const routesAll = data && Array.isArray(data.routes) ? data.routes : [];
+      const destRoutes = routesAll.filter((rt) => rt && rt.destinationIp === LIVE_TEST_TARGET);
+      log(`LIVE TEST path-vis: ${routesAll.length} route(s), ${destRoutes.length} landing on 8.8.8.8`, 'tep-log-info');
+      destRoutes.slice(0, 6).forEach((rt, i) => {
+        const srcNode = nodes[rt.source];
+        log(`  route[${i}]: source=${rt.source} (agentId=${srcNode && srcNode.agentId}) `
+          + `destinationLocation="${rt.destinationLocation}" destinationGeonameId=${rt.destinationGeonameId}`, 'tep-log-info');
+      });
+    }
 
     // How specific a "City, Region, Country" string is (more parts = finer).
     const locSpecificity = (s) => (s ? String(s).split(',').map((x) => x.trim()).filter(Boolean).length : 0);
@@ -16740,18 +16767,19 @@
       const loc = perAgentLoc.get(key);
       // Only resolve when we actually know THIS agent's destination — never
       // borrow another agent's PoP (that was the collapsing bug).
-      if (!loc || (loc.geonameId == null && !loc.locationName)) continue;
-      const geo = liveTestResolveDestGeo(loc.geonameId, loc.locationName);
+      if (!loc || !loc.locationName) continue;
+      const geo = liveTestResolveDestGeo(loc.locationName);
       if (geo && Number.isFinite(geo.lat) && Number.isFinite(geo.lng)) {
         const info = destInfoFrom(loc.node, loc.locationName, loc.geonameId);
         liveTestDestByAgent.set(key, { lat: geo.lat, lng: geo.lng, label: LIVE_TEST_TARGET, location: info.location, info });
         stored++;
         log(`LIVE TEST: agent ${key} → 8.8.8.8 @ ${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}`, 'tep-log-ok');
       } else if (!liveTestGeoSkip.has(key)) {
-        // TE only resolved this agent's 8.8.8.8 hop to country level (no PoP city);
-        // omit the path rather than collapse it onto a generic country centroid.
+        // TE only resolved this agent's 8.8.8.8 hop to a country or state/region
+        // centroid (no PoP city); omit the path rather than collapse it onto that
+        // shared, misleading point.
         liveTestGeoSkip.add(key);
-        log(`LIVE TEST: agent ${key} → 8.8.8.8 geo "${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}" is country-level only — path omitted (no PoP city)`, 'tep-log-info');
+        log(`LIVE TEST: agent ${key} → 8.8.8.8 geo "${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}" has no city-level match — path omitted (no PoP city)`, 'tep-log-info');
       }
     }
     return stored;
@@ -16771,6 +16799,7 @@
     liveTestCleanupTemp();
     liveTestClearLatency();
     liveTestLatencyLoggedShape = false;
+    liveTestPathVisLoggedShape = false;
     liveTestRunning = true;
     // Hide offline agents IN PLACE (no DOM rebuild → zoom/pan preserved, no reframe).
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
