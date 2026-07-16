@@ -12803,6 +12803,21 @@
     return raw.target || raw.url || '';
   }
 
+  /** Server host only, ignoring port — for matching a test's target IP/host
+   *  regardless of probe port. getEndpointTestTarget() above suffixes a
+   *  non-443 port onto the display string (e.g. "8.8.8.8:53" for a Network
+   *  test using port 53), which breaks an exact host match; confirmed via a
+   *  live capture where a real 8.8.8.8 Network test used port 53. */
+  function getEndpointTestServerHost(t) {
+    const raw = unwrapEndpointTestRow(t);
+    if (!raw) return '';
+    if (raw.server && typeof raw.server === 'object' && raw.server.serverName) return String(raw.server.serverName);
+    if (raw.httpConfig && raw.httpConfig.url) {
+      try { return new URL(raw.httpConfig.url).hostname; } catch (_) { return String(raw.httpConfig.url); }
+    }
+    return String(raw.target || raw.url || '');
+  }
+
   function getEndpointTestInterval(t) {
     const raw = unwrapEndpointTestRow(t);
     if (!raw) return null;
@@ -14453,6 +14468,10 @@
       const destSeen = new Map();
       const destAgents = new Map();   // coordKey → [{ name, ms, loss, estimated }] reaching this PoP
       const destHasEstimated = new Set();   // coordKeys reached by at least one estimated flow
+      const destConfirmed = new Map();   // coordKey → { info, location } from a NON-estimated agent, if any
+      // Collect this frame's agent→dest flows first, so nearby destinations
+      // can be clustered into one PoP node before anything is drawn.
+      const flows = [];
       for (const it of list) {
         // Enterprise (instant test) and endpoint (run-once) agents can both
         // have latency data now — draw a flow for either kind.
@@ -14462,58 +14481,86 @@
         if (!lat || !Number.isFinite(lat.ms)) continue;
         const dest = liveTestDestByAgent.get(String(it.agentId));
         if (!dest || dest.lat == null || dest.lng == null) continue;
-        const sp = tepLonLatToPct(it.lng, it.lat);
-        const dp = tepLonLatToPct(dest.lng, dest.lat);
-        // First time we draw this agent's flow → play the one-shot grow-in.
-        const aKey = String(it.agentId);
-        const isNewFlow = !liveFlowDrawn.has(aKey);
-        if (isNewFlow) liveFlowDrawn.add(aKey);
-        const drawCls = isNewFlow ? ' tep-draw' : '';
-        // Estimated destinations (TE gave no city, so we guessed the nearest
-        // Google edge to the source) render dashed/amber instead of the solid
-        // blue "confirmed" style, so a guess is never mistaken for real data.
-        const estCls = dest.estimated ? ' tep-livetest-flow--est' : '';
-        const pathId = 'tep-flow-' + (liveFlowSeq++);
-        const glow = document.createElementNS(SVGNS, 'path');
-        glow.setAttribute('class', 'tep-livetest-flow-glow' + drawCls + estCls);
-        if (isNewFlow) glow.setAttribute('pathLength', '100');  // normalise for the draw reveal
-        flowSvg.appendChild(glow);
-        const path = document.createElementNS(SVGNS, 'path');
-        path.setAttribute('class', 'tep-livetest-flow' + drawCls + estCls);
-        path.setAttribute('id', pathId);
-        flowSvg.appendChild(path);
-        // Bright comet travelling from the agent toward Google along the path.
-        const packet = document.createElementNS(SVGNS, 'circle');
-        packet.setAttribute('class', 'tep-livetest-packet' + drawCls);
-        packet.setAttribute('r', '3.6');
-        const motion = document.createElementNS(SVGNS, 'animateMotion');
-        motion.setAttribute('dur', '1.5s');
-        motion.setAttribute('repeatCount', 'indefinite');
-        motion.setAttribute('rotate', 'auto');
-        motion.setAttribute('keyPoints', '0;1');
-        motion.setAttribute('keyTimes', '0;1');
-        motion.setAttribute('calcMode', 'linear');
-        const mpath = document.createElementNS(SVGNS, 'mpath');
-        mpath.setAttributeNS(XLINKNS, 'href', '#' + pathId);
-        mpath.setAttribute('href', '#' + pathId);
-        motion.appendChild(mpath);
-        packet.appendChild(motion);
-        flowSvg.appendChild(packet);
-        liveFlowLines.push({ pathEl: path, glowEl: glow, packetEl: packet,
-          srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
-        const key = dest.lat.toFixed(2) + ',' + dest.lng.toFixed(2);
-        if (!destAgents.has(key)) destAgents.set(key, []);
-        destAgents.get(key).push({ name: it.name, ms: lat.ms, loss: lat.loss, estimated: !!dest.estimated });
-        if (dest.estimated) destHasEstimated.add(key);
+        flows.push({ it, lat, dest });
+      }
+      // Cluster destinations within 30 miles of each other into a single "G"
+      // node — mirrors the agent-marker clustering above so a confirmed city
+      // and a nearby estimated edge (e.g. "New York" vs "New York / New
+      // Jersey (estimated)") merge into one pin instead of two overlapping
+      // ones. A confirmed (non-estimated) member always wins the anchor spot.
+      const DEST_CLUSTER_MI = 30;
+      const destClusters = [];
+      for (const f of flows) {
+        let cl = null;
+        for (const c of destClusters) {
+          if (tepHaversineKm(c.lat, c.lng, f.dest.lat, f.dest.lng) * 0.621371 <= DEST_CLUSTER_MI) { cl = c; break; }
+        }
+        if (!cl) { cl = { lat: f.dest.lat, lng: f.dest.lng, confirmed: !f.dest.estimated, flows: [] }; destClusters.push(cl); }
+        else if (!cl.confirmed && !f.dest.estimated) { cl.lat = f.dest.lat; cl.lng = f.dest.lng; cl.confirmed = true; }
+        cl.flows.push(f);
+      }
+      for (const cl of destClusters) {
+        const dp = tepLonLatToPct(cl.lng, cl.lat);
+        const key = cl.lat.toFixed(2) + ',' + cl.lng.toFixed(2);
+        for (const { it, lat, dest } of cl.flows) {
+          const sp = tepLonLatToPct(it.lng, it.lat);
+          // First time we draw this agent's flow → play the one-shot grow-in.
+          const aKey = String(it.agentId);
+          const isNewFlow = !liveFlowDrawn.has(aKey);
+          if (isNewFlow) liveFlowDrawn.add(aKey);
+          const drawCls = isNewFlow ? ' tep-draw' : '';
+          // Estimated destinations (TE gave no city, so we guessed the nearest
+          // Google edge to the source) render dashed/amber instead of the solid
+          // blue "confirmed" style, so a guess is never mistaken for real data.
+          const estCls = dest.estimated ? ' tep-livetest-flow--est' : '';
+          const pathId = 'tep-flow-' + (liveFlowSeq++);
+          const glow = document.createElementNS(SVGNS, 'path');
+          glow.setAttribute('class', 'tep-livetest-flow-glow' + drawCls + estCls);
+          if (isNewFlow) glow.setAttribute('pathLength', '100');  // normalise for the draw reveal
+          flowSvg.appendChild(glow);
+          const path = document.createElementNS(SVGNS, 'path');
+          path.setAttribute('class', 'tep-livetest-flow' + drawCls + estCls);
+          path.setAttribute('id', pathId);
+          flowSvg.appendChild(path);
+          // Bright comet travelling from the agent toward Google along the path.
+          const packet = document.createElementNS(SVGNS, 'circle');
+          packet.setAttribute('class', 'tep-livetest-packet' + drawCls);
+          packet.setAttribute('r', '3.6');
+          const motion = document.createElementNS(SVGNS, 'animateMotion');
+          motion.setAttribute('dur', '1.5s');
+          motion.setAttribute('repeatCount', 'indefinite');
+          motion.setAttribute('rotate', 'auto');
+          motion.setAttribute('keyPoints', '0;1');
+          motion.setAttribute('keyTimes', '0;1');
+          motion.setAttribute('calcMode', 'linear');
+          const mpath = document.createElementNS(SVGNS, 'mpath');
+          mpath.setAttributeNS(XLINKNS, 'href', '#' + pathId);
+          mpath.setAttribute('href', '#' + pathId);
+          motion.appendChild(mpath);
+          packet.appendChild(motion);
+          flowSvg.appendChild(packet);
+          liveFlowLines.push({ pathEl: path, glowEl: glow, packetEl: packet,
+            srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
+          if (!destAgents.has(key)) destAgents.set(key, []);
+          destAgents.get(key).push({ name: it.name, ms: lat.ms, loss: lat.loss, estimated: !!dest.estimated });
+          if (dest.estimated) {
+            destHasEstimated.add(key);
+          } else if (!destConfirmed.has(key)) {
+            // Prefer a confirmed agent's info/location as the node's headline
+            // over whichever agent happened to be iterated first — a shared
+            // node's displayed location should be the real one when we have it.
+            destConfirmed.set(key, { info: dest.info, location: dest.location });
+          }
+        }
         if (!destSeen.has(key)) {
           const isNewDest = !liveDestDrawn.has(key);
           if (isNewDest) liveDestDrawn.add(key);
+          const anchorDest = cl.flows[0].dest;
           const de = document.createElement('div');
           de.className = 'tep-agent-map-marker tep-livetest-dest' + (isNewDest ? ' tep-draw' : '');
-          de.setAttribute('aria-label', '8.8.8.8 (Google DNS)' + (dest.location ? ' — ' + dest.location : ''));
           de.innerHTML = '<span class="tep-livetest-g">' + tepGoogleGIconSvg(16) + '</span>';
-          de._destInfo = dest.info || { ip: '8.8.8.8', name: 'dns.google', location: dest.location };
-          de._destLoc = dest.location;
+          de._destInfo = anchorDest.info || { ip: '8.8.8.8', name: 'dns.google', location: anchorDest.location };
+          de._destLoc = anchorDest.location;
           overlay.appendChild(de);
           const dobj = { el: de, fx: dp.xPct / 100, fy: dp.yPct / 100 };
           liveDestEls.push(dobj);
@@ -14521,10 +14568,16 @@
         }
       }
       // Attach the rich hover card (with the agents reaching each PoP) to every G,
-      // and flag any node reached by at least one estimated (not TE-confirmed) flow.
+      // flag any node reached by at least one estimated (not TE-confirmed) flow,
+      // and prefer a confirmed agent's info/location over an estimated one that
+      // may have been set first when the node was created above. Location shows
+      // on hover only (the card below), not as a persistent on-map label.
       for (const [key, dobj] of destSeen) {
         const estimatedHere = destHasEstimated.has(key);
+        const confirmed = destConfirmed.get(key);
+        if (confirmed) { dobj.el._destInfo = confirmed.info; dobj.el._destLoc = confirmed.location; }
         if (estimatedHere) dobj.el.classList.add('tep-livetest-dest--est');
+        dobj.el.setAttribute('aria-label', '8.8.8.8 (Google DNS)' + (dobj.el._destLoc ? ' — ' + dobj.el._destLoc : ''));
         dobj.el._gcard = tepGoogleNodeCardHtml(dobj.el._destInfo, dobj.el._destLoc, destAgents.get(key) || [], estimatedHere);
       }
     }
@@ -14623,55 +14676,66 @@
     }
     function layoutMarkers() {
       const w = wrap.clientWidth, h = wrap.clientHeight;
-      const markerPx = [];
-      for (const m of markerEls) {
-        const x = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
-        const y = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
-        m.style.left = x + 'px';
-        m.style.top = y + 'px';
-        markerPx.push({ x, y });
-      }
-      // A "G" destination can genuinely coincide (or nearly so) with an agent
-      // marker — e.g. an estimated nearest-edge guess for an agent whose own
-      // location is itself only known approximately, or a confirmed PoP right
-      // where the agent is. Left alone, the G (higher z-index) fully covers the
-      // agent marker and the connecting flow line collapses to ~0 length and
-      // disappears. Nudge each G a fixed distance away from anything already
-      // placed (agent markers, then other G's) so both stay visible and every
-      // flow always renders with a real, visible length.
+
+      // Place "G" destinations FIRST, at their TRUE position — confirmed or
+      // estimated, Google's marker is never moved for overlap avoidance. The
+      // estimate IS the real answer to "where do we think the edge is"; nudging
+      // it would visually contradict the label we just made always-visible.
+      const destPx = [];
+      liveDestEls.forEach((de) => {
+        const x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
+        const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
+        de.el.style.left = x + 'px';
+        de.el.style.top = y + 'px';
+        destPx.push({ x, y });
+      });
+
+      // Agent markers can genuinely coincide (or nearly so) with a G marker —
+      // e.g. an estimated nearest-edge guess for an agent whose own location is
+      // itself only approximately known, or a confirmed PoP right where the
+      // agent is. Left alone, the G (higher z-index) fully covers the agent
+      // marker and the connecting flow line collapses to ~0 length. Nudge the
+      // AGENT marker instead, pushed further along the real bearing from the
+      // conflicting point THROUGH the agent's own true position — a direction
+      // grounded in where the agent actually is, not an arbitrary angle, so a
+      // nudge is far less likely to land in open water than a random offset.
       const MIN_SEP = 30; // px — clears the largest marker pair (24px cluster + 26px G) with a visible gap
-      const placedPx = markerPx.slice();
-      const destPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
-                                        // flow line landing on the same G node
-      liveDestEls.forEach((de, i) => {
-        let x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
-        let y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
+      const placedPx = destPx.slice();
+      const markerPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
+                                          // flow line starting from the same agent marker
+      for (const m of markerEls) {
+        const trueX = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
+        const trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
+        let x = trueX, y = trueY;
         for (const p of placedPx) {
           const ddx = x - p.x, ddy = y - p.y;
           const dist = Math.hypot(ddx, ddy);
           if (dist < MIN_SEP) {
-            // Push out to exactly MIN_SEP. Coincident points (dist≈0) have no
-            // real direction to push along, so fall back to a stable per-dest
-            // angle (golden-angle spacing) instead of jittering every repaint.
-            const angle = dist > 0.5 ? Math.atan2(ddy, ddx) : (i * 2.399963);
+            // Bearing from the conflicting point through this marker's OWN
+            // true position; only falls back to straight up on exact
+            // coincidence, where no real bearing exists to preserve.
+            const bx = trueX - p.x, by = trueY - p.y;
+            const blen = Math.hypot(bx, by);
+            const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
             x = p.x + Math.cos(angle) * MIN_SEP;
             y = p.y + Math.sin(angle) * MIN_SEP;
           }
         }
-        de.el.style.left = x + 'px';
-        de.el.style.top = y + 'px';
-        destPxByKey.set(de.fx.toFixed(6) + ',' + de.fy.toFixed(6), { x, y });
+        m.style.left = x + 'px';
+        m.style.top = y + 'px';
+        markerPxByKey.set(m._fx.toFixed(6) + ',' + m._fy.toFixed(6), { x, y });
         placedPx.push({ x, y });
-      });
-      // LIVE TEST flow overlay: keep the per-agent curved paths glued to the
-      // (possibly nudged) G position so the line always ends exactly on its marker.
+      }
+
+      // LIVE TEST flow overlay: source follows the (possibly nudged) agent
+      // marker; destination is always the G marker's TRUE, unmoved position.
       for (const fl of liveFlowLines) {
-        const x1 = epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s;
-        const y1 = epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s;
-        const dKey = fl.destFx.toFixed(6) + ',' + fl.destFy.toFixed(6);
-        const dpx = destPxByKey.get(dKey);
-        const x2 = dpx ? dpx.x : (epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s);
-        const y2 = dpx ? dpx.y : (epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s);
+        const sKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
+        const spx = markerPxByKey.get(sKey);
+        const x1 = spx ? spx.x : (epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s);
+        const y1 = spx ? spx.y : (epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s);
+        const x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
+        const y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
         const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
         const dx = x2 - x1, dy = y2 - y1;
         const len = Math.hypot(dx, dy) || 1;
@@ -16540,7 +16604,7 @@
    *  and creating/deleting temp endpoint tests every run is unnecessary churn
    *  when one already exists. */
   function liveTestFindEndpoint8888Test() {
-    const candidates = allEndpointTests.filter((t) => !isEndpointTestDeleted(t) && getEndpointTestTarget(t).trim() === LIVE_TEST_TARGET);
+    const candidates = allEndpointTests.filter((t) => !isEndpointTestDeleted(t) && getEndpointTestServerHost(t).trim() === LIVE_TEST_TARGET);
     if (!candidates.length) return null;
     return candidates.find(liveTestEndpointTestHasAssignment) || candidates[0];
   }
@@ -16594,19 +16658,28 @@
    *  configured measurement interval — CONFIRMED via multiple live-captured
    *  round ids: every one was an exact multiple of 60, none aligned to a
    *  fixed 300s grid, matching this test's 60s interval, not a hardcoded
-   *  5-minute bucket). Both the current AND immediately-previous round are
-   *  queried and merged, since agent execution lag (~20-30s, confirmed via
-   *  live capture) can straddle a round boundary. */
-  async function liveTestFetchEndpointLatency(testId, agentIds, intervalSec) {
+   *  5-minute bucket).
+   *
+   *  maxAgeSec controls how far back to look: default (omitted) checks just
+   *  the current + immediately-previous round, since agent execution lag
+   *  (~20-30s, confirmed via live capture) can straddle one round boundary.
+   *  A larger maxAgeSec (e.g. 300) is used for the no-run-once-permission
+   *  fallback (see runLiveTest) — reads whatever this test's own regular
+   *  measurements already show within that window, rather than nothing. */
+  async function liveTestFetchEndpointLatency(testId, agentIds, intervalSec, maxAgeSec) {
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
     intervalSec = intervalSec || 60;
+    maxAgeSec = maxAgeSec || intervalSec;   // default: current + 1 previous round
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const pageSize = Math.max(50, agentIds.length);
     const curRound = Math.floor(Date.now() / 1000 / intervalSec) * intervalSec;
+    const numRounds = Math.ceil(maxAgeSec / intervalSec) + 1;
+    const rounds = [];
+    for (let i = 0; i < numRounds; i++) rounds.push(curRound - i * intervalSec);
     const wantIds = new Set(agentIds.map(String));
     let n = 0;
-    for (const roundId of [curRound, curRound - intervalSec]) {
+    for (const roundId of rounds) {
       const url = `/namespace/endpoint/data-access-scheduled-tests/v1/views/scheduled-tests/round/${encodeURIComponent(roundId)}/agents/paginated?page=0&searchTerm=&size=${pageSize}&sort=LOSS,DESC`;
       const body = JSON.stringify({
         testId, savedEventId: null, dataLayer: 'NET', roundId,
@@ -16649,7 +16722,7 @@
           const src = liveTestAgentOwnCoords(key);
           const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
           if (nearest) {
-            const cityLabel = nearest.city.replace(/\b\w/g, (c) => c.toUpperCase()) + ' (nearest edge, estimated)';
+            const cityLabel = nearest.city + ' (nearest edge, estimated)';   // already display-cased in LIVE_TEST_EDGE_HUBS
             liveTestDestByAgent.set(key, {
               lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel,
               info: { ip: LIVE_TEST_TARGET, name: 'dns.google', location: cityLabel },
@@ -16872,15 +16945,39 @@
     return null;
   }
 
-  /** Nearest curated Google metro to a given point (haversine over METRO_COORDS). */
+  /** Major real internet interconnection/peering hubs — where Google's anycast
+   *  edges actually concentrate. Used ONLY for the "no confirmed city" nearest-
+   *  edge ESTIMATE (liveTestNearestMetro below); confirmed-city matching still
+   *  uses the full METRO_COORDS table above. Restricting the estimate to real
+   *  hubs avoids landing on some arbitrary nearby small city that isn't
+   *  actually where an edge PoP would be. */
+  const LIVE_TEST_EDGE_HUBS = {
+    'Ashburn, VA': [39.0437, -77.4875],
+    'Chicago, IL': [41.8781, -87.6298],
+    'New York / New Jersey': [40.7128, -74.0060],
+    'Silicon Valley, CA': [37.3382, -121.8863],
+    'Los Angeles, CA': [34.0522, -118.2437],
+    'Dallas, TX': [32.7767, -96.7970],
+    'Frankfurt': [50.1109, 8.6821],
+    'London': [51.5074, -0.1278],
+    'Amsterdam': [52.3676, 4.9041],
+    'Tokyo': [35.6762, 139.6503],
+    'Singapore': [1.3521, 103.8198],
+    'Hong Kong': [22.3193, 114.1694],
+    'São Paulo': [-23.5505, -46.6333],
+    'Johannesburg': [-26.2041, 28.0473],
+  };
+
+  /** Nearest major interconnection hub to a given point (haversine over
+   *  LIVE_TEST_EDGE_HUBS) — used for the "no confirmed city" estimate. */
   function liveTestNearestMetro(lat, lng) {
     let bestCity = null, bestKm = Infinity;
-    for (const city in METRO_COORDS) {
-      const c = METRO_COORDS[city];
+    for (const city in LIVE_TEST_EDGE_HUBS) {
+      const c = LIVE_TEST_EDGE_HUBS[city];
       const km = tepHaversineKm(lat, lng, c[0], c[1]);
       if (km < bestKm) { bestKm = km; bestCity = city; }
     }
-    return bestCity ? { lat: METRO_COORDS[bestCity][0], lng: METRO_COORDS[bestCity][1], city: bestCity, km: bestKm } : null;
+    return bestCity ? { lat: LIVE_TEST_EDGE_HUBS[bestCity][0], lng: LIVE_TEST_EDGE_HUBS[bestCity][1], city: bestCity, km: bestKm } : null;
   }
 
   /**
@@ -17065,8 +17162,18 @@
       const src = liveTestAgentOwnCoords(key);
       const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
       if (nearest) {
+        // The displayed location must be the estimated hub, NOT the raw TE
+        // string we just failed to resolve to a city (that mismatch — real
+        // imprecise text shown next to hub coordinates — was the actual bug:
+        // the pin correctly moved to the nearest hub, but its label still
+        // showed e.g. "Slough, England, UK" instead of "London (nearest
+        // edge, estimated)"). destInfoFrom's ip/asn/name/etc. still come from
+        // the real node (that identity is legitimate); only .location is
+        // overridden here.
+        const cityLabel = nearest.city + ' (nearest edge, estimated)';
         const info = destInfoFrom(loc.node, loc.locationName, loc.geonameId);
-        liveTestDestByAgent.set(key, { lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: info.location, info, estimated: true });
+        info.location = cityLabel;
+        liveTestDestByAgent.set(key, { lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel, info, estimated: true });
         stored++;
         log(`LIVE TEST: agent ${key} → 8.8.8.8 est. nearest edge "${nearest.city}" (TE only gave "${tepEscapeHtmlText(loc.locationName || ('geoname ' + loc.geonameId))}")`, 'tep-log-info');
       } else if (!liveTestGeoSkip.has(key)) {
@@ -17116,7 +17223,8 @@
     log(`LIVE TEST: ${entIds.length} online enterprise agent(s)`, 'tep-log-info');
 
     const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds,
-      epOk: false, epMsg: '', epTestId: null, epRoundIntervalSec: null, epTestName: '', epAgentIds: [], epView: null };
+      epOk: false, epMsg: '', epTestId: null, epRoundIntervalSec: null, epFallback: false,
+      epTestName: '', epAgentIds: [], epView: null };
     if (entIds.length) {
       try {
         const r = await liveTestCreateEnterprise(entIds);
@@ -17133,6 +17241,11 @@
       const scheduledTestId = getEndpointTestId(epTest);
       results.epTestName = getEndpointTestName(epTest);
       results.epAgentIds = onlineEndpointAgentIdsForLiveTest();
+      // Round boundaries align to the test's OWN measurement interval, not a
+      // fixed 5-minute grid (confirmed via multiple live-captured round ids,
+      // all exact multiples of 60 at varying offsets from any 300s grid).
+      results.epRoundIntervalSec = getEndpointTestInterval(epTest) || 60;
+      const scenarioId = getEndpointViewScenario(epTest).scenarioId;
       log(`LIVE TEST: found endpoint test "${results.epTestName}" (id=${scheduledTestId}) targeting ${LIVE_TEST_TARGET} — running once…`, 'tep-log-info');
       try {
         const runData = await liveTestRunOnceEndpoint(scheduledTestId);
@@ -17143,17 +17256,20 @@
         // /endpoint/views/?testId=<instant id>&scenarioId=eyebrowNetworkTest —
         // NOT the scheduled test's id, and no metric/roundId needed).
         const instantTestId = runData && runData.testId != null ? runData.testId : scheduledTestId;
-        results.epOk = true; results.epTestId = instantTestId; results.epMsg = `${results.epAgentIds.length} online agent(s)`;
-        // Round boundaries align to the test's OWN measurement interval, not
-        // a fixed 5-minute grid (confirmed via multiple live-captured round
-        // ids, all exact multiples of 60 at varying offsets from any 300s
-        // grid) — the round advances every intervalSec, so it's recomputed
-        // fresh on every poll rather than pinned once here.
-        results.epRoundIntervalSec = getEndpointTestInterval(epTest) || 60;
-        const scenarioId = getEndpointViewScenario(epTest).scenarioId;
+        results.epOk = true; results.epTestId = instantTestId; results.epFallback = false;
+        results.epMsg = `${results.epAgentIds.length} online agent(s)`;
         results.epView = `/endpoint/views/?testId=${encodeURIComponent(instantTestId)}&scenarioId=${encodeURIComponent(scenarioId)}`;
         log(`LIVE TEST: endpoint test run-once triggered — instant testId=${instantTestId}, roundIntervalSec=${results.epRoundIntervalSec}`, 'tep-log-ok');
-      } catch (e) { results.epMsg = e.message; log(`LIVE TEST: endpoint run-once failed — ${e.message}`, 'tep-log-err'); }
+      } catch (e) {
+        // No permission (or any other failure) to trigger run-once — fall back
+        // to whatever this scheduled test's own regular measurements already
+        // show, as long as they're recent (checked within the last 5 minutes
+        // in liveTestPoll/liveTestFinish below), rather than showing nothing.
+        results.epOk = true; results.epTestId = scheduledTestId; results.epFallback = true;
+        results.epMsg = `no run-once permission (${e.message}) — showing recent data if available`;
+        results.epView = `/endpoint/views/?testId=${encodeURIComponent(scheduledTestId)}&scenarioId=${encodeURIComponent(scenarioId)}`;
+        log(`LIVE TEST: endpoint run-once failed — ${e.message} — falling back to recent existing data`, 'tep-log-info');
+      }
     } else {
       results.epMsg = `no existing endpoint test targets ${LIVE_TEST_TARGET}`;
       log(`LIVE TEST: ${results.epMsg} — skipping endpoint step`, 'tep-log-info');
@@ -17216,10 +17332,14 @@
     }
     if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
       // Destination geo is synthesized inside liveTestFetchEndpointLatency
-      // itself (no path-vis equivalent exists for endpoint tests).
+      // itself (no path-vis equivalent exists for endpoint tests). In fallback
+      // mode (no run-once permission), widen the lookback to 5 minutes so
+      // whatever this test's own regular measurements already show still gets
+      // picked up, instead of only checking the last 2 rounds.
+      const maxAge = results.epFallback ? 300 : undefined;
       let n = 0;
-      try { n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec); } catch (_) { n = 0; }
-      log(`LIVE TEST poll @${elapsed}s: endpoint agents with latency=${n}`, 'tep-log-info');
+      try { n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec, maxAge); } catch (_) { n = 0; }
+      log(`LIVE TEST poll @${elapsed}s: endpoint agents with latency=${n}${results.epFallback ? ' (fallback/recent)' : ''}`, 'tep-log-info');
       if (n) gotAny = true;
     }
     if (!results.entOk && !results.epOk) {
@@ -17240,9 +17360,10 @@
     }
     if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
       try {
-        const n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec);
+        const maxAge = results.epFallback ? 300 : undefined;
+        const n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec, maxAge);
         if (n) liveTestLatencyActive = true;
-        log(`LIVE TEST: final refresh — endpoint agents with latency=${n}`, 'tep-log-ok');
+        log(`LIVE TEST: final refresh — endpoint agents with latency=${n}${results.epFallback ? ' (fallback/recent)' : ''}`, 'tep-log-ok');
       } catch (_) { /* */ }
     }
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
