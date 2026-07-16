@@ -14192,16 +14192,55 @@
     }
     function layoutMarkers() {
       const w = wrap.clientWidth, h = wrap.clientHeight;
+      const markerPx = [];
       for (const m of markerEls) {
-        m.style.left = (epDashMapZoom.tx + m._fx * w * epDashMapZoom.s) + 'px';
-        m.style.top = (epDashMapZoom.ty + m._fy * h * epDashMapZoom.s) + 'px';
+        const x = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
+        const y = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
+        m.style.left = x + 'px';
+        m.style.top = y + 'px';
+        markerPx.push({ x, y });
       }
-      // LIVE TEST flow overlay: keep the per-agent curved paths + G markers glued.
+      // A "G" destination can genuinely coincide (or nearly so) with an agent
+      // marker — e.g. an estimated nearest-edge guess for an agent whose own
+      // location is itself only known approximately, or a confirmed PoP right
+      // where the agent is. Left alone, the G (higher z-index) fully covers the
+      // agent marker and the connecting flow line collapses to ~0 length and
+      // disappears. Nudge each G a fixed distance away from anything already
+      // placed (agent markers, then other G's) so both stay visible and every
+      // flow always renders with a real, visible length.
+      const MIN_SEP = 30; // px — clears the largest marker pair (24px cluster + 26px G) with a visible gap
+      const placedPx = markerPx.slice();
+      const destPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
+                                        // flow line landing on the same G node
+      liveDestEls.forEach((de, i) => {
+        let x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
+        let y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
+        for (const p of placedPx) {
+          const ddx = x - p.x, ddy = y - p.y;
+          const dist = Math.hypot(ddx, ddy);
+          if (dist < MIN_SEP) {
+            // Push out to exactly MIN_SEP. Coincident points (dist≈0) have no
+            // real direction to push along, so fall back to a stable per-dest
+            // angle (golden-angle spacing) instead of jittering every repaint.
+            const angle = dist > 0.5 ? Math.atan2(ddy, ddx) : (i * 2.399963);
+            x = p.x + Math.cos(angle) * MIN_SEP;
+            y = p.y + Math.sin(angle) * MIN_SEP;
+          }
+        }
+        de.el.style.left = x + 'px';
+        de.el.style.top = y + 'px';
+        destPxByKey.set(de.fx.toFixed(6) + ',' + de.fy.toFixed(6), { x, y });
+        placedPx.push({ x, y });
+      });
+      // LIVE TEST flow overlay: keep the per-agent curved paths glued to the
+      // (possibly nudged) G position so the line always ends exactly on its marker.
       for (const fl of liveFlowLines) {
         const x1 = epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s;
         const y1 = epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s;
-        const x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
-        const y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
+        const dKey = fl.destFx.toFixed(6) + ',' + fl.destFy.toFixed(6);
+        const dpx = destPxByKey.get(dKey);
+        const x2 = dpx ? dpx.x : (epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s);
+        const y2 = dpx ? dpx.y : (epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s);
         const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
         const dx = x2 - x1, dy = y2 - y1;
         const len = Math.hypot(dx, dy) || 1;
@@ -14211,10 +14250,6 @@
         const d = `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
         fl.pathEl.setAttribute('d', d);
         if (fl.glowEl) fl.glowEl.setAttribute('d', d);
-      }
-      for (const de of liveDestEls) {
-        de.el.style.left = (epDashMapZoom.tx + de.fx * w * epDashMapZoom.s) + 'px';
-        de.el.style.top = (epDashMapZoom.ty + de.fy * h * epDashMapZoom.s) + 'px';
       }
     }
     function apply() {
