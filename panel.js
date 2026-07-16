@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.09';
+  const TEP_VERSION = '3.10';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16134,41 +16134,87 @@
     return data;
   }
 
-  let liveTestEndpointLoggedShape = false;   // reset per run; one-shot probe
+  let liveTestEndpointLoggedShape = false;   // reset per run; logs the raw body once
 
-  /** Per-endpoint-agent latency after a run-once. CONFIRMED WRONG: the
-   *  enterprise "agent view timeline" API rejects endpoint (UUID) agentIds
-   *  outright (400 "Invalid input parameter type"), so that's not it — the
-   *  real endpoint-results API is still unknown. Rather than guess again,
-   *  this probes a short list of plausible GET siblings of the CONFIRMED
-   *  run-once trigger base (.../instant-tests/scheduled-tests/{id} → POST)
-   *  against the instant-run testId the trigger returned, and logs every
-   *  response once so a live run tells us which one (if any) actually
-   *  returns results. Nothing is ingested into the map from this yet. */
+  /** Per-endpoint-agent latency (+ loss) after a run-once. CONFIRMED via a live
+   *  capture of TE's own endpoint results page (/endpoint/views/?...):
+   *    POST /namespace/endpoint/data-access-scheduled-tests/v1/views/
+   *         scheduled-tests/round/{roundId}/agents/paginated?page=0&size=N&sort=LOSS,DESC
+   *    → [ { machineId, agentName, latencyMs, loss, jitterMs, targetIp, … } ]
+   *  machineId matches allEndpointAgents[].id exactly (confirmed: it's the
+   *  same UUID the enterprise timeline API rejected with a 400 earlier).
+   *  `loss` is a 0..1 fraction (matches cpuLoadPercent's scale in the same
+   *  row), not 0..100 points — converted before storing. A 0 latencyMs with
+   *  cpuLoadPercent/memoryUsagePercent also 0 looks like "hasn't reported
+   *  this round yet" rather than a real zero-latency reading, so it's
+   *  skipped rather than ingested.
+   *
+   *  Destination: TE's endpoint views expose NO per-agent (or even
+   *  aggregate) 8.8.8.8 PoP location — the companion geoname endpoint
+   *  returns the AGENTS' own location clusters, not the destination's. So
+   *  every endpoint flow uses the existing nearest-edge ESTIMATE (dashed/
+   *  amber, "(est.)" tagged) relative to that agent's own coordinates —
+   *  there is no confirmed destination geo to fall back from here. */
   async function liveTestFetchEndpointLatency(testId, agentIds) {
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
-    if (liveTestEndpointLoggedShape) return 0;   // one-shot probe already ran this session
-    liveTestEndpointLoggedShape = true;
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
-    const enc = encodeURIComponent;
-    const candidates = [
-      `/namespace/endpoint-api/test-configs-service/v1/instant-tests/${enc(testId)}`,
-      `/namespace/endpoint-api/test-results-service/v1/instant-tests/${enc(testId)}`,
-      `/namespace/endpoint-api/test-results-service/v1/instant-tests/${enc(testId)}/results`,
-      `/namespace/endpoint-api/test-configs-service/v1/instant-tests/${enc(testId)}/results`,
-    ];
-    log(`LIVE TEST: endpoint results API unconfirmed — probing ${candidates.length} candidate URL(s) for instant testId=${testId}…`, 'tep-log-info');
-    for (const url of candidates) {
-      try {
-        const resp = await ajax(url, { method: 'GET', headers });
-        const text = await resp.text().catch(() => '');
-        log(`  probe ${url} → ${resp.status} ${text.slice(0, 300)}`, 'tep-log-info');
-      } catch (e) {
-        log(`  probe ${url} → error ${e.message}`, 'tep-log-info');
+    const roundId = getEndpointViewRoundId();
+    const pageSize = Math.max(50, agentIds.length);
+    const url = `/namespace/endpoint/data-access-scheduled-tests/v1/views/scheduled-tests/round/${encodeURIComponent(roundId)}/agents/paginated?page=0&searchTerm=&size=${pageSize}&sort=LOSS,DESC`;
+    const body = JSON.stringify({
+      testId, savedEventId: null, dataLayer: 'NET', roundId,
+      searchFilters: [],
+      sort: { direction: 'DESC', property: 'LOSS' },
+      page: { page: 0, pageSize, isOnLastPage: false, searchTerm: '', isLoading: false },
+    });
+    let rows = null;
+    try {
+      const resp = await ajax(url, { method: 'POST', headers, body });
+      const text = await resp.text().catch(() => '');
+      if (!liveTestEndpointLoggedShape) {
+        liveTestEndpointLoggedShape = true;
+        log(`LIVE TEST endpoint agents/paginated body (roundId=${roundId}): ${resp.status} ${text.slice(0, 400)}`, 'tep-log-info');
+      }
+      if (!resp.ok) return 0;
+      rows = JSON.parse(text);
+    } catch (e) {
+      log(`LIVE TEST: endpoint agents/paginated error ${e.message}`, 'tep-log-info');
+      return 0;
+    }
+    if (!Array.isArray(rows)) return 0;
+    if (rows.length >= pageSize) {
+      log(`LIVE TEST: endpoint agents/paginated returned a full page (${rows.length}) — some agents may be missing (no pagination yet)`, 'tep-log-info');
+    }
+    const wantIds = new Set(agentIds.map(String));
+    let n = 0;
+    for (const row of rows) {
+      if (!row || row.machineId == null) continue;
+      const key = String(row.machineId);
+      if (!wantIds.has(key)) continue;   // only agents this run actually targeted
+      const ms = Number(row.latencyMs);
+      if (!Number.isFinite(ms) || ms <= 0) continue;   // 0 looks like "no data yet" here, not a real reading
+      const e = liveTestLatency.get(key) || { kind: 'endpoint' };
+      e.kind = 'endpoint';
+      e.ms = Math.round(ms);
+      const lossFrac = Number(row.loss);
+      if (Number.isFinite(lossFrac)) e.loss = lossFrac * 100;   // 0..1 fraction → percentage points
+      liveTestLatency.set(key, e);
+      n++;
+      if (!liveTestDestByAgent.has(key)) {
+        const src = liveTestAgentOwnCoords(key);
+        const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
+        if (nearest) {
+          const cityLabel = nearest.city.replace(/\b\w/g, (c) => c.toUpperCase()) + ' (nearest edge, estimated)';
+          liveTestDestByAgent.set(key, {
+            lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel,
+            info: { ip: LIVE_TEST_TARGET, name: 'dns.google', location: cityLabel },
+            estimated: true,
+          });
+        }
       }
     }
-    return 0;
+    return n;
   }
 
   /** Enterprise A2S instant test to 8.8.8.8 — TCP SYN, path trace in-session. */
@@ -16714,12 +16760,12 @@
       if (n || destN) gotAny = true;
     }
     if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
+      // Destination geo is synthesized inside liveTestFetchEndpointLatency
+      // itself (no path-vis equivalent exists for endpoint tests).
       let n = 0;
       try { n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds); } catch (_) { n = 0; }
       log(`LIVE TEST poll @${elapsed}s: endpoint agents with latency=${n}`, 'tep-log-info');
-      let destN = 0;
-      try { destN = await liveTestFetchPathVisDest(results.epTestId, results.epAgentIds, 'endpoint'); } catch (_) { destN = 0; }
-      if (n || destN) gotAny = true;
+      if (n) gotAny = true;
     }
     if (!results.entOk && !results.epOk) {
       log(`LIVE TEST poll @${elapsed}s: nothing running to poll`, 'tep-log-info');
@@ -16743,7 +16789,6 @@
         if (n) liveTestLatencyActive = true;
         log(`LIVE TEST: final refresh — endpoint agents with latency=${n}`, 'tep-log-ok');
       } catch (_) { /* */ }
-      try { await liveTestFetchPathVisDest(results.epTestId, results.epAgentIds, 'endpoint'); } catch (_) { /* */ }
     }
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
     const parts = [];
