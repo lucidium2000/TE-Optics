@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.05</span>
+        TE Optics<span class="install-version" aria-label="Build">3.06</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -430,7 +430,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.05';
+  const TEP_VERSION = '3.06';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2341,11 +2341,11 @@
     .tep-livetest-g {
       display: flex; align-items: center; justify-content: center;
       width: 26px; height: 26px; border-radius: 50%;
-      background: #fff; color: #4285F4; font-weight: 800; font-size: 15px;
-      font-family: Arial, Helvetica, sans-serif; line-height: 1;
+      background: #fff;
       box-shadow: 0 0 0 2px #4285F4, 0 2px 8px rgba(0,0,0,.55);
       animation: tep-livetest-dest-pulse 1.6s ease-in-out infinite;
     }
+    .tep-livetest-g svg { display: block; }
     @keyframes tep-livetest-dest-pulse {
       0%, 100% { box-shadow: 0 0 0 2px #4285F4, 0 0 0 0 rgba(66,133,244,.5); }
       50%      { box-shadow: 0 0 0 2px #4285F4, 0 0 0 8px rgba(66,133,244,0); }
@@ -2359,7 +2359,7 @@
     }
     .tep-livetest-flowsvg .tep-livetest-flow-glow--est { stroke: #f59e0b; opacity: .14; }
     .tep-livetest-dest--est .tep-livetest-g {
-      color: #f59e0b; box-shadow: 0 0 0 2px #f59e0b, 0 2px 8px rgba(0,0,0,.55);
+      box-shadow: 0 0 0 2px #f59e0b, 0 2px 8px rgba(0,0,0,.55);
     }
     .tep-gcard-est-tag {
       display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 3px;
@@ -2379,9 +2379,9 @@
     .tep-gcard-g {
       flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
       width: 24px; height: 24px; border-radius: 50%;
-      background: #fff; color: #4285F4; font-weight: 800; font-size: 14px;
-      font-family: Arial, Helvetica, sans-serif; box-shadow: 0 0 0 2px #4285F4;
+      background: #fff; box-shadow: 0 0 0 2px #4285F4;
     }
+    .tep-gcard-g svg { display: block; }
     .tep-gcard-heties { min-width: 0; }
     .tep-gcard-title { font-weight: 800; font-size: 12.5px; color: #e2e8f0; line-height: 1.2; }
     .tep-gcard-ip { font-size: 11px; color: #93c5fd; font-variant-numeric: tabular-nums; }
@@ -14239,6 +14239,22 @@
     return `<div class="tep-map-tip-head">${head}</div>${body}<div class="tep-map-tip-foot">${foot}</div>`;
   }
 
+  /** Inline four-colour Google "G" mark (self-contained — no external asset/CSP issue). */
+  function tepGoogleGIconSvg(px) {
+    const s = px || 16;
+    return `<svg viewBox="0 0 48 48" width="${s}" height="${s}" aria-hidden="true">`
+      + `<path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12`
+      + `c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24`
+      + `c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>`
+      + `<path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039`
+      + `l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>`
+      + `<path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36`
+      + `c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>`
+      + `<path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571`
+      + `c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>`
+      + `</svg>`;
+  }
+
   /** Rich hover card for a Google (8.8.8.8) destination PoP node on the LIVE TEST map.
    *  hasEstimated: true when at least one agent reaching this node has no
    *  TE-confirmed city — its flow/row is marked "(est.)" rather than presented
@@ -14249,7 +14265,7 @@
     const row = (label, val) => (val != null && val !== '')
       ? `<div class="tep-gcard-row"><span>${esc(label)}</span><b>${esc(String(val))}</b></div>` : '';
     const ip = info.ip || '8.8.8.8';
-    const head = `<div class="tep-gcard-head"><span class="tep-gcard-g">G</span>`
+    const head = `<div class="tep-gcard-head"><span class="tep-gcard-g">${tepGoogleGIconSvg(15)}</span>`
       + `<div class="tep-gcard-heties"><div class="tep-gcard-title">${esc(info.name || 'dns.google')}</div>`
       + `<div class="tep-gcard-ip">${esc(ip)}</div></div></div>`;
     const rows = [];
@@ -14491,7 +14507,7 @@
           const de = document.createElement('div');
           de.className = 'tep-agent-map-marker tep-livetest-dest' + (isNewDest ? ' tep-draw' : '');
           de.setAttribute('aria-label', '8.8.8.8 (Google DNS)' + (dest.location ? ' — ' + dest.location : ''));
-          de.innerHTML = '<span class="tep-livetest-g">G</span>';
+          de.innerHTML = '<span class="tep-livetest-g">' + tepGoogleGIconSvg(16) + '</span>';
           de._destInfo = dest.info || { ip: '8.8.8.8', name: 'dns.google', location: dest.location };
           de._destLoc = dest.location;
           overlay.appendChild(de);
