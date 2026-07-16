@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.06</span>
+        TE Optics<span class="install-version" aria-label="Build">3.07</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -430,7 +430,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.06';
+  const TEP_VERSION = '3.07';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3238,7 +3238,7 @@
   const liveTestBtn = document.createElement('div');
   liveTestBtn.id = 'tep-livetest-btn';
   liveTestBtn.textContent = 'LIVE TEST';
-  liveTestBtn.title = 'Experimental: instant network test to 8.8.8.8 from all online enterprise + endpoint agents';
+  liveTestBtn.title = 'Experimental: instant network test to 8.8.8.8 from all online enterprise agents, plus endpoint agents if an existing endpoint test already targets 8.8.8.8';
   liveTestBtn.style.cssText = 'position:fixed;bottom:74px;right:20px;z-index:2147483647;padding:0 14px;height:34px;' +
     'border-radius:17px;background:#dc2626;color:#fff;font-size:12px;font-weight:800;letter-spacing:.6px;' +
     'display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);' +
@@ -14359,7 +14359,9 @@
       const count = items.length;
       for (const it of items) { it.latencyMs = liveTestLatencyFor(it.agentId); it.lossPct = liveTestLossFor(it.agentId); }
       const anyOnline = items.some((it) => it.health === 'healthy');
-      const isSrc = liveTestRunning && items.some((it) => it.kind === 'enterprise');
+      // Enterprise (instant test) and endpoint (run-once, when an existing
+      // 8.8.8.8 test is found) can both be live sources — pulse either kind.
+      const isSrc = liveTestRunning && items.length > 0;
       m.className = 'tep-agent-map-marker tep-dash-map-marker'
         + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
         + (anyOnline ? ' tep-agent-map-marker--online' : '')
@@ -14452,7 +14454,9 @@
       const destAgents = new Map();   // coordKey → [{ name, ms, loss, estimated }] reaching this PoP
       const destHasEstimated = new Set();   // coordKeys reached by at least one estimated flow
       for (const it of list) {
-        if (it.kind !== 'enterprise' || it.agentId == null) continue;
+        // Enterprise (instant test) and endpoint (run-once) agents can both
+        // have latency data now — draw a flow for either kind.
+        if (it.agentId == null) continue;
         // Draw only once this agent's latency has been pulled.
         const lat = liveTestLatency.get(String(it.agentId));
         if (!lat || !Number.isFinite(lat.ms)) continue;
@@ -16326,9 +16330,15 @@
   }
 
   // ===========================================================================
-  // LIVE TEST (experimental) — instant network test to 8.8.8.8 from all online
-  // enterprise agents (A2S, TCP SYN + in-session) and all online endpoint agents
-  // (endpoint network, AUTO probe). Runs a 1-minute / 5-second progress poll.
+  // LIVE TEST (experimental) — instant network test to 8.8.8.8:
+  //  - Enterprise: a temp A2S instant test (TCP SYN + in-session) across all
+  //    online enterprise agents, created fresh each run and cleaned up after.
+  //  - Endpoint: NOT a temp test — endpoint tests are assigned to agents via
+  //    label matching, so there's no clean per-run agent list the way the A2S
+  //    instant takes. Instead we find an EXISTING, already-scheduled endpoint
+  //    test whose target is exactly 8.8.8.8 (any name, any probe type) and
+  //    'run once' it, reading results the same way as the enterprise side.
+  // Runs a 1-minute / 5-second progress poll for both.
   // ===========================================================================
   const LIVE_TEST_TARGET = '8.8.8.8';
   const LIVE_TEST_DURATION_MS = 60000;
@@ -16502,6 +16512,67 @@
       .filter(Boolean);
   }
 
+  /** First non-deleted endpoint scheduled test whose target is exactly 8.8.8.8,
+   *  regardless of name or probe type. We deliberately reuse an EXISTING test
+   *  (run-once) instead of creating a temp one — endpoint tests are assigned to
+   *  agents via label matching, so there's no clean per-run agent list to target
+   *  the way the enterprise instant test takes, and creating/deleting temp
+   *  endpoint tests every run is unnecessary churn when one already exists. */
+  function liveTestFindEndpoint8888Test() {
+    return allEndpointTests.find((t) => !isEndpointTestDeleted(t) && getEndpointTestTarget(t).trim() === LIVE_TEST_TARGET) || null;
+  }
+
+  /** 'Run once' an existing endpoint scheduled test (no request body). */
+  async function liveTestRunOnceEndpoint(testId) {
+    const url = `${LIVE_TEST_ENDPOINT_INSTANT_BASE}/${encodeURIComponent(testId)}`;
+    const r = await ajax(url, { method: 'POST' });
+    const text = await r.text().catch(() => '');
+    log(`LIVE TEST: endpoint run-once POST ${url} → ${r.status} ${text.slice(0, 200)}`, 'tep-log-info');
+    if (!r.ok) throw new Error(`${r.status}: ${text.slice(0, 200)}`);
+    let data = null; try { data = JSON.parse(text); } catch (_) { /* empty/non-JSON ok */ }
+    return data;
+  }
+
+  let liveTestEndpointLoggedShape = false;   // reset per run; logs the raw body once
+
+  /** Per-endpoint-agent latency after a run-once, keyed the same way as the
+   *  enterprise poll. UNCONFIRMED endpoint: reuses the enterprise "agent view
+   *  timeline" API (the only per-agent latency endpoint confirmed anywhere in
+   *  this file) on the chance it's agent-type-agnostic. Logs the raw body once
+   *  so a live run can confirm or correct the shape. */
+  async function liveTestFetchEndpointLatency(testId, agentIds) {
+    if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
+    const enc = encodeURIComponent;
+    let n = 0;
+    for (const agentId of agentIds) {
+      const latUrl = `/ajax/agent/view/timeline/net/latency?testId=${enc(testId)}&binSize=300&metricId=netLatency&agentId=${enc(agentId)}`;
+      try {
+        const resp = await ajax(latUrl, { method: 'GET', headers });
+        const text = await resp.text().catch(() => '');
+        if (!liveTestEndpointLoggedShape) {
+          liveTestEndpointLoggedShape = true;
+          log(`LIVE TEST endpoint latency body (agent ${agentId}): ${resp.status} ${text.slice(0, 300)}`, 'tep-log-info');
+        }
+        if (!resp.ok) continue;
+        let data = null; try { data = JSON.parse(text); } catch (_) { data = null; }
+        const ms = data ? liveTestParseTimelineLatency(data) : NaN;
+        if (Number.isFinite(ms)) {
+          const key = String(agentId);
+          const e = liveTestLatency.get(key) || { kind: 'endpoint' };
+          e.kind = 'endpoint';
+          e.ms = Math.round(ms);
+          liveTestLatency.set(key, e);
+          n++;
+        }
+      } catch (e) {
+        log(`LIVE TEST: endpoint latency agent ${agentId} error ${e.message}`, 'tep-log-info');
+      }
+    }
+    return n;
+  }
+
   /** Enterprise A2S instant test to 8.8.8.8 — TCP SYN, path trace in-session. */
   async function liveTestCreateEnterprise(vAgentIds) {
     const aid = teInitData && teInitData._currentAid != null ? teInitData._currentAid : '';
@@ -16561,7 +16632,7 @@
   }
 
   let liveTestLatencyLoggedShape = false;   // reset per run; logs the raw body once
-  let liveTestPathVisLoggedShape = false;   // reset per run; logs the raw path-vis graph shape once
+  const liveTestPathVisLoggedShapeKinds = new Set();   // reset per run; logs the raw path-vis graph shape once PER kind (enterprise/endpoint)
 
   /**
    * Fetch per-agent latency for the enterprise instant test, keyed by agent id
@@ -16693,13 +16764,23 @@
   };
 
   /** This agent's own coordinates (same lookup buildDashboardMapAgents uses):
-   *  real configured lat/lng first, else geocode its location text. */
+   *  real configured lat/lng first, else geocode its location text. Checks
+   *  enterprise agents first, then endpoint agents (own coords, else the
+   *  cached epAgentGeo geocode of its location text). */
   function liveTestAgentOwnCoords(agentId) {
-    const a = agents.find((x) => x.agentType === 'Enterprise' && String(x.agentId) === String(agentId));
-    if (!a) return null;
-    if (a.lat != null && a.lng != null) return { lat: a.lat, lng: a.lng };
-    const g = a.location ? epGeocode(a.location) : null;
-    return g ? { lat: g.lat, lng: g.lng } : null;
+    const ent = agents.find((x) => x.agentType === 'Enterprise' && String(x.agentId) === String(agentId));
+    if (ent) {
+      if (ent.lat != null && ent.lng != null) return { lat: ent.lat, lng: ent.lng };
+      const g = ent.location ? epGeocode(ent.location) : null;
+      if (g) return { lat: g.lat, lng: g.lng };
+    }
+    const ep = allEndpointAgents.find((x) => String(x.id) === String(agentId));
+    if (ep) {
+      if (ep.lat != null && ep.lng != null) return { lat: ep.lat, lng: ep.lng };
+      const g = epAgentGeo(ep);
+      if (g) return { lat: g.lat, lng: g.lng };
+    }
+    return null;
   }
 
   /** Nearest curated Google metro to a given point (haversine over METRO_COORDS). */
@@ -16755,7 +16836,8 @@
    *                 sourceIdToLocation:{ <vAgentId>:{ geonameId, locationName } } } ] }
    * startBin/binSize come from the net/latency timeline (chunks[last]).
    */
-  async function liveTestFetchPathVisDest(testId, agentIds) {
+  async function liveTestFetchPathVisDest(testId, agentIds, kindLabel) {
+    kindLabel = kindLabel || 'enterprise';
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
     // All agents already resolved → nothing to do.
     if (agentIds.every((id) => liveTestDestByAgent.has(String(id)))) return 0;
@@ -16797,9 +16879,11 @@
     // One-shot raw-shape dump so we can confirm what TE actually sends for the
     // 8.8.8.8 destination node(s) — every prior fix here has been a guess at the
     // field shape; this logs the real thing straight into the panel's log tab.
-    if (!liveTestPathVisLoggedShape) {
-      liveTestPathVisLoggedShape = true;
-      log(`LIVE TEST path-vis: ${nodes.length} node(s), ${destNodes.length} 8.8.8.8 dest node(s)`, 'tep-log-info');
+    // Logged once per kind (enterprise/endpoint), since the endpoint testId's
+    // graph shape is unconfirmed and may differ from the enterprise one.
+    if (!liveTestPathVisLoggedShapeKinds.has(kindLabel)) {
+      liveTestPathVisLoggedShapeKinds.add(kindLabel);
+      log(`LIVE TEST path-vis (${kindLabel}): ${nodes.length} node(s), ${destNodes.length} 8.8.8.8 dest node(s)`, 'tep-log-info');
       destNodes.slice(0, 5).forEach((dn, i) => {
         const s2l = dn.sourceIdToLocation && typeof dn.sourceIdToLocation === 'object' ? dn.sourceIdToLocation : {};
         const keys = Object.keys(s2l);
@@ -16809,7 +16893,7 @@
       });
       const routesAll = data && Array.isArray(data.routes) ? data.routes : [];
       const destRoutes = routesAll.filter((rt) => rt && rt.destinationIp === LIVE_TEST_TARGET);
-      log(`LIVE TEST path-vis: ${routesAll.length} route(s), ${destRoutes.length} landing on 8.8.8.8`, 'tep-log-info');
+      log(`LIVE TEST path-vis (${kindLabel}): ${routesAll.length} route(s), ${destRoutes.length} landing on 8.8.8.8`, 'tep-log-info');
       destRoutes.slice(0, 6).forEach((rt, i) => {
         const srcNode = nodes[rt.source];
         log(`  route[${i}]: source=${rt.source} (agentId=${srcNode && srcNode.agentId}) `
@@ -16918,7 +17002,8 @@
     liveTestCleanupTemp();
     liveTestClearLatency();
     liveTestLatencyLoggedShape = false;
-    liveTestPathVisLoggedShape = false;
+    liveTestPathVisLoggedShapeKinds.clear();
+    liveTestEndpointLoggedShape = false;
     liveTestRunning = true;
     // Hide offline agents IN PLACE (no DOM rebuild → zoom/pan preserved, no reframe).
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
@@ -16926,10 +17011,10 @@
     if (btn) { btn.style.background = '#b45309'; btn.textContent = 'RUNNING…'; }
     liveTestSetBadge('Starting live test to 8.8.8.8…');
 
-    // Ensure agent inventories are loaded (endpoint agents still shown on the map,
-    // but LIVE TEST only runs the enterprise instant now).
+    // Ensure agent + endpoint-test inventories are loaded.
     try { if (!agents || !agents.length) await loadAgents(); } catch (_) { /* */ }
     try { if (!allEndpointAgents.length) await loadEndpointAgents(); } catch (_) { /* */ }
+    try { if (!allEndpointTests.length) await loadEndpointTests(); } catch (_) { /* */ }
 
     let entIds = onlineEnterpriseVAgentIdsForLiveTest();
     if (!entIds.length) {
@@ -16941,7 +17026,8 @@
     }
     log(`LIVE TEST: ${entIds.length} online enterprise agent(s)`, 'tep-log-info');
 
-    const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds };
+    const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds,
+      epOk: false, epMsg: '', epTestId: null, epTestName: '', epAgentIds: [] };
     if (entIds.length) {
       try {
         const r = await liveTestCreateEnterprise(entIds);
@@ -16949,6 +17035,24 @@
       } catch (e) { results.entMsg = e.message; log(`LIVE TEST: enterprise failed — ${e.message}`, 'tep-log-err'); }
     } else {
       results.entMsg = 'no online enterprise agents';
+    }
+
+    // Endpoint: reuse an EXISTING scheduled test that already targets 8.8.8.8
+    // (any name, any probe type) rather than creating one — just run it once.
+    const epTest = liveTestFindEndpoint8888Test();
+    if (epTest) {
+      const epTestId = getEndpointTestId(epTest);
+      results.epTestName = getEndpointTestName(epTest);
+      results.epAgentIds = onlineEndpointAgentIdsForLiveTest();
+      log(`LIVE TEST: found endpoint test "${results.epTestName}" (id=${epTestId}) targeting ${LIVE_TEST_TARGET} — running once…`, 'tep-log-info');
+      try {
+        await liveTestRunOnceEndpoint(epTestId);
+        results.epOk = true; results.epTestId = epTestId; results.epMsg = `${results.epAgentIds.length} online agent(s)`;
+        log(`LIVE TEST: endpoint test run-once triggered`, 'tep-log-ok');
+      } catch (e) { results.epMsg = e.message; log(`LIVE TEST: endpoint run-once failed — ${e.message}`, 'tep-log-err'); }
+    } else {
+      results.epMsg = `no existing endpoint test targets ${LIVE_TEST_TARGET}`;
+      log(`LIVE TEST: ${results.epMsg} — skipping endpoint step`, 'tep-log-info');
     }
 
     // Destination (8.8.8.8) coordinates are resolved per-agent from the path-vis
@@ -16971,6 +17075,7 @@
         `<div style="font-weight:800;letter-spacing:.5px;color:#fca5a5;margin-bottom:4px;">LIVE TEST · ${liveTestClock(elapsed)} / 1:00</div>`
         + `<div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden;margin-bottom:6px;"><div style="height:100%;width:${pct}%;background:#dc2626;transition:width .3s;"></div></div>`
         + `<div>Enterprise: ${results.entOk ? '✓ running' : '—'} <span style="color:#64748b;">(${tepEscapeHtmlText(results.entMsg)})</span></div>`
+        + `<div>Endpoint: ${results.epOk ? '✓ running' : '—'} <span style="color:#64748b;">(${tepEscapeHtmlText(results.epMsg)})</span></div>`
         + `<div>Agents with latency: <span style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`
         + liveTestLinksHtml()
         + (remaining <= 0 ? '<div style="margin-top:5px;color:#4ade80;">Done — final refresh</div>' : '')
@@ -16982,23 +17087,38 @@
     liveTestTimers.end = setTimeout(() => { void liveTestFinish(results); }, LIVE_TEST_DURATION_MS);
     // First poll shortly after start so labels can appear before the 5s mark.
     setTimeout(() => { if (liveTestRunning) void liveTestPoll(results, startedAt); }, 1500);
-    toast(`LIVE TEST started — ${results.entOk ? 'enterprise instant running' : 'nothing to run'}`, results.entOk ? 'ok' : 'err');
+    const startedParts = [];
+    if (results.entOk) startedParts.push('enterprise instant running');
+    if (results.epOk) startedParts.push('endpoint run-once triggered');
+    toast(`LIVE TEST started — ${startedParts.length ? startedParts.join(', ') : 'nothing to run'}`, (results.entOk || results.epOk) ? 'ok' : 'err');
   }
 
-  /** Per-poll: pull per-agent latency for the enterprise instant test → map labels. */
+  /** Per-poll: pull per-agent latency (+ 8.8.8.8 destination geo) for whichever
+   *  of the enterprise instant / endpoint run-once are active → map labels. */
   async function liveTestPoll(results, startedAt) {
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    if (!results.entOk || results.entTestId == null) {
-      log(`LIVE TEST poll @${elapsed}s: no enterprise instant to poll`, 'tep-log-info');
-      return;
+    let gotAny = false;
+    if (results.entOk && results.entTestId != null) {
+      let n = 0;
+      try { n = await liveTestFetchEnterpriseLatency(results.entTestId, results.entAgentIds); } catch (_) { n = 0; }
+      log(`LIVE TEST poll @${elapsed}s: enterprise agents with latency=${n}`, 'tep-log-info');
+      // Resolve each agent's real 8.8.8.8 final-hop location from the path-vis graph.
+      let destN = 0;
+      try { destN = await liveTestFetchPathVisDest(results.entTestId, results.entAgentIds); } catch (_) { destN = 0; }
+      if (n || destN) gotAny = true;
     }
-    let n = 0;
-    try { n = await liveTestFetchEnterpriseLatency(results.entTestId, results.entAgentIds); } catch (_) { n = 0; }
-    log(`LIVE TEST poll @${elapsed}s: enterprise agents with latency=${n}`, 'tep-log-info');
-    // Resolve each agent's real 8.8.8.8 final-hop location from the path-vis graph.
-    let destN = 0;
-    try { destN = await liveTestFetchPathVisDest(results.entTestId, results.entAgentIds); } catch (_) { destN = 0; }
-    if (n || destN) { liveTestLatencyActive = true; try { refreshLiveTestOverlay(); } catch (_) { /* */ } }
+    if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
+      let n = 0;
+      try { n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds); } catch (_) { n = 0; }
+      log(`LIVE TEST poll @${elapsed}s: endpoint agents with latency=${n}`, 'tep-log-info');
+      let destN = 0;
+      try { destN = await liveTestFetchPathVisDest(results.epTestId, results.epAgentIds, 'endpoint'); } catch (_) { destN = 0; }
+      if (n || destN) gotAny = true;
+    }
+    if (!results.entOk && !results.epOk) {
+      log(`LIVE TEST poll @${elapsed}s: nothing running to poll`, 'tep-log-info');
+    }
+    if (gotAny) { liveTestLatencyActive = true; try { refreshLiveTestOverlay(); } catch (_) { /* */ } }
   }
 
   async function liveTestFinish(results) {
@@ -17011,10 +17131,19 @@
         log(`LIVE TEST: final refresh — enterprise agents with latency=${n}`, 'tep-log-ok');
       } catch (_) { /* */ }
     }
+    if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
+      try {
+        const n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds);
+        if (n) liveTestLatencyActive = true;
+        log(`LIVE TEST: final refresh — endpoint agents with latency=${n}`, 'tep-log-ok');
+      } catch (_) { /* */ }
+      try { await liveTestFetchPathVisDest(results.epTestId, results.epAgentIds, 'endpoint'); } catch (_) { /* */ }
+    }
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
     const parts = [];
     parts.push('<div style="font-weight:800;letter-spacing:.5px;color:#4ade80;margin-bottom:4px;">LIVE TEST complete (1:00)</div>');
     parts.push(`<div>Enterprise: ${results.entOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.entMsg)}</span></div>`);
+    parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
     parts.push(`<div>Agents with latency: <span style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`);
     if (results.entView) {
       parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:#93c5fd;">Open results →</a>`);
