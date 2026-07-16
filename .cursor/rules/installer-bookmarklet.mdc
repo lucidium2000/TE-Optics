@@ -1,0 +1,76 @@
+---
+description: Keep the embedded panel.js inside index.html in sync with the top-level panel.js
+globs: index.html,panel.js
+alwaysApply: true
+---
+
+# Installer page ↔ panel.js sync (MANUAL)
+
+The repo intentionally ships TWO copies of the panel source:
+
+- `panel.js` at repo root — the **source of truth** for development.
+- An embedded copy inside `index.html`, wrapped in
+  `<script type="text/plain" id="panel-source">…</script>`. The installer page
+  reads `panel-source.textContent` and assembles the bookmarklet from it.
+
+The embedded copy exists so the installer page works when opened directly via
+`file://` (no HTTP server needed). There is **no build step and no runtime
+fetch** — the two copies are kept in sync **by hand**.
+
+## Hard rules
+
+1. **Any change to `panel.js` MUST be mirrored into the embedded block in
+   `index.html`** before committing. If you forget, users who install from
+   GitHub Pages get older code than the repo's `panel.js`.
+2. **Bump `TEP_VERSION` in `panel.js` AND the displayed version in
+   `index.html`** at the same time. Two places to edit:
+   - `panel.js`: `const TEP_VERSION = 'X.YZ';` (near the top of the IIFE).
+   - `index.html`: `<span class="install-version" aria-label="Build">X.YZ</span>`
+     inside the `<h1 class="install-title">`.
+3. **Do not replace the embedded copy with a runtime `fetch('panel.js')`.**
+   That was tried once; it broke local `file://` use. Keep the embed.
+4. **Do not introduce a build script that overwrites `index.html`** without
+   getting explicit sign-off — the page has a lot of hand-tuned markup/CSS
+   outside the script tag and a clumsy script can clobber it.
+
+## Sync procedure (do this for every panel.js edit)
+
+The embedded block sits between two unique anchor lines in `index.html`:
+
+- Start: `  <script type="text/plain" id="panel-source">`
+- End:   `</script>` (the one immediately followed by a blank line and the
+  bookmarklet builder `<script>` block — currently around line 7777).
+
+Recommended safe replacement (Python, doesn't touch any other markup):
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+html = Path("index.html").read_text()
+panel = Path("panel.js").read_text()
+START = '<script type="text/plain" id="panel-source">'
+END = '</script>\n\n  <script>\n    // Read embedded panel.js source'
+i = html.index(START) + len(START)
+j = html.index(END, i)
+new = html[:i] + "\n" + panel.rstrip() + "\n" + html[j:]
+Path("index.html").write_text(new)
+print("synced", len(panel), "bytes of panel.js into index.html")
+PY
+```
+
+After running it, eyeball the diff (`git diff index.html`) — only the embedded
+block should change. Then `diff <(awk '/^  <script type="text\/plain" id="panel-source">/{f=1;next}/^<\/script>/{if(f)exit}f' index.html) panel.js` should print nothing.
+
+## Why two copies?
+
+The bookmarklet must inline the full panel source into a `javascript:` URL
+(TE's CSP blocks remote `<script src>`). The installer page builds that URL
+from `panel-source.textContent`. By embedding the source inside the HTML, the
+installer works identically whether served from GitHub Pages, a corporate
+intranet, or a double-clicked local file — no fetch, no CORS, no HTTP server.
+
+## Browser compatibility
+
+The assembled bookmarklet URL is ~500 KB. Chrome and Edge accept it; Firefox
+truncates long `javascript:` URLs and is unsupported. Don't claim Firefox
+support in `index.html` or the README unless the delivery model changes.

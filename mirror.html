@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<!-- Author: Christopher Hunt -->
+<!--
+  Mirror of the TE Optics install page.
+  Unlike index.html, this page does NOT embed panel.js. Instead it pulls the
+  bookmarklet source + version live from https://lucidium2000.github.io/TE-Optics/
+  so you can always drag an up-to-date button from here.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="TE Optics — ThousandEyes bookmarklet for bulk tests and dashboards. Source on GitHub.">
+  <title>TE Optics</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 3rem 1rem;
+    }
+    .container { max-width: 980px; width: 100%; }
+    h1.install-title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+    .install-title-mark {
+      color: #f97316;
+      font-size: 1.2em;
+      line-height: 1;
+      flex-shrink: 0;
+      font-weight: 400;
+      position: relative;
+      top: -0.12em;
+    }
+    .install-version {
+      font-size: 0.55em;
+      font-weight: 600;
+      color: #64748b;
+      margin-left: 0.45rem;
+      vertical-align: super;
+      position: relative;
+      top: -0.2em;
+      letter-spacing: 0.03em;
+    }
+    .subtitle {
+      color: #94a3b8;
+      font-size: 1.05rem;
+      margin-bottom: 0.65rem;
+      line-height: 1.6;
+    }
+    .subtitle-sep {
+      border: 0;
+      height: 1px;
+      margin: 0.55rem 0 0.55rem;
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0), rgba(148, 163, 184, 0.18), rgba(148, 163, 184, 0));
+    }
+    .subtitle-disclaimer {
+      color: #64748b;
+      font-size: 0.9rem;
+      margin: 0 0 1.6rem;
+      line-height: 1.5;
+    }
+    .req-line {
+      font-size: 0.92rem;
+      color: #94a3b8;
+    }
+    .req-line strong { color: #cbd5e1; }
+    .req-app {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 6px;
+      white-space: nowrap;
+    }
+    .req-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-block;
+      vertical-align: text-bottom;
+    }
+    .steps-2up {
+      display: flex;
+      gap: 1.25rem;
+      align-items: stretch;
+      margin-bottom: 1.25rem;
+    }
+    .steps-2up > .step {
+      flex: 1 1 0;
+      margin-bottom: 0;
+    }
+    @media (max-width: 860px) {
+      .steps-2up { display: block; margin-bottom: 0; }
+      .steps-2up > .step { margin-bottom: 1.25rem; }
+    }
+
+    .step.step--bookmark { overflow: visible; }
+    .bookmarklet-wrap { position: relative; display: inline-block; }
+    .bookmarklet-wrap .bookmarklet-link { position: relative; z-index: 1; }
+    .install-drag-img {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      height: 420px;
+      width: auto;
+      max-width: min(1710px, 92vw);
+      transform: translate(calc(-100% - 5%), calc(-50% - 9%));
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.7;
+      background: transparent;
+      filter: drop-shadow(0 18px 28px rgba(0,0,0,0.45));
+      user-select: none;
+    }
+    @media (max-width: 860px) {
+      .install-drag-img { display: none; }
+    }
+    .step {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .step-number {
+      display: inline-block;
+      background: #3b82f6;
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.85rem;
+      width: 28px;
+      height: 28px;
+      line-height: 28px;
+      text-align: center;
+      border-radius: 50%;
+      margin-right: 0.75rem;
+    }
+    .step h2 {
+      display: inline;
+      font-size: 1.1rem;
+      color: #f1f5f9;
+    }
+    .step p, .step ul {
+      margin-top: 0.75rem;
+      color: #94a3b8;
+      line-height: 1.6;
+    }
+    .step ul { padding-left: 1.25rem; }
+    .step li { margin-bottom: 0.3rem; }
+    .bookmarklet-link {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.7rem 1.5rem;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border-radius: 8px;
+      cursor: grab;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .bookmarklet-link:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
+    }
+    .bookmarklet-link.is-loading {
+      opacity: 0.55;
+      cursor: progress;
+      pointer-events: none;
+    }
+    .copy-btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.65rem 1.3rem;
+      background: #334155;
+      color: #e2e8f0;
+      border: 1px solid #475569;
+      font-weight: 600;
+      font-size: 0.9rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .copy-btn:hover { background: #475569; }
+    .hint {
+      display: block;
+      margin-top: 0.6rem;
+      font-size: 0.82rem;
+      color: #64748b;
+    }
+    .hint.hint--error { color: #f87171; }
+    code {
+      background: #0f172a;
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: #93c5fd;
+    }
+    .note {
+      background: #172554;
+      border: 1px solid #1e40af;
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-top: 2rem;
+      color: #93c5fd;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    .legal-footer {
+      margin-top: 1.5rem;
+      padding: 1rem 1.25rem;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #0f172a;
+      color: #94a3b8;
+      font-size: 0.82rem;
+      line-height: 1.65;
+    }
+    .legal-footer h3 {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin: 0.75rem 0 0.35rem;
+    }
+    .legal-footer h3:first-child { margin-top: 0; }
+    .legal-footer a { color: #60a5fa; text-decoration: underline; text-underline-offset: 2px; }
+    .legal-footer a:hover { color: #93c5fd; }
+    .collapsible-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      cursor: pointer;
+      list-style: none;
+      outline: none;
+    }
+    .collapsible-summary::-webkit-details-marker { display: none; }
+    .collapsible-summary h2 { display: inline; }
+    .collapsible-chevron {
+      flex: none;
+      color: #94a3b8;
+      font-size: 0.95rem;
+      transition: transform 0.2s ease;
+    }
+    details.collapsible[open] .collapsible-chevron { transform: rotate(180deg); }
+    .step--changelog {
+      display: block;
+      text-decoration: none;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .step--changelog:hover { border-color: #475569; background: #243247; }
+    .step--changelog p { margin-top: 0.75rem; }
+
+    /* Slot for an upstream-injected nav menu (e.g. via nginx sub_filter). */
+    #tese-nav-slot {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div id="tese-nav-slot"></div>
+  <div class="container">
+    <h1 class="install-title">
+      <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
+        TE Optics<span class="install-version" id="version" aria-label="Build"></span>
+    </h1>
+    <p class="subtitle">
+      An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
+      manage dashboards, and more. Designed to work seamlessly via your existing permissions,
+      no API token needed.
+    </p>
+    <hr class="subtitle-sep" aria-hidden="true">
+    <p class="subtitle-disclaimer">
+      Not official. This is independent community software. It is not sponsored, endorsed, or affiliated with Cisco or ThousandEyes.
+    </p>
+
+    <div class="steps-2up">
+      <div class="step step--bookmark">
+        <span class="step-number">1</span>
+        <h2>Drag this button to your bookmark bar</h2>
+        <p class="req-line" style="margin-top:0.5rem;">
+        <span class="req-app" title="Chrome">
+          <svg class="req-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <circle cx="24" cy="24" r="22" fill="#e53935"/>
+            <path d="M24 24 L43 24 A22 22 0 0 1 12 43 Z" fill="#43a047"/>
+            <path d="M24 24 L12 43 A22 22 0 0 1 5 14 Z" fill="#fbc02d"/>
+            <circle cx="24" cy="24" r="10" fill="#1e88e5"/>
+            <circle cx="24" cy="24" r="5" fill="#bbdefb"/>
+          </svg>
+          Chrome
+        </span>
+        <span class="req-app" title="Edge">
+          <svg class="req-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <defs>
+              <radialGradient id="edgeg" cx="45%" cy="40%" r="75%">
+                <stop offset="0" stop-color="#93c5fd"/>
+                <stop offset="0.55" stop-color="#3b82f6"/>
+                <stop offset="1" stop-color="#1d4ed8"/>
+              </radialGradient>
+              <radialGradient id="edgeg2" cx="55%" cy="60%" r="70%">
+                <stop offset="0" stop-color="#34d399"/>
+                <stop offset="0.55" stop-color="#22c55e"/>
+                <stop offset="1" stop-color="#0ea5e9"/>
+              </radialGradient>
+            </defs>
+            <!-- simplified "Edge-like" swirl -->
+            <circle cx="24" cy="24" r="22" fill="url(#edgeg)"/>
+            <path d="M9 28c1.2 8.2 8.3 14.5 16.9 14.5 7.6 0 14.2-4.9 16.5-11.8-2.8 2.7-6.7 4.3-10.9 4.3-8.3 0-15-6.7-15-15 0-3.2 1-6.1 2.7-8.5C13.2 17.6 9.4 22.4 9 28z" fill="url(#edgeg2)"/>
+            <path d="M36.8 20.4c-2.2-4.5-6.8-7.6-12.1-7.6-4.8 0-9.1 2.6-11.4 6.5 2.2-1.4 4.8-2.2 7.7-2.2 7.5 0 13.6 5.9 13.6 13.2 0 2.2-.6 4.2-1.6 6 5.3-2.1 8.8-7.2 8.8-12.9 0-1.1-.1-2.1-.4-3z" fill="#0ea5e9" opacity="0.95"/>
+            <path d="M32.5 27.2H18.7c.5 3.9 3.9 6.9 8 6.9 3.1 0 5.9-1.7 7.3-4.3-.9.4-1.9.6-3 .6-2.7 0-5-1.2-6.3-3.2h7.8z" fill="#ffffff" opacity="0.92"/>
+          </svg>
+          Edge
+        </span>
+        </p>
+        <div class="bookmarklet-wrap">
+          <img
+            class="install-drag-img"
+            src="https://lucidium2000.github.io/TE-Optics/assets/install-arrow.png"
+            width="500"
+            height="792"
+            alt=""
+            decoding="async"
+            loading="lazy" />
+          <a class="bookmarklet-link is-loading" id="bookmarklet-inline" href="javascript:void(0);">TE Optics</a>
+        </div>
+        <span class="hint" id="bm-hint">
+          Loading the latest build&hellip; the button will be ready in a moment.
+        </span>
+      </div>
+
+      <div class="step step--login">
+        <span class="step-number">2</span>
+        <h2>Log into ThousandEyes</h2>
+        <p>
+          That&rsquo;s it! just use ThousandEyes as normal, hit the <strong style="color:#e2e8f0;">TE Optics</strong> bookmark
+          to launch the side bar.
+        </p>
+        <p style="margin-top:2.4rem;">
+          <strong style="color:#e2e8f0;">Updating?</strong>
+          Just delete your old one and drag a new one!
+        </p>
+      </div>
+    </div>
+
+    <details class="step step--howto collapsible">
+      <summary class="collapsible-summary">
+        <h2>How to Use</h2>
+        <span class="collapsible-chevron" aria-hidden="true">&#x25BE;</span>
+      </summary>
+      <p>
+        Think of TE Optics as a <strong>power sidebar</strong> that “snaps” to what you’re doing in <code>app.thousandeyes.com</code>.
+        Open it anywhere, and it surfaces the right tools for that page.
+      </p>
+      <p style="margin-top:0.85rem;">
+        <strong style="color:#e2e8f0;">On Dashboards</strong> (the <code>/dashboard</code> experience) it turns into a dashboard toolkit:
+        <strong>backup</strong>, <strong>restore</strong>, and <strong>cleanup</strong>—grab JSON straight from the UI, save it, re‑apply it,
+        and optionally strip widget <code>filters</code> / clear virtual-agent fields for cleaner restores.
+      </p>
+      <p style="margin-top:0.85rem;">
+        <strong style="color:#e2e8f0;">Everywhere else</strong> it becomes a test command center:
+        fast <strong>Manage</strong> (filter, inspect, edit) plus <strong>Create</strong> for bulk creation—powered by your existing permissions
+        (no API token needed). Create supports:
+      </p>
+      <ul>
+        <li><strong style="color:#e2e8f0;">HTTP Server</strong> &mdash; web endpoint monitoring</li>
+        <li><strong style="color:#e2e8f0;">Agent-to-Server</strong> &mdash; network connectivity checks</li>
+        <li><strong style="color:#e2e8f0;">Page Load</strong> &mdash; real page render timing</li>
+      </ul>
+      <p style="margin:0.6rem 0 0;">
+        Tip: paste multiple targets (one per line) to spin up a whole batch in one go.
+      </p>
+    </details>
+
+    <a class="step step--changelog" href="https://github.com/lucidium2000/TE-Optics/commits/main/" target="_blank" rel="noopener noreferrer">
+      <span class="collapsible-summary">
+        <h2>Changelog</h2>
+        <span class="collapsible-chevron" aria-hidden="true">&#x2197;</span>
+      </span>
+      <p>See the full commit history and latest releases on GitHub.</p>
+    </a>
+
+    <div class="note">
+      <strong>How it works:</strong> The script runs directly inside the
+      <code>app.thousandeyes.com</code> page and automatically detects your
+      active session. It tries cookie auth first, then searches browser storage
+      for tokens, and finally intercepts live TE app requests to capture the
+      auth header &mdash; no separate server or manual token entry required.
+    </div>
+
+    <div class="legal-footer">
+      <!-- Author: Christopher Hunt -->
+      <h3>Source</h3>
+      <p style="margin:0;">
+        Independent community software for ThousandEyes power users.
+        Source code and project home:
+        <a href="https://github.com/lucidium2000/TE-Optics" target="_blank" rel="noopener noreferrer">github.com/lucidium2000/TE-Optics</a>.
+      </p>
+      <h3>Third-party marks (fair use)</h3>
+      <p style="margin:0;">
+        <strong style="color:#e2e8f0;">ThousandEyes</strong> and related names and logos are trademarks of
+        <strong style="color:#e2e8f0;">Cisco Systems, Inc.</strong>
+        TE Optics is <strong>not</strong> sponsored, endorsed, or affiliated with Cisco or ThousandEyes.
+        Product names appear here only to describe what the tool interoperates with (nominative fair use).
+      </p>
+      <h3>No warranty &amp; no support</h3>
+      <p style="margin:0;">
+        This software is provided <strong style="color:#e2e8f0;">&ldquo;as is&rdquo;</strong>, without warranty of any kind, express or implied.
+        You are responsible for complying with your organization&rsquo;s policies and with Cisco/ThousandEyes terms of service.
+        The author is not liable for any loss or damage arising from use of this tool.
+        This is not a supported product; you may use GitHub issues for feedback without any commitment to response time.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------------------
+    // This mirror does not embed panel.js. It fetches the live install page and
+    // pulls two things from it:
+    //   1) the panel source (from #panel-source) -> builds the draggable button
+    //   2) the version (from .install-version)   -> shows the live build number
+    // ---------------------------------------------------------------------------
+    (function () {
+      var SOURCE = "https://lucidium2000.github.io/TE-Optics/";
+      var linkEl = document.getElementById("bookmarklet-inline");
+      var hintEl = document.getElementById("bm-hint");
+      var versionEl = document.getElementById("version");
+
+      function fail(msg) {
+        linkEl.classList.remove("is-loading");
+        hintEl.classList.add("hint--error");
+        hintEl.innerHTML = msg + " Meanwhile you can " +
+          '<a href="' + SOURCE + '" style="color:#93c5fd;">open the install page directly</a>.';
+      }
+
+      fetch(SOURCE, { mode: "cors" })
+        .then(function (res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.text();
+        })
+        .then(function (html) {
+          var doc = new DOMParser().parseFromString(html, "text/html");
+
+          // Version
+          var vEl = doc.querySelector(".install-version");
+          var v = vEl && vEl.textContent ? vEl.textContent.trim() : "";
+          if (v) versionEl.textContent = v;
+
+          // Button: rebuild the bookmarklet from the live embedded panel source,
+          // using the same assembly logic as the install page.
+          var srcEl = doc.getElementById("panel-source");
+          var panelSource = srcEl ? srcEl.textContent : "";
+          if (!panelSource) throw new Error("panel source not found");
+
+          var bmInline = 'javascript:void(' + encodeURIComponent(
+            '(function(){var s=document.createElement("script");s.textContent=' +
+            JSON.stringify(panelSource) + ';document.body.appendChild(s)})()'
+          ) + ')';
+          linkEl.href = bmInline;
+          linkEl.classList.remove("is-loading");
+          hintEl.classList.remove("hint--error");
+          hintEl.innerHTML =
+            'Drag &amp; drop onto your bookmarks toolbar. If hidden, ' +
+            'press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.';
+        })
+        .catch(function () {
+          fail("Couldn&rsquo;t load the latest button (offline or blocked when opened as a local file).");
+        });
+    })();
+  </script>
+</body>
+</html>
