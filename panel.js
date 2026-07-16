@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.07';
+  const TEP_VERSION = '3.08';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16122,44 +16122,41 @@
     return data;
   }
 
-  let liveTestEndpointLoggedShape = false;   // reset per run; logs the raw body once
+  let liveTestEndpointLoggedShape = false;   // reset per run; one-shot probe
 
-  /** Per-endpoint-agent latency after a run-once, keyed the same way as the
-   *  enterprise poll. UNCONFIRMED endpoint: reuses the enterprise "agent view
-   *  timeline" API (the only per-agent latency endpoint confirmed anywhere in
-   *  this file) on the chance it's agent-type-agnostic. Logs the raw body once
-   *  so a live run can confirm or correct the shape. */
+  /** Per-endpoint-agent latency after a run-once. CONFIRMED WRONG: the
+   *  enterprise "agent view timeline" API rejects endpoint (UUID) agentIds
+   *  outright (400 "Invalid input parameter type"), so that's not it — the
+   *  real endpoint-results API is still unknown. Rather than guess again,
+   *  this probes a short list of plausible GET siblings of the CONFIRMED
+   *  run-once trigger base (.../instant-tests/scheduled-tests/{id} → POST)
+   *  against the instant-run testId the trigger returned, and logs every
+   *  response once so a live run tells us which one (if any) actually
+   *  returns results. Nothing is ingested into the map from this yet. */
   async function liveTestFetchEndpointLatency(testId, agentIds) {
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
+    if (liveTestEndpointLoggedShape) return 0;   // one-shot probe already ran this session
+    liveTestEndpointLoggedShape = true;
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const enc = encodeURIComponent;
-    let n = 0;
-    for (const agentId of agentIds) {
-      const latUrl = `/ajax/agent/view/timeline/net/latency?testId=${enc(testId)}&binSize=300&metricId=netLatency&agentId=${enc(agentId)}`;
+    const candidates = [
+      `/namespace/endpoint-api/test-configs-service/v1/instant-tests/${enc(testId)}`,
+      `/namespace/endpoint-api/test-results-service/v1/instant-tests/${enc(testId)}`,
+      `/namespace/endpoint-api/test-results-service/v1/instant-tests/${enc(testId)}/results`,
+      `/namespace/endpoint-api/test-configs-service/v1/instant-tests/${enc(testId)}/results`,
+    ];
+    log(`LIVE TEST: endpoint results API unconfirmed — probing ${candidates.length} candidate URL(s) for instant testId=${testId}…`, 'tep-log-info');
+    for (const url of candidates) {
       try {
-        const resp = await ajax(latUrl, { method: 'GET', headers });
+        const resp = await ajax(url, { method: 'GET', headers });
         const text = await resp.text().catch(() => '');
-        if (!liveTestEndpointLoggedShape) {
-          liveTestEndpointLoggedShape = true;
-          log(`LIVE TEST endpoint latency body (agent ${agentId}): ${resp.status} ${text.slice(0, 300)}`, 'tep-log-info');
-        }
-        if (!resp.ok) continue;
-        let data = null; try { data = JSON.parse(text); } catch (_) { data = null; }
-        const ms = data ? liveTestParseTimelineLatency(data) : NaN;
-        if (Number.isFinite(ms)) {
-          const key = String(agentId);
-          const e = liveTestLatency.get(key) || { kind: 'endpoint' };
-          e.kind = 'endpoint';
-          e.ms = Math.round(ms);
-          liveTestLatency.set(key, e);
-          n++;
-        }
+        log(`  probe ${url} → ${resp.status} ${text.slice(0, 300)}`, 'tep-log-info');
       } catch (e) {
-        log(`LIVE TEST: endpoint latency agent ${agentId} error ${e.message}`, 'tep-log-info');
+        log(`  probe ${url} → error ${e.message}`, 'tep-log-info');
       }
     }
-    return n;
+    return 0;
   }
 
   /** Enterprise A2S instant test to 8.8.8.8 — TCP SYN, path trace in-session. */
@@ -16616,7 +16613,7 @@
     log(`LIVE TEST: ${entIds.length} online enterprise agent(s)`, 'tep-log-info');
 
     const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds,
-      epOk: false, epMsg: '', epTestId: null, epTestName: '', epAgentIds: [] };
+      epOk: false, epMsg: '', epTestId: null, epTestName: '', epAgentIds: [], epView: null };
     if (entIds.length) {
       try {
         const r = await liveTestCreateEnterprise(entIds);
@@ -16630,14 +16627,19 @@
     // (any name, any probe type) rather than creating one — just run it once.
     const epTest = liveTestFindEndpoint8888Test();
     if (epTest) {
-      const epTestId = getEndpointTestId(epTest);
+      const scheduledTestId = getEndpointTestId(epTest);
       results.epTestName = getEndpointTestName(epTest);
       results.epAgentIds = onlineEndpointAgentIdsForLiveTest();
-      log(`LIVE TEST: found endpoint test "${results.epTestName}" (id=${epTestId}) targeting ${LIVE_TEST_TARGET} — running once…`, 'tep-log-info');
+      results.epView = buildEndpointTestViewUrl(epTest);
+      log(`LIVE TEST: found endpoint test "${results.epTestName}" (id=${scheduledTestId}) targeting ${LIVE_TEST_TARGET} — running once…`, 'tep-log-info');
       try {
-        await liveTestRunOnceEndpoint(epTestId);
-        results.epOk = true; results.epTestId = epTestId; results.epMsg = `${results.epAgentIds.length} online agent(s)`;
-        log(`LIVE TEST: endpoint test run-once triggered`, 'tep-log-ok');
+        const runData = await liveTestRunOnceEndpoint(scheduledTestId);
+        // The run-once response carries its OWN instant-run testId, distinct
+        // from the scheduled test's config id we just POSTed to — that's the
+        // id results have to be polled under, not the scheduled one.
+        const instantTestId = runData && runData.testId != null ? runData.testId : scheduledTestId;
+        results.epOk = true; results.epTestId = instantTestId; results.epMsg = `${results.epAgentIds.length} online agent(s)`;
+        log(`LIVE TEST: endpoint test run-once triggered — instant testId=${instantTestId}`, 'tep-log-ok');
       } catch (e) { results.epMsg = e.message; log(`LIVE TEST: endpoint run-once failed — ${e.message}`, 'tep-log-err'); }
     } else {
       results.epMsg = `no existing endpoint test targets ${LIVE_TEST_TARGET}`;
@@ -16649,10 +16651,13 @@
     // requirement). Show the source pulses immediately once the test is live.
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
 
-    // Result link appears immediately (as soon as the instant test is created).
-    const liveTestLinksHtml = () => results.entView
-      ? `<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open results →</a>`
-      : '';
+    // Result links appear immediately (as soon as each test is created/triggered).
+    const liveTestLinksHtml = () => (results.entView
+      ? `<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open enterprise results →</a>`
+      : '')
+      + (results.epView
+        ? `<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open endpoint results →</a>`
+        : '');
 
     // 1-minute progress timer with a 5-second per-agent latency poll.
     const startedAt = Date.now();
@@ -16735,7 +16740,10 @@
     parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
     parts.push(`<div>Agents with latency: <span style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`);
     if (results.entView) {
-      parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:#93c5fd;">Open results →</a>`);
+      parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:#93c5fd;">Open enterprise results →</a>`);
+    }
+    if (results.epView) {
+      parts.push(`<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open endpoint results →</a>`);
     }
     parts.push('<div style="margin-top:6px;"><span id="tep-livetest-dismiss" style="cursor:pointer;color:#94a3b8;text-decoration:underline;">dismiss</span></div>');
     liveTestSetBadge(parts.join(''));
