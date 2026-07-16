@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.10';
+  const TEP_VERSION = '3.11';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16101,14 +16101,37 @@
       .filter(Boolean);
   }
 
+  /** True when a test's machineConfig actually pins it to specific agents or
+   *  labels, rather than bare ANY_AGENT with nothing assigned. Confirmed via
+   *  live capture: an ANY_AGENT test with empty agentIds/labelIds can sit
+   *  stuck at status "CREATED" forever when triggered — every currently
+   *  eligible agent was already at its concurrent-test capacity
+   *  (canMoreTestsBeAssigned:false), so the job is created but never actually
+   *  claimed by anyone. A test with a real assignment is already one of an
+   *  agent's active tests, so "run once" executes it immediately instead of
+   *  needing new capacity. */
+  function liveTestEndpointTestHasAssignment(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const mc = raw && raw.machineConfig;
+    if (!mc) return false;
+    return (Array.isArray(mc.agentIds) && mc.agentIds.length > 0)
+      || (Array.isArray(mc.labelIds) && mc.labelIds.length > 0)
+      || (Array.isArray(mc.labels) && mc.labels.length > 0);
+  }
+
   /** First non-deleted endpoint scheduled test whose target is exactly 8.8.8.8,
-   *  regardless of name or probe type. We deliberately reuse an EXISTING test
-   *  (run-once) instead of creating a temp one — endpoint tests are assigned to
-   *  agents via label matching, so there's no clean per-run agent list to target
-   *  the way the enterprise instant test takes, and creating/deleting temp
-   *  endpoint tests every run is unnecessary churn when one already exists. */
+   *  regardless of name or probe type — preferring one that's actually
+   *  assigned to agents/labels (see liveTestEndpointTestHasAssignment) over a
+   *  bare ANY_AGENT test that may never get picked up. We deliberately reuse
+   *  an EXISTING test (run-once) instead of creating a temp one — endpoint
+   *  tests are assigned to agents via label matching, so there's no clean
+   *  per-run agent list to target the way the enterprise instant test takes,
+   *  and creating/deleting temp endpoint tests every run is unnecessary churn
+   *  when one already exists. */
   function liveTestFindEndpoint8888Test() {
-    return allEndpointTests.find((t) => !isEndpointTestDeleted(t) && getEndpointTestTarget(t).trim() === LIVE_TEST_TARGET) || null;
+    const candidates = allEndpointTests.filter((t) => !isEndpointTestDeleted(t) && getEndpointTestTarget(t).trim() === LIVE_TEST_TARGET);
+    if (!candidates.length) return null;
+    return candidates.find(liveTestEndpointTestHasAssignment) || candidates[0];
   }
 
   /** 'Run once' an existing endpoint scheduled test (no request body). */
@@ -16154,63 +16177,74 @@
    *  returns the AGENTS' own location clusters, not the destination's. So
    *  every endpoint flow uses the existing nearest-edge ESTIMATE (dashed/
    *  amber, "(est.)" tagged) relative to that agent's own coordinates —
-   *  there is no confirmed destination geo to fall back from here. */
-  async function liveTestFetchEndpointLatency(testId, agentIds) {
+   *  there is no confirmed destination geo to fall back from here.
+   *
+   *  roundId is recomputed FRESH each call from intervalSec (the test's own
+   *  configured measurement interval — CONFIRMED via multiple live-captured
+   *  round ids: every one was an exact multiple of 60, none aligned to a
+   *  fixed 300s grid, matching this test's 60s interval, not a hardcoded
+   *  5-minute bucket). Both the current AND immediately-previous round are
+   *  queried and merged, since agent execution lag (~20-30s, confirmed via
+   *  live capture) can straddle a round boundary. */
+  async function liveTestFetchEndpointLatency(testId, agentIds, intervalSec) {
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
+    intervalSec = intervalSec || 60;
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
-    const roundId = getEndpointViewRoundId();
     const pageSize = Math.max(50, agentIds.length);
-    const url = `/namespace/endpoint/data-access-scheduled-tests/v1/views/scheduled-tests/round/${encodeURIComponent(roundId)}/agents/paginated?page=0&searchTerm=&size=${pageSize}&sort=LOSS,DESC`;
-    const body = JSON.stringify({
-      testId, savedEventId: null, dataLayer: 'NET', roundId,
-      searchFilters: [],
-      sort: { direction: 'DESC', property: 'LOSS' },
-      page: { page: 0, pageSize, isOnLastPage: false, searchTerm: '', isLoading: false },
-    });
-    let rows = null;
-    try {
-      const resp = await ajax(url, { method: 'POST', headers, body });
-      const text = await resp.text().catch(() => '');
-      if (!liveTestEndpointLoggedShape) {
-        liveTestEndpointLoggedShape = true;
-        log(`LIVE TEST endpoint agents/paginated body (roundId=${roundId}): ${resp.status} ${text.slice(0, 400)}`, 'tep-log-info');
-      }
-      if (!resp.ok) return 0;
-      rows = JSON.parse(text);
-    } catch (e) {
-      log(`LIVE TEST: endpoint agents/paginated error ${e.message}`, 'tep-log-info');
-      return 0;
-    }
-    if (!Array.isArray(rows)) return 0;
-    if (rows.length >= pageSize) {
-      log(`LIVE TEST: endpoint agents/paginated returned a full page (${rows.length}) — some agents may be missing (no pagination yet)`, 'tep-log-info');
-    }
+    const curRound = Math.floor(Date.now() / 1000 / intervalSec) * intervalSec;
     const wantIds = new Set(agentIds.map(String));
     let n = 0;
-    for (const row of rows) {
-      if (!row || row.machineId == null) continue;
-      const key = String(row.machineId);
-      if (!wantIds.has(key)) continue;   // only agents this run actually targeted
-      const ms = Number(row.latencyMs);
-      if (!Number.isFinite(ms) || ms <= 0) continue;   // 0 looks like "no data yet" here, not a real reading
-      const e = liveTestLatency.get(key) || { kind: 'endpoint' };
-      e.kind = 'endpoint';
-      e.ms = Math.round(ms);
-      const lossFrac = Number(row.loss);
-      if (Number.isFinite(lossFrac)) e.loss = lossFrac * 100;   // 0..1 fraction → percentage points
-      liveTestLatency.set(key, e);
-      n++;
-      if (!liveTestDestByAgent.has(key)) {
-        const src = liveTestAgentOwnCoords(key);
-        const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
-        if (nearest) {
-          const cityLabel = nearest.city.replace(/\b\w/g, (c) => c.toUpperCase()) + ' (nearest edge, estimated)';
-          liveTestDestByAgent.set(key, {
-            lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel,
-            info: { ip: LIVE_TEST_TARGET, name: 'dns.google', location: cityLabel },
-            estimated: true,
-          });
+    for (const roundId of [curRound, curRound - intervalSec]) {
+      const url = `/namespace/endpoint/data-access-scheduled-tests/v1/views/scheduled-tests/round/${encodeURIComponent(roundId)}/agents/paginated?page=0&searchTerm=&size=${pageSize}&sort=LOSS,DESC`;
+      const body = JSON.stringify({
+        testId, savedEventId: null, dataLayer: 'NET', roundId,
+        searchFilters: [],
+        sort: { direction: 'DESC', property: 'LOSS' },
+        page: { page: 0, pageSize, isOnLastPage: false, searchTerm: '', isLoading: false },
+      });
+      let rows = null;
+      try {
+        const resp = await ajax(url, { method: 'POST', headers, body });
+        const text = await resp.text().catch(() => '');
+        if (!liveTestEndpointLoggedShape) {
+          liveTestEndpointLoggedShape = true;
+          log(`LIVE TEST endpoint agents/paginated body (testId=${testId}, roundId=${roundId}): ${resp.status} ${text.slice(0, 400)}`, 'tep-log-info');
+        }
+        if (!resp.ok) continue;
+        rows = JSON.parse(text);
+      } catch (e) {
+        log(`LIVE TEST: endpoint agents/paginated error ${e.message}`, 'tep-log-info');
+        continue;
+      }
+      if (!Array.isArray(rows)) continue;
+      if (rows.length >= pageSize) {
+        log(`LIVE TEST: endpoint agents/paginated round=${roundId} returned a full page (${rows.length}) — some agents may be missing (no pagination yet)`, 'tep-log-info');
+      }
+      for (const row of rows) {
+        if (!row || row.machineId == null) continue;
+        const key = String(row.machineId);
+        if (!wantIds.has(key)) continue;   // only agents this run actually targeted
+        const ms = Number(row.latencyMs);
+        if (!Number.isFinite(ms) || ms <= 0) continue;   // 0 looks like "no data yet" here, not a real reading
+        const e = liveTestLatency.get(key) || { kind: 'endpoint' };
+        e.kind = 'endpoint';
+        e.ms = Math.round(ms);
+        const lossFrac = Number(row.loss);
+        if (Number.isFinite(lossFrac)) e.loss = lossFrac * 100;   // 0..1 fraction → percentage points
+        liveTestLatency.set(key, e);
+        n++;
+        if (!liveTestDestByAgent.has(key)) {
+          const src = liveTestAgentOwnCoords(key);
+          const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
+          if (nearest) {
+            const cityLabel = nearest.city.replace(/\b\w/g, (c) => c.toUpperCase()) + ' (nearest edge, estimated)';
+            liveTestDestByAgent.set(key, {
+              lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel,
+              info: { ip: LIVE_TEST_TARGET, name: 'dns.google', location: cityLabel },
+              estimated: true,
+            });
+          }
         }
       }
     }
@@ -16671,7 +16705,7 @@
     log(`LIVE TEST: ${entIds.length} online enterprise agent(s)`, 'tep-log-info');
 
     const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds,
-      epOk: false, epMsg: '', epTestId: null, epTestName: '', epAgentIds: [], epView: null };
+      epOk: false, epMsg: '', epTestId: null, epRoundIntervalSec: null, epTestName: '', epAgentIds: [], epView: null };
     if (entIds.length) {
       try {
         const r = await liveTestCreateEnterprise(entIds);
@@ -16688,16 +16722,26 @@
       const scheduledTestId = getEndpointTestId(epTest);
       results.epTestName = getEndpointTestName(epTest);
       results.epAgentIds = onlineEndpointAgentIdsForLiveTest();
-      results.epView = buildEndpointTestViewUrl(epTest);
       log(`LIVE TEST: found endpoint test "${results.epTestName}" (id=${scheduledTestId}) targeting ${LIVE_TEST_TARGET} — running once…`, 'tep-log-info');
       try {
         const runData = await liveTestRunOnceEndpoint(scheduledTestId);
         // The run-once response carries its OWN instant-run testId, distinct
         // from the scheduled test's config id we just POSTed to — that's the
-        // id results have to be polled under, not the scheduled one.
+        // id results have to be polled under, not the scheduled one. The
+        // results view link must point at this instant id too (confirmed:
+        // /endpoint/views/?testId=<instant id>&scenarioId=eyebrowNetworkTest —
+        // NOT the scheduled test's id, and no metric/roundId needed).
         const instantTestId = runData && runData.testId != null ? runData.testId : scheduledTestId;
         results.epOk = true; results.epTestId = instantTestId; results.epMsg = `${results.epAgentIds.length} online agent(s)`;
-        log(`LIVE TEST: endpoint test run-once triggered — instant testId=${instantTestId}`, 'tep-log-ok');
+        // Round boundaries align to the test's OWN measurement interval, not
+        // a fixed 5-minute grid (confirmed via multiple live-captured round
+        // ids, all exact multiples of 60 at varying offsets from any 300s
+        // grid) — the round advances every intervalSec, so it's recomputed
+        // fresh on every poll rather than pinned once here.
+        results.epRoundIntervalSec = getEndpointTestInterval(epTest) || 60;
+        const scenarioId = getEndpointViewScenario(epTest).scenarioId;
+        results.epView = `/endpoint/views/?testId=${encodeURIComponent(instantTestId)}&scenarioId=${encodeURIComponent(scenarioId)}`;
+        log(`LIVE TEST: endpoint test run-once triggered — instant testId=${instantTestId}, roundIntervalSec=${results.epRoundIntervalSec}`, 'tep-log-ok');
       } catch (e) { results.epMsg = e.message; log(`LIVE TEST: endpoint run-once failed — ${e.message}`, 'tep-log-err'); }
     } else {
       results.epMsg = `no existing endpoint test targets ${LIVE_TEST_TARGET}`;
@@ -16763,7 +16807,7 @@
       // Destination geo is synthesized inside liveTestFetchEndpointLatency
       // itself (no path-vis equivalent exists for endpoint tests).
       let n = 0;
-      try { n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds); } catch (_) { n = 0; }
+      try { n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec); } catch (_) { n = 0; }
       log(`LIVE TEST poll @${elapsed}s: endpoint agents with latency=${n}`, 'tep-log-info');
       if (n) gotAny = true;
     }
@@ -16785,7 +16829,7 @@
     }
     if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
       try {
-        const n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds);
+        const n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec);
         if (n) liveTestLatencyActive = true;
         log(`LIVE TEST: final refresh — endpoint agents with latency=${n}`, 'tep-log-ok');
       } catch (_) { /* */ }
