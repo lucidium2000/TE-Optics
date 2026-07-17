@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.11</span>
+        TE Optics<span class="install-version" aria-label="Build">3.12</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -430,7 +430,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.11';
+  const TEP_VERSION = '3.12';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2396,8 +2396,11 @@
     .tep-gcard-more { font-size: 10.5px; color: #64748b; padding: 2px; }
     /* Fullscreen dashboard map + KPI widget row */
     /* z-index above the dark-mode blend overlays (…645/…646) + isolate, so dark
-       mode never blends/tints the map. Mounted on <html> for the same reason. */
-    .tep-dashmap-full { position: fixed; inset: 0; z-index: 2147483647; isolation: isolate; background: #0b1220; }
+       mode never blends/tints the map. Mounted on <html> for the same reason.
+       top:56px leaves TE's own title bar (fixed height, confirmed) visible/usable
+       instead of covering it — the widgets row and mapbody below are both
+       positioned relative to this box, so they shift down with it for free. */
+    .tep-dashmap-full { position: fixed; inset: 56px 0 0 0; z-index: 2147483647; isolation: isolate; background: #0b1220; }
     .tep-dashmap-full-widgets {
       position: absolute; top: 12px; left: 12px; right: 60px; z-index: 4;
       display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; pointer-events: none;
@@ -3617,13 +3620,16 @@
             <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Agent Map
           </button>
           <div class="tep-create-expand" id="tep-dash-expand-map">
-            <div class="tep-manage-toolbar" style="justify-content:space-between;">
+            <div class="tep-manage-toolbar">
               <div class="tep-dash-map-legend-key" aria-hidden="true">
                 <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:2"/></svg>Enterprise</span>
                 <span class="tep-dash-legend-item"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 20.5a8 8 0 0 1 16 0Z" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/><circle cx="12" cy="7.5" r="4.2" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/></svg>User</span>
                 <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6" style="fill:#3b82f6;stroke:#dbeafe;stroke-width:2"/></svg>Cluster</span>
                 <span class="tep-dash-legend-item"><span class="tep-dash-legend-swatch" style="background:linear-gradient(90deg,#22c55e,#ef4444);"></span>healthy → unhealthy</span>
               </div>
+            </div>
+            <div class="tep-manage-toolbar" style="justify-content:space-between;align-items:center;">
+              <div class="tep-test-count" id="tep-dash-map-count" style="margin-bottom:0;">Not loaded yet.</div>
               <div style="display:flex;gap:6px;">
                 <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-dash-map-refresh" title="Reload agents" aria-label="Reload agents">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3633,17 +3639,15 @@
                     <path d="M3 21v-5h5" />
                   </svg>
                 </button>
-                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-dash-map-full" title="Full screen map" aria-label="Full screen map">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-                    <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-                    <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
-                    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+                <button type="button" class="tep-map-toggle" id="tep-dash-map-full" title="Full screen map" aria-label="Full screen map">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+                    <line x1="8" y1="2" x2="8" y2="18" />
+                    <line x1="16" y1="6" x2="16" y2="22" />
                   </svg>
                 </button>
               </div>
             </div>
-            <div class="tep-test-count" id="tep-dash-map-count">Not loaded yet.</div>
             <div id="tep-dash-map-host"></div>
           </div>
         </div>
@@ -15688,6 +15692,13 @@
   const TEP_HIDE_WHILE_FULL = ['te-panel-root', 'tep-toggle-btn', 'tep-resize-handle'];
   let dashFullHidden = [];
   function dashFullEscHandler(e) { if (e.key === 'Escape') { e.preventDefault(); closeDashMapFullscreen(); } }
+  // TE's own title bar (56px, see .tep-dashmap-full's top offset) is left
+  // clickable above the overlay, but anything it opens — a menu, a dropdown —
+  // expands DOWN into the region the map still covers at max z-index. Rather
+  // than guess at TE's own menu DOM/z-index to make that overlay the map,
+  // just collapse the fullscreen map back to the sidebar the moment the user
+  // clicks up there, so TE's own UI is never obstructed.
+  function dashFullTopBarHandler(e) { if (e.clientY < 56) closeDashMapFullscreen(); }
   function openDashMapFullscreen() {
     if (dashMapFullEl) return;
     // Hide the side panel (and its chrome) while the map owns the whole screen.
@@ -15711,6 +15722,7 @@
     document.documentElement.style.overflow = 'hidden';
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
     document.addEventListener('keydown', dashFullEscHandler, true);
+    document.addEventListener('click', dashFullTopBarHandler, true);
     // The LIVE TEST button + badge live inside the fullscreen map. Re-parent them
     // into the overlay so they sit above the map (the overlay isolates stacking).
     const ltBtn = document.getElementById('tep-livetest-btn');
@@ -15738,6 +15750,7 @@
     dashMapLivePaint = null;
     document.documentElement.style.overflow = '';
     document.removeEventListener('keydown', dashFullEscHandler, true);
+    document.removeEventListener('click', dashFullTopBarHandler, true);
     for (const [el, prev] of dashFullHidden) el.style.display = prev;
     dashFullHidden = [];
   }
@@ -16465,7 +16478,7 @@
   //   (no request body)
   const LIVE_TEST_ENDPOINT_INSTANT_BASE = '/namespace/endpoint-api/test-configs-service/v1/instant-tests/scheduled-tests';
   let liveTestRunning = false;
-  const liveTestTimers = { tick: null, poll: null, end: null };
+  const liveTestTimers = { tick: null, poll: null, end: null, final: null };
   let liveTestTempEndpointIds = [];
   // Last run's { entView, entTestId, epView, epTestId, ... } (see runLiveTest) —
   // kept live by reference so agent map links can jump straight to that
@@ -16617,6 +16630,7 @@
     if (liveTestTimers.tick) { clearInterval(liveTestTimers.tick); liveTestTimers.tick = null; }
     if (liveTestTimers.poll) { clearInterval(liveTestTimers.poll); liveTestTimers.poll = null; }
     if (liveTestTimers.end) { clearTimeout(liveTestTimers.end); liveTestTimers.end = null; }
+    if (liveTestTimers.final) { clearTimeout(liveTestTimers.final); liveTestTimers.final = null; }
     liveTestRunning = false;
     const btn = document.getElementById('tep-livetest-btn');
     if (btn) { btn.style.background = '#dc2626'; btn.textContent = 'LIVE TEST'; }
@@ -17539,14 +17553,15 @@
     if (gotAny) { liveTestLatencyActive = true; try { refreshLiveTestOverlay(); } catch (_) { /* */ } }
   }
 
-  async function liveTestFinish(results) {
-    liveTestClearTimers();
-    // Final refresh of the data for all nodes.
+  /** Fetch latency for both enterprise/endpoint sides of a LIVE TEST run and
+   *  repaint the map in place. Shared by the completion-time final refresh
+   *  and the extra +5s catch-up sync below. */
+  async function liveTestSyncNodes(results, label) {
     if (results.entOk && results.entTestId != null) {
       try {
         const n = await liveTestFetchEnterpriseLatency(results.entTestId, results.entAgentIds);
         if (n) liveTestLatencyActive = true;
-        log(`LIVE TEST: final refresh — enterprise agents with latency=${n}`, 'tep-log-ok');
+        log(`LIVE TEST: ${label} — enterprise agents with latency=${n}`, 'tep-log-ok');
       } catch (_) { /* */ }
     }
     if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
@@ -17554,27 +17569,51 @@
         const maxAge = results.epFallback ? 300 : undefined;
         const n = await liveTestFetchEndpointLatency(results.epTestId, results.epAgentIds, results.epRoundIntervalSec, maxAge);
         if (n) liveTestLatencyActive = true;
-        log(`LIVE TEST: final refresh — endpoint agents with latency=${n}${results.epFallback ? ' (fallback/recent)' : ''}`, 'tep-log-ok');
+        log(`LIVE TEST: ${label} — endpoint agents with latency=${n}${results.epFallback ? ' (fallback/recent)' : ''}`, 'tep-log-ok');
       } catch (_) { /* */ }
     }
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
-    const parts = [];
-    parts.push('<div style="font-weight:800;letter-spacing:.5px;color:#4ade80;margin-bottom:4px;">LIVE TEST complete (1:00)</div>');
-    parts.push(`<div>Enterprise: ${results.entOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.entMsg)}</span></div>`);
-    parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
-    parts.push(`<div>Agents with latency: <span style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`);
-    if (results.entView) {
-      parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:#93c5fd;">Open enterprise results →</a>`);
-    }
-    if (results.epView) {
-      parts.push(`<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open endpoint results →</a>`);
-    }
-    parts.push('<div style="margin-top:6px;"><span id="tep-livetest-dismiss" style="cursor:pointer;color:#94a3b8;text-decoration:underline;">dismiss</span></div>');
-    liveTestSetBadge(parts.join(''));
-    const dismiss = document.getElementById('tep-livetest-dismiss');
-    if (dismiss) dismiss.addEventListener('click', () => { liveTestClearLatency(); liveTestSetBadge(''); });
+  }
+
+  async function liveTestFinish(results) {
+    liveTestClearTimers();
+    await liveTestSyncNodes(results, 'final refresh');
+    let dismissed = false;
+    const renderDoneBadge = () => {
+      const parts = [];
+      parts.push('<div style="font-weight:800;letter-spacing:.5px;color:#4ade80;margin-bottom:4px;">LIVE TEST complete (1:00)</div>');
+      parts.push(`<div>Enterprise: ${results.entOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.entMsg)}</span></div>`);
+      parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
+      parts.push(`<div>Agents with latency: <span style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`);
+      if (results.entView) {
+        parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:#93c5fd;">Open enterprise results →</a>`);
+      }
+      if (results.epView) {
+        parts.push(`<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open endpoint results →</a>`);
+      }
+      parts.push('<div style="margin-top:6px;"><span id="tep-livetest-dismiss" style="cursor:pointer;color:#94a3b8;text-decoration:underline;">dismiss</span></div>');
+      liveTestSetBadge(parts.join(''));
+      const dismiss = document.getElementById('tep-livetest-dismiss');
+      if (dismiss) {
+        dismiss.addEventListener('click', () => {
+          dismissed = true;
+          if (liveTestTimers.final) { clearTimeout(liveTestTimers.final); liveTestTimers.final = null; }
+          liveTestClearLatency(); liveTestSetBadge('');
+        });
+      }
+    };
+    renderDoneBadge();
     log('LIVE TEST: finished at 1-minute mark.', 'tep-log-ok');
     toast('LIVE TEST finished', 'ok');
+    // One more sync 5s after completion — agent execution lag can trail the
+    // official 1-minute mark by a few seconds, so a straggler round's data
+    // often isn't in yet at the moment above. Skip re-showing the badge if
+    // the user already dismissed it in the meantime.
+    liveTestTimers.final = setTimeout(async () => {
+      liveTestTimers.final = null;
+      await liveTestSyncNodes(results, 'final sync (+5s)');
+      if (!dismissed) renderDoneBadge();
+    }, 5000);
   }
 
   // ---------------------------------------------------------------------------
