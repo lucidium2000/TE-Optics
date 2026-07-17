@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.13</span>
+        TE Optics<span class="install-version" aria-label="Build">3.14</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -430,7 +430,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.13';
+  const TEP_VERSION = '3.14';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2266,6 +2266,38 @@
       0%, 100% { box-shadow: 0 0 0 2px #4285F4, 0 0 0 0 rgba(66,133,244,.5); }
       50%      { box-shadow: 0 0 0 2px #4285F4, 0 0 0 8px rgba(66,133,244,0); }
     }
+    /* LIVE TEST "dramatic open": for the first 20s of a run, this body-level
+       class punches up the marker/flow/dest animations, then gets removed so
+       everything settles back to the calmer default pacing above. */
+    body.tep-livetest-intense .tep-agent-map-marker--online svg {
+      animation: tep-marker-breathe-intense .55s ease-in-out infinite;
+    }
+    @keyframes tep-marker-breathe-intense {
+      0%, 100% { transform: scale(1);   opacity: 1;   }
+      50%      { transform: scale(1.4); opacity: .55; }
+    }
+    body.tep-livetest-intense .tep-livetest-src::after {
+      animation: tep-livetest-pulse .7s ease-out infinite;
+    }
+    body.tep-livetest-intense .tep-livetest-flowsvg .tep-livetest-flow {
+      animation-duration: .32s;
+    }
+    body.tep-livetest-intense .tep-livetest-flowsvg .tep-livetest-packet {
+      animation-duration: .6s;
+    }
+    body.tep-livetest-intense .tep-livetest-g {
+      animation-duration: .7s;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      body.tep-livetest-intense .tep-agent-map-marker--online svg { animation: none; }
+    }
+    /* Blinking pulse dot beside the LIVE TEST badge label. */
+    .tep-livetest-badge-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: #ef4444; box-shadow: 0 0 4px rgba(239,68,68,.9);
+      animation: tep-livetest-badge-blink .9s steps(1, jump-none) infinite;
+    }
+    @keyframes tep-livetest-badge-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .15; } }
     /* ESTIMATED flow: TE gave no confirmed city for this agent's 8.8.8.8 hop,
        so the line goes to the nearest Google edge as a guess, not real data.
        Amber + dashed (vs. the solid blue "confirmed" gradient) so it always
@@ -2351,6 +2383,26 @@
     /* Circular health ring (SaaS Health widget) — arc length = availability %. */
     .tep-saas-health { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .tep-saas-health .tep-dash-widget-sub { margin-top: 3px; }
+    .tep-w-saas-clickable { cursor: pointer; }
+    .tep-w-saas-clickable:hover .tep-dash-widget-main { color: #fdba74; }
+    .tep-saas-breakdown-pop {
+      position: fixed; z-index: 2147483647; min-width: 220px; max-width: 320px;
+      max-height: 320px; overflow-y: auto;
+      background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 10px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.55); padding: 10px 12px;
+      font-size: 12px; line-height: 1.4;
+    }
+    .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: #f1f5f9; }
+    .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: #64748b; margin-top: 2px; }
+    .tep-saas-breakdown-list { display: flex; flex-direction: column; gap: 2px; }
+    .tep-saas-breakdown-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 5px 6px; margin: 0 -6px; border-radius: 6px;
+      color: inherit; text-decoration: none;
+    }
+    a.tep-saas-breakdown-row { cursor: pointer; }
+    a.tep-saas-breakdown-row:hover { background: rgba(249,115,22,.14); }
+    .tep-saas-breakdown-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tep-health-ring { position: relative; width: 52px; height: 52px; flex: 0 0 52px; }
     .tep-health-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
     .tep-health-ring-track { fill: none; stroke: #1e293b; stroke-width: 3.5; }
@@ -2363,10 +2415,15 @@
     .tep-dashmap-full-min {
       position: absolute; top: 14px; right: 14px; z-index: 6;
       width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
-      border-radius: 8px; cursor: pointer; color: #e2e8f0;
-      background: rgba(15,23,42,.92); border: 1px solid #475569; box-shadow: 0 2px 8px rgba(0,0,0,.5);
+      border-radius: 8px; cursor: pointer; color: #fdba74;
+      background: linear-gradient(180deg, rgba(249,115,22,.20), rgba(249,115,22,.08));
+      border: 1px solid #f97316; box-shadow: 0 0 0 2px rgba(249,115,22,.14), 0 1px 3px rgba(0,0,0,.45);
     }
-    .tep-dashmap-full-min:hover { border-color: #f97316; color: #fdba74; }
+    .tep-dashmap-full-min:hover {
+      color: #fff7ed; border-color: #fb923c;
+      background: linear-gradient(180deg, rgba(249,115,22,.34), rgba(249,115,22,.16));
+      box-shadow: 0 0 0 3px rgba(249,115,22,.24), 0 2px 8px rgba(0,0,0,.5);
+    }
     .tep-dashmap-full-zoom {
       position: absolute; top: 56px; right: 14px; z-index: 6;
       width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
@@ -3142,17 +3199,15 @@
   root.id = 'te-panel-root';
   root.setAttribute('data-tep-version', TEP_VERSION);
 
-  // Toggle button — persists even when panel is hidden. Sits inline with TE's
-  // own top-right toolbar icons (56px title bar), just left of the blue
-  // refresh icon that sits left of the "?" help icon — position is eyeballed
-  // from a live screenshot of that toolbar, not measured via DOM, so it may
-  // need a px nudge if TE's own icon cluster width differs (e.g. a longer
-  // logged-in name pushes everything left).
+  // Toggle button — persists even when panel is hidden. Fixed bottom-right;
+  // an earlier attempt to align it inline with TE's own top-right toolbar
+  // icons (eyeballed off a screenshot, not measured) didn't hold up in
+  // practice, so it lives in its own clear corner instead.
   const toggleBtn = document.createElement('div');
   toggleBtn.id = 'tep-toggle-btn';
   toggleBtn.textContent = '\u2716';
   toggleBtn.title = 'Toggle TE Optics panel';
-  toggleBtn.style.cssText = 'position:fixed;top:11px;right:510px;z-index:2147483647;width:34px;height:34px;' +
+  toggleBtn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483647;width:34px;height:34px;' +
     'border-radius:8px;background:linear-gradient(180deg, rgba(249,115,22,.24), rgba(249,115,22,.10));' +
     'border:1px solid #f97316;color:#fdba74;font-size:18px;display:flex;align-items:center;' +
     'justify-content:center;cursor:pointer;box-shadow:0 0 0 2px rgba(249,115,22,.14), 0 1px 3px rgba(0,0,0,.45);' +
@@ -3246,11 +3301,12 @@
             <circle cx="12" cy="7.5" r="4.2"/>
           </svg>
         </button>
-        <button type="button" class="tep-map-toggle" id="tep-mode-map" title="Full screen map" aria-label="Full screen map">
+        <button type="button" class="tep-map-toggle" id="tep-mode-map" title="Open Dashboard" aria-label="Open Dashboard">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
-            <line x1="8" y1="2" x2="8" y2="18" />
-            <line x1="16" y1="6" x2="16" y2="22" />
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
           </svg>
         </button>
       </div>
@@ -4149,7 +4205,11 @@
       window.open('https://app.thousandeyes.com/endpoint/views/?scenarioId=eyebrowNetworkTest', '_blank', 'noopener');
     });
   }
-  if (modeMapBtn) modeMapBtn.addEventListener('click', () => openDashMapFullscreen());
+  if (modeMapBtn) {
+    modeMapBtn.addEventListener('click', () => {
+      window.open('https://app.thousandeyes.com/dashboard', '_blank', 'noopener');
+    });
+  }
 
   function showTestsPanelFromDashboard() {
     if (!isDashboardToolsPage()) return;
@@ -8582,6 +8642,7 @@
   // ---------------------------------------------------------------------------
   let allTests = [];
   let loadTestsInFlight = false;
+  let tepSaasBgTestsLoadTried = false;
   let selectedTestIds = new Set();
   /** Restore import (Create → Restore tab). */
   let testsRestoreImportData = null;
@@ -14414,6 +14475,7 @@
    *  panel host; pass opts.full=true to fill a fullscreen container. */
   function renderDashboardAgentMap(hostEl, opts) {
     const full = !!(opts && opts.full);
+    const preserveZoom = !!(opts && opts.preserveZoom);
     const host = hostEl || $('#tep-dash-map-host');
     const countEl = full ? null : $('#tep-dash-map-count');
     if (!host) return;
@@ -14973,8 +15035,11 @@
     // Auto-frame on normal renders (centre on agents, ~60% fill). During a LIVE
     // TEST session we never reach a full re-render (updates are in-place), so this
     // still frames correctly on open/reload but never fights the user's zoom.
+    // preserveZoom (the Enterprise/Endpoint "show only" filters) skips this
+    // entirely — filtering shouldn't reposition/rescale the view the user
+    // already set up, just show/hide markers within it.
     const liveMapSession = liveTestRunning || liveTestLatencyActive;
-    if (!liveMapSession && markerEls.length && wrap.clientWidth > 0 && wrap.clientHeight > 0) {
+    if (!preserveZoom && !liveMapSession && markerEls.length && wrap.clientWidth > 0 && wrap.clientHeight > 0) {
       // Default framing (inline + fullscreen): centre on all agents and zoom so
       // the agent spread fills ~60% of the view (20% margin on each side).
       const AGENT_FRAME_EDGE = 0.20, spanTarget = 1 - 2 * AGENT_FRAME_EDGE;
@@ -14996,7 +15061,7 @@
       // Fullscreen shifts the centre down 5% to clear the top widget overlay.
       const topShift = full ? 0.05 * vh : 0;
       epDashMapZoom = { s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift };
-    } else if (!liveMapSession) {
+    } else if (!preserveZoom && !liveMapSession) {
       epDashMapZoom = { s: 1, tx: 0, ty: 0 };
     }
     apply();
@@ -15102,12 +15167,14 @@
   function tepWidgetPending() {
     return '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">connect API</div>';
   }
-  /** Small checkbox pinned to a widget card's top-right corner (requires the
-   *  card to have position:relative) — checking it filters the fullscreen
-   *  map down to just that agent kind; the two are mutually exclusive since
-   *  both re-render off the same dashMapAgentTypeFilter state. */
+  /** Small radio button pinned to a widget card's top-right corner (requires
+   *  the card to have position:relative) — selecting it filters the fullscreen
+   *  map down to just that agent kind. Both share one `name` for native
+   *  mutual exclusivity; clicking the already-selected one deselects it back
+   *  to "show both" (handled in renderDashWidgets, since a plain radio can't
+   *  toggle itself off natively). */
   function tepWidgetFilterCheckbox(id, checked) {
-    return `<label class="tep-dash-widget-filter" title="Show only this type on the map"><input type="checkbox" id="${id}"${checked ? ' checked' : ''}></label>`;
+    return `<label class="tep-dash-widget-filter" title="Show only this type on the map"><input type="radio" name="tep-dashmap-agent-filter" id="${id}"${checked ? ' checked' : ''}></label>`;
   }
   function renderDashWidgets(container) {
     if (!container) return;
@@ -15130,14 +15197,35 @@
     void fillDashWidgetsAsync();
     if (!container._tepFilterWired) {
       container._tepFilterWired = true;
+      const applyFilterChange = () => {
+        renderDashWidgets(container);   // re-derive both radios' checked state from it
+        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+      };
+      // Track pre-click checked state — a native radio fires no `change` when
+      // you click the one that's already selected, which is exactly the case
+      // that needs to toggle it back off (show both).
+      container.addEventListener('mousedown', (e) => {
+        const radio = e.target.closest('input[type="radio"]');
+        if (radio) radio.dataset.wasChecked = radio.checked ? '1' : '0';
+      });
+      container.addEventListener('click', (e) => {
+        const radio = e.target.closest('input[type="radio"]');
+        if (!radio || radio.dataset.wasChecked !== '1') return;
+        radio.checked = false;
+        dashMapAgentTypeFilter = null;
+        applyFilterChange();
+      });
       container.addEventListener('change', (e) => {
-        const cb = e.target.closest('input[type="checkbox"]');
-        if (!cb) return;
-        if (cb.id === 'tep-dashmap-filter-ent') dashMapAgentTypeFilter = cb.checked ? 'enterprise' : null;
-        else if (cb.id === 'tep-dashmap-filter-ep') dashMapAgentTypeFilter = cb.checked ? 'endpoint' : null;
+        const radio = e.target.closest('input[type="radio"]');
+        if (!radio) return;
+        if (radio.id === 'tep-dashmap-filter-ent') dashMapAgentTypeFilter = 'enterprise';
+        else if (radio.id === 'tep-dashmap-filter-ep') dashMapAgentTypeFilter = 'endpoint';
         else return;
-        renderDashWidgets(container);   // re-derive both checkboxes' checked state from it
-        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true });
+        applyFilterChange();
+      });
+      container.addEventListener('click', (e) => {
+        const saasEl = e.target.closest('#tep-w-saas');
+        if (saasEl) toggleSaasBreakdownPopover(saasEl);
       });
     }
   }
@@ -15287,6 +15375,52 @@
     };
     walk(dash, 0);
     return set.size ? [...set] : TEP_NAS_METRICS_DEFAULT.slice();
+  }
+  /** testId(s) a leaf widget is scoped to, via its own NAS-TEST general
+   *  filter — confirmed via a live dashboard backup: a per-test Numbers leaf
+   *  (e.g. one "SaaS Apps" tile) carries no title/name field of its own
+   *  (meta.title is null), but config.generalFilters['NAS-TEST'].values is
+   *  exactly that one testId. This is the REAL source of a leaf's identity,
+   *  not a title field. */
+  function tepWidgetTestIds(node) {
+    const cfg = (node && node.config && typeof node.config === 'object') ? node.config : {};
+    const gf = cfg.generalFilters;
+    const f = gf && typeof gf === 'object' ? gf['NAS-TEST'] : null;
+    return (f && Array.isArray(f.values)) ? f.values.map(String) : [];
+  }
+  // Logged once so an unresolved widget's raw node can be inspected further
+  // if neither the testId filter nor any title-ish field pans out.
+  let tepWidgetTitleFallbackLogged = false;
+  /** Best-effort display name for a dashboard widget node. Tries, in order:
+   *  (1) the real test name(s) via the leaf's own NAS-TEST filter — the
+   *  reliable source for per-test tiles; (2) meta.title / assorted title-ish
+   *  fields, for widget types that do carry their own label (a colorGrid
+   *  container's own title, etc); (3) a generic "Widget {id}" fallback so the
+   *  SaaS breakdown never shows a blank/undefined row. */
+  function tepWidgetTitle(node) {
+    if (!node) return 'Widget';
+    const testIds = tepWidgetTestIds(node);
+    if (testIds.length) {
+      const names = testIds.map((id) => {
+        const t = (allTests || []).find((x) => String(x.testId != null ? x.testId : x.id) === id);
+        return t && t.name ? t.name : null;
+      }).filter(Boolean);
+      if (names.length === testIds.length) return names.join(', ');
+    }
+    const cfg = (node.config && typeof node.config === 'object') ? node.config : {};
+    const meta = (node.meta && typeof node.meta === 'object') ? node.meta : {};
+    const name = node.title || node.name || node.label || meta.title
+      || cfg.title || cfg.label || cfg.name
+      || (node.target && String(node.target)) || (cfg.target && String(cfg.target));
+    if (name) return String(name);
+    if (!tepWidgetTitleFallbackLogged) {
+      tepWidgetTitleFallbackLogged = true;
+      try {
+        log(`SaaS widget: no title resolved for a widget (testIds=[${testIds.join(',')}], allTests loaded=${(allTests || []).length}) — raw node: ${JSON.stringify(node).slice(0, 1500)}`, 'tep-log-info');
+      } catch (_) { /* */ }
+    }
+    const id = node.widgetId || node.id;
+    return id != null ? `Widget ${id}` : 'Widget';
   }
   /** Leaf widgets on the dashboard whose metric is HTTP Server Availability. */
   function tepFindAvailNumberWidgets(dash) {
@@ -15507,10 +15641,23 @@
   }
   /** Read HTTP Server Availability from the self-service/data responses the
    *  dashboard already fetched (works for any widget type — the page built the
-   *  correct request). One value per widgetId, latest capture wins. */
-  function tepAvailFromCapturedMetricData() {
+   *  correct request). One value per widgetId, latest capture wins. `dash` (when
+   *  available) resolves each widgetId to a display name for the breakdown list —
+   *  captured entries only carry the raw id, not the dashboard's own widget tree. */
+  function tepAvailFromCapturedMetricData(dash) {
     let focusId = null;
     try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
+    const webTitles = new Map(), epTitles = new Map();
+    if (dash) {
+      for (const w of tepFindAvailNumberWidgets(dash)) {
+        const id = String(w.node.widgetId || w.node.id || '');
+        if (id) webTitles.set(id, tepWidgetTitle(w.node));
+      }
+      for (const w of tepFindEndpointAvailWidgets(dash)) {
+        const id = String(w.node.widgetId || w.node.id || '');
+        if (id) epTitles.set(id, tepWidgetTitle(w.node));
+      }
+    }
     const byWidgetWeb = new Map();
     const byWidgetEp = new Map();
     for (const e of TEP_DASH_METRIC_DATA.entries) {
@@ -15536,22 +15683,39 @@
       const a = endpoint.reduce((s, x) => s + x, 0) / endpoint.length;
       log(`SaaS widget: averaged ${endpoint.length} captured Endpoint HTTP Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
     }
-    return { web, endpoint };
+    const webBreakdown = [...byWidgetWeb.entries()].map(([id, value]) => ({ title: webTitles.get(String(id)) || `Widget ${id}`, value }));
+    const epBreakdown = [...byWidgetEp.entries()].map(([id, value]) => ({ title: epTitles.get(String(id)) || `Widget ${id}`, value }));
+    return { web, endpoint, webBreakdown, epBreakdown };
   }
   /** Combined HTTP availability for the focused dashboard: HTTP Server (NAS) plus
    *  Endpoint HTTP test availability. Prefers the widget data the page already
    *  loaded; falls back to actively fetching leaf availability widgets (NAS via
    *  self-service/data, endpoint via drill-down). Every widget contributes one
-   *  value to a single average. Returns
-   *  { avg, count, webCount, endpointCount, widgetsDetected } or null. */
+   *  value to a single average, and one row (title + value) to `breakdown` —
+   *  worst-first, so clicking the SaaS widget shows what's actually dragging it
+   *  down. `dashboardUrl` is wherever this data came FROM (this only resolves
+   *  to real data while the user is on that dashboard's own page, per
+   *  tepFocusedDashboardObject), used to link each breakdown row back to it —
+   *  TE has no separate per-test results page for a dashboard tile; clicking
+   *  one in the real UI opens an in-dashboard drilldown instead. Returns
+   *  { avg, count, webCount, endpointCount, widgetsDetected, breakdown, dashboardUrl } or null. */
   async function tepFetchDashboardHttpAvailability() {
-    const captured = tepAvailFromCapturedMetricData();
+    // Widget names (tepWidgetTitle) resolve via allTests, but a user viewing the
+    // SaaS breakdown may never have opened Manage Tests to populate it. Load the
+    // portal test list once, quietly, so names are available without asking the
+    // user to do that themselves.
+    if (!allTests.length && !loadTestsInFlight && !tepSaasBgTestsLoadTried) {
+      tepSaasBgTestsLoadTried = true;
+      try { await loadTests({ quiet: true, skipEnrich: true }); } catch (_) { /* */ }
+    }
+    const { dash, dashboardId } = tepFocusedDashboardObject();
+    const captured = tepAvailFromCapturedMetricData(dash);
     let webVals = (captured && captured.web) ? captured.web.slice() : [];
     let epVals = (captured && captured.endpoint) ? captured.endpoint.slice() : [];
+    let webBreakdown = (captured && captured.webBreakdown) ? captured.webBreakdown.slice() : [];
+    let epBreakdown = (captured && captured.epBreakdown) ? captured.epBreakdown.slice() : [];
     let webDetected = webVals.length;
     let epDetected = epVals.length;
-
-    const { dash, dashboardId } = tepFocusedDashboardObject();
 
     // NAS / HTTP Server availability: active fetch when nothing was captured.
     if (!webVals.length && dash && dashboardId) {
@@ -15561,6 +15725,7 @@
         const metricIds = tepDashboardNasMetricIds(dash);
         const results = await Promise.all(widgets.map((w) => tepFetchWidgetAvailability(w, dash, dashboardId, metricIds).catch(() => null)));
         webVals = results.filter((v) => v != null && isFinite(v));
+        webBreakdown = widgets.map((w, i) => ({ title: tepWidgetTitle(w.node), value: results[i] })).filter((x) => x.value != null && isFinite(x.value));
         if (webVals.length) {
           const a = webVals.reduce((s, x) => s + x, 0) / webVals.length;
           log(`SaaS widget: fetched + averaged ${webVals.length}/${widgets.length} HTTP Server Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
@@ -15576,6 +15741,7 @@
         const epMetricIds = tepDashboardEndpointMetricIds(dash);
         const results = await Promise.all(epWidgets.map((w) => tepFetchEndpointAvailability(w, dash, dashboardId, epMetricIds).catch(() => null)));
         epVals = results.filter((v) => v != null && isFinite(v));
+        epBreakdown = epWidgets.map((w, i) => ({ title: tepWidgetTitle(w.node), value: results[i] })).filter((x) => x.value != null && isFinite(x.value));
         if (epVals.length) {
           const a = epVals.reduce((s, x) => s + x, 0) / epVals.length;
           log(`SaaS widget: fetched + averaged ${epVals.length}/${epWidgets.length} Endpoint HTTP Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
@@ -15585,10 +15751,12 @@
 
     const all = webVals.concat(epVals);
     const widgetsDetected = webDetected + epDetected;
-    if (!all.length) return { avg: null, count: 0, webCount: 0, endpointCount: 0, widgetsDetected };
+    const breakdown = webBreakdown.concat(epBreakdown).sort((a, b) => a.value - b.value);
+    const dashboardUrl = dash ? window.location.href : null;
+    if (!all.length) return { avg: null, count: 0, webCount: 0, endpointCount: 0, widgetsDetected, breakdown, dashboardUrl };
     const avg = all.reduce((s, x) => s + x, 0) / all.length;
     log(`SaaS widget: combined availability → ${avg.toFixed(2)}% across ${all.length} widget(s) (${webVals.length} web · ${epVals.length} endpoint)`, 'tep-log-ok');
-    return { avg, count: all.length, webCount: webVals.length, endpointCount: epVals.length, widgetsDetected };
+    return { avg, count: all.length, webCount: webVals.length, endpointCount: epVals.length, widgetsDetected, breakdown, dashboardUrl };
   }
 
   /** Circular health ring whose arc length is the availability percent and whose
@@ -15608,6 +15776,62 @@
     </div>`;
   }
 
+  // Set by fillDashWidgetsAsync whenever the SaaS Health average resolves to a
+  // real per-widget breakdown; click on the widget shows it via these.
+  let tepSaasBreakdownData = null;   // { rows: [{title, value}], dashboardUrl } | null
+  let tepSaasPopoverEl = null;
+  function hideSaasBreakdownPopover() {
+    if (tepSaasPopoverEl) { try { tepSaasPopoverEl.remove(); } catch (_) { /* */ } }
+    tepSaasPopoverEl = null;
+    document.removeEventListener('click', tepSaasPopoverOutsideClick, true);
+    document.removeEventListener('keydown', tepSaasPopoverEscHandler, true);
+  }
+  function tepSaasPopoverOutsideClick(e) {
+    if (tepSaasPopoverEl && !tepSaasPopoverEl.contains(e.target) && !e.target.closest('#tep-w-saas')) hideSaasBreakdownPopover();
+  }
+  function tepSaasPopoverEscHandler(e) { if (e.key === 'Escape') hideSaasBreakdownPopover(); }
+  /** Toggle the "what's behind this average" breakdown for the SaaS Health
+   *  widget — one row per contributing dashboard widget, worst-first, each
+   *  linking back to the dashboard the data came from (TE has no separate
+   *  per-test page for a dashboard tile; the real UI drills in on the
+   *  dashboard itself, so that's where these point too). */
+  function toggleSaasBreakdownPopover(anchorEl) {
+    if (tepSaasPopoverEl) { hideSaasBreakdownPopover(); return; }
+    if (!tepSaasBreakdownData || !tepSaasBreakdownData.rows || !tepSaasBreakdownData.rows.length || !anchorEl) return;
+    const { rows, dashboardUrl } = tepSaasBreakdownData;
+    const pop = document.createElement('div');
+    pop.className = 'tep-saas-breakdown-pop';
+    const rowsHtml = rows.map((r) => {
+      const p = Math.max(0, Math.min(100, Number(r.value) || 0));
+      const level = p >= 99 ? 'healthy' : (p >= 95 ? 'warning' : 'unhealthy');
+      const c = tepHealthColor(level);
+      const tag = dashboardUrl ? 'a' : 'div';
+      const hrefAttr = dashboardUrl ? ` href="${tepEscapeHtmlText(dashboardUrl)}" target="_blank" rel="noopener noreferrer"` : '';
+      return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
+    }).join('');
+    pop.innerHTML = '<div class="tep-saas-breakdown-head">Metrics behind this average'
+      + (dashboardUrl ? '<span class="tep-saas-breakdown-hint">click a row to open the dashboard</span>' : '') + '</div>'
+      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
+    // Mounted on <html>, not <body> — same reason as the rest of this panel's
+    // floating chrome (toggle button, fullscreen overlay, etc.): body is
+    // inside dark mode's filtered/lower-stacking subtree, so a popover
+    // appended there would render tinted or hidden behind the map overlay.
+    document.documentElement.appendChild(pop);
+    tepSaasPopoverEl = pop;
+    const rect = anchorEl.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    let top = rect.bottom + 6, left = rect.left;
+    const maxLeft = window.innerWidth - popRect.width - 8;
+    if (left > maxLeft) left = Math.max(8, maxLeft);
+    if (top + popRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - popRect.height - 6);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    setTimeout(() => {
+      document.addEventListener('click', tepSaasPopoverOutsideClick, true);
+      document.addEventListener('keydown', tepSaasPopoverEscHandler, true);
+    }, 0);
+  }
+
   /**
    * Fill the Alerts / Events / SaaS widgets. Alerts & Events need TE's in-app
    * alert/event APIs (endpoints TBD via discovery) → they degrade to "—". SaaS
@@ -15619,6 +15843,9 @@
     const saasEl = document.getElementById('tep-w-saas');
     if (saasEl) {
       let done = false;
+      hideSaasBreakdownPopover();   // stale rows would be confusing after a refresh
+      tepSaasBreakdownData = null;
+      saasEl.className = '';
       try {
         const fetched = await tepFetchDashboardHttpAvailability();
         if (fetched && fetched.count) {
@@ -15626,8 +15853,12 @@
           if (fetched.webCount) parts.push(`${fetched.webCount} web`);
           if (fetched.endpointCount) parts.push(`${fetched.endpointCount} endpoint`);
           const breakdown = parts.length ? ` (${parts.join(' · ')})` : '';
+          const hasBreakdown = Array.isArray(fetched.breakdown) && fetched.breakdown.length > 0;
+          if (hasBreakdown) tepSaasBreakdownData = { rows: fetched.breakdown, dashboardUrl: fetched.dashboardUrl };
           const tip = `Live average across ${fetched.count} HTTP availability widget(s) on this dashboard`
-            + (parts.length ? ` — ${parts.join(', ')}` : '');
+            + (parts.length ? ` — ${parts.join(', ')}` : '')
+            + (hasBreakdown ? ' — click to see each one' : '');
+          saasEl.className = hasBreakdown ? 'tep-w-saas-clickable' : '';
           saasEl.innerHTML = '<div class="tep-saas-health">'
             + `<div><div class="tep-dash-widget-main">${fetched.avg.toFixed(1)}<small>% avail</small></div>`
             + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} metric${fetched.count === 1 ? '' : 's'}${breakdown}</div></div>`
@@ -15835,7 +16066,7 @@
       '<div class="tep-dashmap-full-mapbody" id="tep-dashmap-mapbody"></div>'
       + '<div class="tep-dashmap-full-widgets" id="tep-dashmap-widgets"></div>'
       + '<button type="button" class="tep-dashmap-full-min" id="tep-dashmap-min" title="Minimize (Esc)" aria-label="Minimize map">'
-      + '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>'
+      + '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>'
       + '</button>'
       + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>'
       + '<button type="button" class="tep-dashmap-full-zoom tep-dashmap-full-zoom-out" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>';
@@ -16612,7 +16843,7 @@
   //   (no request body)
   const LIVE_TEST_ENDPOINT_INSTANT_BASE = '/namespace/endpoint-api/test-configs-service/v1/instant-tests/scheduled-tests';
   let liveTestRunning = false;
-  const liveTestTimers = { tick: null, poll: null, end: null, final: null };
+  const liveTestTimers = { tick: null, poll: null, end: null, final: null, intense: null };
   let liveTestTempEndpointIds = [];
   // Last run's { entView, entTestId, epView, epTestId, ... } (see runLiveTest) —
   // kept live by reference so agent map links can jump straight to that
@@ -16758,9 +16989,12 @@
     el.style.borderColor = isError ? '#7f1d1d' : '#334155';
   }
 
-  function liveTestClock(ms) {
-    const s = Math.max(0, Math.round(ms / 1000));
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  function liveTestClock(ms, showMs) {
+    const totalMs = Math.max(0, ms);
+    const s = Math.floor(totalMs / 1000);
+    const base = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    if (!showMs) return base;
+    return `${base}.${String(Math.floor(totalMs % 1000)).padStart(3, '0')}`;
   }
 
   function liveTestClearTimers() {
@@ -16768,6 +17002,8 @@
     if (liveTestTimers.poll) { clearInterval(liveTestTimers.poll); liveTestTimers.poll = null; }
     if (liveTestTimers.end) { clearTimeout(liveTestTimers.end); liveTestTimers.end = null; }
     if (liveTestTimers.final) { clearTimeout(liveTestTimers.final); liveTestTimers.final = null; }
+    if (liveTestTimers.intense) { clearTimeout(liveTestTimers.intense); liveTestTimers.intense = null; }
+    document.body.classList.remove('tep-livetest-intense');
     liveTestRunning = false;
     const btn = document.getElementById('tep-livetest-btn');
     if (btn) { btn.style.background = '#dc2626'; btn.textContent = 'LIVE TEST'; }
@@ -17540,6 +17776,13 @@
     liveTestPathVisLoggedShapeKinds.clear();
     liveTestEndpointLoggedShape = false;
     liveTestRunning = true;
+    // Punch up node/flow animations for the first 20s of the run, then let
+    // liveTestClearTimers() strip the class off (naturally, on stop, or on finish).
+    document.body.classList.add('tep-livetest-intense');
+    liveTestTimers.intense = setTimeout(() => {
+      document.body.classList.remove('tep-livetest-intense');
+      liveTestTimers.intense = null;
+    }, 20000);
     // Hide offline agents IN PLACE (no DOM rebuild → zoom/pan preserved, no reframe).
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
     const btn = document.getElementById('tep-livetest-btn');
@@ -17637,7 +17880,7 @@
       const remaining = Math.max(0, LIVE_TEST_DURATION_MS - elapsed);
       const pct = Math.min(100, Math.round((elapsed / LIVE_TEST_DURATION_MS) * 100));
       liveTestSetBadge(
-        `<div style="font-weight:800;letter-spacing:.5px;color:#fca5a5;margin-bottom:4px;">LIVE TEST · ${liveTestClock(elapsed)} / 1:00</div>`
+        `<div style="font-weight:800;letter-spacing:.5px;color:#fca5a5;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><span class="tep-livetest-badge-dot"></span>LIVE TEST · ${liveTestClock(elapsed, true)} / 1:00</div>`
         + `<div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden;margin-bottom:6px;"><div style="height:100%;width:${pct}%;background:#dc2626;transition:width .3s;"></div></div>`
         + `<div>Enterprise: ${results.entOk ? '✓ running' : '—'} <span style="color:#64748b;">(${tepEscapeHtmlText(results.entMsg)})</span></div>`
         + `<div>Endpoint: ${results.epOk ? '✓ running' : '—'} <span style="color:#64748b;">(${tepEscapeHtmlText(results.epMsg)})</span></div>`
@@ -17647,7 +17890,7 @@
       );
     };
     render();
-    liveTestTimers.tick = setInterval(render, 1000);
+    liveTestTimers.tick = setInterval(render, 50);
     liveTestTimers.poll = setInterval(() => { void liveTestPoll(results, startedAt); }, LIVE_TEST_POLL_MS);
     liveTestTimers.end = setTimeout(() => { void liveTestFinish(results); }, LIVE_TEST_DURATION_MS);
     // First poll shortly after start so labels can appear before the 5s mark.
