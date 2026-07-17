@@ -1929,7 +1929,7 @@
     .tep-livetest-dest { z-index: 6; }
     .tep-livetest-g {
       display: flex; align-items: center; justify-content: center;
-      width: 26px; height: 26px; border-radius: 50%;
+      width: 21px; height: 21px; border-radius: 50%;
       background: #fff;
       box-shadow: 0 0 0 2px #4285F4, 0 2px 8px rgba(0,0,0,.55);
       animation: tep-livetest-dest-pulse 1.6s ease-in-out infinite;
@@ -1954,10 +1954,6 @@
       display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 3px;
       background: rgba(245,158,11,.18); color: #f59e0b; font-size: 9.5px; font-weight: 800;
       letter-spacing: .3px; text-transform: uppercase; vertical-align: middle;
-    }
-    .tep-gcard-estnote {
-      margin-top: 6px; padding: 6px 7px; border-radius: 6px; background: rgba(245,158,11,.1);
-      border: 1px solid rgba(245,158,11,.3); color: #fcd34d; font-size: 10.5px; line-height: 1.4;
     }
     /* Rich hover card for a Google (8.8.8.8) destination PoP node. */
     .tep-gcard { min-width: 210px; max-width: 300px; }
@@ -2073,11 +2069,16 @@
     .tep-map-tip-user { color: #e2e8f0; margin-top: 1px; }
     .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: #94a3b8; }
     .tep-map-tip-meta svg { vertical-align: -2px; }
+    .tep-map-tip-dest {
+      display: flex; align-items: center; gap: 5px; margin-top: 4px; padding-top: 4px;
+      border-top: 1px dashed rgba(148,163,184,.22); color: #cbd5e1; font-size: 10.5px;
+    }
+    .tep-map-tip-dest-g { flex: 0 0 auto; display: inline-flex; }
     .tep-map-tip-metrics span { color: #e2e8f0; font-weight: 600; }
     .tep-map-tip-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
     .tep-map-tip-labels span { background: #334155; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #cbd5e1; }
     .tep-map-tip-more { color: #64748b; margin-top: 4px; }
-    .tep-map-tip-body { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; margin: 0 -2px; padding: 0 2px; }
+    .tep-map-tip-body { max-height: 220px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; margin: 0 -2px; padding: 0 2px; }
     .tep-map-tip-body::-webkit-scrollbar { width: 8px; }
     .tep-map-tip-body::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
     .tep-map-tip-body::-webkit-scrollbar-track { background: transparent; }
@@ -13657,16 +13658,23 @@
     if (age <= 7 * 24 * 3600e3) return 'warning';
     return 'unhealthy';
   }
-  // Clustered (multi-agent) markers are drawn as neutral-blue circles.
-  const TEP_CLUSTER_COLOR = { fill: '#3b82f6', stroke: '#dbeafe' };
+  /** Green (healthy, f=0) → red (unhealthy, f=1) mix at an arbitrary fraction,
+   *  so a cluster's AVERAGE health can be shaded, not just one of 3 buckets. */
+  function tepHealthColorFrac(f) {
+    // Two-stop gradient through amber rather than a straight green→red RGB
+    // lerp — a direct mix passes through a muddy brown/olive midpoint, while
+    // green→amber→red reads as a proper traffic-light gradient at f=0.5.
+    const green = [34, 197, 94], amber = [245, 158, 11], red = [239, 68, 68];
+    const [a, b, t] = f <= 0.5 ? [green, amber, f / 0.5] : [amber, red, (f - 0.5) / 0.5];
+    const mix = a.map((c, i) => Math.round(c + (b[i] - c) * t));
+    const light = mix.map((c) => Math.round(c + (255 - c) * 0.55));
+    return { fill: `rgb(${mix.join(',')})`, stroke: `rgb(${light.join(',')})` };
+  }
   /** Marker colour purely from health: green (healthy) → red (unhealthy); gray = unknown. */
   function tepHealthColor(level) {
     if (level === 'unknown') return { fill: '#64748b', stroke: '#cbd5e1' };
-    const green = [34, 197, 94], red = [239, 68, 68];
     const f = level === 'healthy' ? 0 : (level === 'warning' ? 0.5 : 1);
-    const mix = green.map((c, i) => Math.round(c + (red[i] - c) * f));
-    const light = mix.map((c) => Math.round(c + (255 - c) * 0.55));
-    return { fill: `rgb(${mix.join(',')})`, stroke: `rgb(${light.join(',')})` };
+    return tepHealthColorFrac(f);
   }
   /** Small "user" glyph (head + shoulders) for endpoint-agent map markers.
    *  styleAttr (a full style="…" string) is applied to both shapes so the
@@ -13773,9 +13781,12 @@
         const rc = tepReverseGeocode(lat, lng, knownCc);
         if (rc) locText = rc;
       }
+      const entBaseUrl = buildEnterpriseAgentSettingsUrl(a);
+      const entLiveUrl = liveMapSession && liveTestAgentResultUrl('enterprise', a.agentId);
       list.push({
         kind: 'enterprise', name: a.agentName || 'Agent', location: locText,
-        lat, lng, health: tepEnterpriseHealth(a.status), url: buildEnterpriseAgentSettingsUrl(a),
+        lat, lng, health: tepEnterpriseHealth(a.status),
+        url: entLiveUrl || entBaseUrl, liveResultLink: !!entLiveUrl, baseUrl: entBaseUrl,
         // Only offer a maps link when the coordinates are the agent's real ones.
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.agentId, latencyMs: liveTestLatencyFor(a.agentId),
@@ -13793,10 +13804,13 @@
         lat = g.lat; lng = g.lng;
       }
       epMapped++;
+      const epBaseUrl = buildEndpointAgentViewUrl(a);
+      const epLiveUrl = liveMapSession && liveTestAgentResultUrl('endpoint', a.id);
       list.push({
         kind: 'endpoint', name: a.name, location: a.location || '',
         lat, lng, health: tepEndpointHealth(a.lastSeenMs),
-        lastSeenMs: a.lastSeenMs, url: buildEndpointAgentViewUrl(a),
+        lastSeenMs: a.lastSeenMs,
+        url: epLiveUrl || epBaseUrl, liveResultLink: !!epLiveUrl, baseUrl: epBaseUrl,
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.id, latencyMs: liveTestLatencyFor(a.id),
       });
@@ -13815,7 +13829,9 @@
       : `<svg class="tep-map-tip-typeicon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">${tepUserIconInner(iconStyle)}</svg>`;
     const badge = `<span class="tep-dash-kind tep-dash-kind--${it.kind}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
     const health = `<span class="tep-map-tip-health" style="color:${hc.fill}">${tepEscapeHtmlText(tepHealthLabel(it))}</span>`;
-    const title = it.kind === 'enterprise' ? 'Open this agent\u2019s settings' : 'Open this agent in ThousandEyes';
+    const title = it.liveResultLink
+      ? 'Open this agent\u2019s LIVE TEST result'
+      : (it.kind === 'enterprise' ? 'Open this agent\u2019s settings' : 'Open this agent in ThousandEyes');
     const attrs = clickable ? ` data-idx="${idx}" role="link" tabindex="0" title="${title}"` : '';
     const geo = it.mapUrl
       ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></a>`
@@ -13826,9 +13842,15 @@
     const loss = (Number.isFinite(it.lossPct) && it.lossPct > 0)
       ? `<span class="tep-map-tip-lat" style="color:#fca5a5;font-weight:700;">${Math.round(it.lossPct * 10) / 10}% loss</span>`
       : '';
+    // If this agent has a LIVE TEST flow, show the Google node it's connecting to.
+    const dest = (it.agentId != null) ? liveTestDestByAgent.get(String(it.agentId)) : null;
+    const destHtml = (dest && dest.lat != null)
+      ? `<div class="tep-map-tip-dest"><span class="tep-map-tip-dest-g">${tepGoogleGIconSvg(11)}</span>${tepEscapeHtmlText(dest.location || '8.8.8.8')}${dest.estimated ? ' <span class="tep-gcard-est-tag">est.</span>' : ''}</div>`
+      : '';
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${lat}${loss}${health}</div>
+      ${destHtml}
     </div>`;
   }
   function tepDashTooltipHtml(cluster) {
@@ -13879,9 +13901,6 @@
     rows.push(row('Prefix', info.prefix));
     if (info.cloudProvider) rows.push(row('Cloud', info.cloudProvider + (info.cloudRegion ? ' · ' + info.cloudRegion : '')));
     if (info.geonameId != null) rows.push(row('GeoNames', info.geonameId));
-    const estNote = hasEstimated
-      ? `<div class="tep-gcard-estnote">⚠ TE didn't report a precise city for one or more agents below — their flow is an estimate of the nearest Google edge, not a confirmed location.</div>`
-      : '';
     let agentsHtml = '';
     if (agents && agents.length) {
       const cap = 40;
@@ -13896,7 +13915,7 @@
       const more = agents.length > cap ? `<div class="tep-gcard-more">+${agents.length - cap} more…</div>` : '';
       agentsHtml = `<div class="tep-gcard-agents"><div class="tep-gcard-subhead">${agents.length} agent${agents.length > 1 ? 's' : ''} testing here</div>${items}${more}</div>`;
     }
-    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${estNote}${agentsHtml}</div>`;
+    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${agentsHtml}</div>`;
   }
 
   /** Render the combined enterprise+endpoint agent map. host defaults to the inline
@@ -13961,7 +13980,16 @@
       if (liveMapSession && !items.length) { m.style.display = 'none'; return; }
       m.style.display = '';
       const count = items.length;
-      for (const it of items) { it.latencyMs = liveTestLatencyFor(it.agentId); it.lossPct = liveTestLossFor(it.agentId); }
+      for (const it of items) {
+        it.latencyMs = liveTestLatencyFor(it.agentId);
+        it.lossPct = liveTestLossFor(it.agentId);
+        // Once a LIVE TEST has a result link, agent clicks should jump straight
+        // to that agent's row in the results instead of its settings/detail
+        // page — and fall back the moment the session/link goes away.
+        const liveUrl = liveMapSession && liveTestAgentResultUrl(it.kind, it.agentId);
+        it.url = liveUrl || it.baseUrl;
+        it.liveResultLink = !!liveUrl;
+      }
       const anyOnline = items.some((it) => it.health === 'healthy');
       // Enterprise (instant test) and endpoint (run-once, when an existing
       // 8.8.8.8 test is found) can both be live sources — pulse either kind.
@@ -13978,10 +14006,16 @@
       const useLoss = liveTestLatencyActive && Number.isFinite(lossMax) && lossMax > 0;
       const lossTxt = useLoss ? (Math.round(lossMax * 10) / 10) + '% loss' : '';
       if (count > 1) {
-        const c = (useLat || useLoss) ? tepLiveNodeColor(latAvg, lossMax) : TEP_CLUSTER_COLOR;
+        // Shade the cluster by its members' AVERAGE health (not just one of 3
+        // buckets) so a mostly-healthy cluster reads greener than a mixed one.
+        const healthF = { healthy: 0, warning: 0.5, unhealthy: 1 };
+        const knownHealth = items.map((it) => healthF[it.health]).filter((v) => v != null);
+        const avgHealthF = knownHealth.length ? knownHealth.reduce((s, v) => s + v, 0) / knownHealth.length : null;
+        const c = (useLat || useLoss) ? tepLiveNodeColor(latAvg, lossMax)
+          : (avgHealthF != null ? tepHealthColorFrac(avgHealthF) : { fill: '#64748b', stroke: '#cbd5e1' });
         m.setAttribute('aria-label', (items[0].location || 'Unknown') + ' — ' + count + ' agents'
           + (useLat ? ` — ${latAvg}ms avg` : '') + (useLoss ? ` — ${lossTxt}` : ''));
-        m.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="10" style="fill:'
+        m.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" aria-hidden="true"><circle cx="12" cy="12" r="10" style="fill:'
           + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"/><text x="12" y="12">' + count + '</text></svg>';
       } else {
         const it = items[0];
@@ -14147,7 +14181,7 @@
           const anchorDest = cl.flows[0].dest;
           const de = document.createElement('div');
           de.className = 'tep-agent-map-marker tep-livetest-dest' + (isNewDest ? ' tep-draw' : '');
-          de.innerHTML = '<span class="tep-livetest-g">' + tepGoogleGIconSvg(16) + '</span>';
+          de.innerHTML = '<span class="tep-livetest-g">' + tepGoogleGIconSvg(13) + '</span>';
           de._destInfo = anchorDest.info || { ip: '8.8.8.8', name: 'dns.google', location: anchorDest.location };
           de._destLoc = anchorDest.location;
           overlay.appendChild(de);
@@ -14497,6 +14531,23 @@
 
   // Re-render whichever dashboard map view(s) are currently visible.
   let dashMapFullEl = null;
+  // Keeps the SaaS Health / Alerts / Events widgets current while the
+  // fullscreen map is open: first refresh 3s after spawn, then every 60s.
+  let dashWidgetsRefreshTimer = null;
+  function startDashWidgetsAutoRefresh() {
+    stopDashWidgetsAutoRefresh();
+    dashWidgetsRefreshTimer = setTimeout(() => {
+      void fillDashWidgetsAsync();
+      dashWidgetsRefreshTimer = setInterval(() => { void fillDashWidgetsAsync(); }, 60000);
+    }, 3000);
+  }
+  function stopDashWidgetsAutoRefresh() {
+    if (dashWidgetsRefreshTimer) {
+      clearTimeout(dashWidgetsRefreshTimer);
+      clearInterval(dashWidgetsRefreshTimer);
+      dashWidgetsRefreshTimer = null;
+    }
+  }
   function refreshDashMapViews() {
     if ($('#tep-dash-map-host')) renderDashboardAgentMap();
     if (dashMapFullEl) {
@@ -15258,9 +15309,11 @@
     renderDashWidgets(ov.querySelector('#tep-dashmap-widgets'));
     renderDashboardAgentMap(ov.querySelector('#tep-dashmap-mapbody'), { full: true });
     if (!dashMapAutoLoaded) { dashMapAutoLoaded = true; void loadDashboardMapAgents(false); }
+    startDashWidgetsAutoRefresh();
   }
   function closeDashMapFullscreen() {
     if (!dashMapFullEl) return;
+    stopDashWidgetsAutoRefresh();
     if (dashFullResizeFn) { window.removeEventListener('resize', dashFullResizeFn); dashFullResizeFn = null; }
     // Stop any running live test and move its button/badge back out of the overlay
     // (hidden) before the overlay — and its children — are removed.
@@ -16003,6 +16056,10 @@
   let liveTestRunning = false;
   const liveTestTimers = { tick: null, poll: null, end: null };
   let liveTestTempEndpointIds = [];
+  // Last run's { entView, entTestId, epView, epTestId, ... } (see runLiveTest) —
+  // kept live by reference so agent map links can jump straight to that
+  // agent's row in the running/just-finished instant test's results.
+  let liveTestResultsCache = null;
   // Live latency overlay for the map: agentId(string) → { ms, kind }.
   const liveTestLatency = new Map();
   let liveTestLatencyActive = false;
@@ -16079,7 +16136,28 @@
     liveTestLatencyActive = false;
     liveTestDestByAgent.clear();
     liveTestGeoSkip.clear();
+    liveTestResultsCache = null;
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
+  }
+
+  /** URL for a single agent's row in the current/last LIVE TEST's instant
+   *  results, or null when unavailable — falls back to the agent's normal
+   *  settings/detail page at the call site. Enterprise's network-app-synthetics
+   *  view takes a plain `agentId` param (confirmed via live capture). Endpoint's
+   *  view has no known per-agent deep link yet — its `filters=` param is an
+   *  opaque compressed blob that stayed IDENTICAL across two live captures with
+   *  different agents selected, so it doesn't actually encode agent selection;
+   *  this returns the unfiltered test view for endpoint until that's cracked. */
+  function liveTestAgentResultUrl(kind, agentId) {
+    const r = liveTestResultsCache;
+    if (!r || agentId == null) return null;
+    if (kind === 'enterprise') {
+      if (!r.entView) return null;
+      const sep = r.entView.includes('?') ? '&' : '?';
+      return r.entView + sep + 'agentId=' + encodeURIComponent(agentId);
+    }
+    if (kind === 'endpoint') return r.epView || null;
+    return null;
   }
 
   /** Pull a latency-ish millisecond value out of a result row of unknown shape. */
@@ -16236,12 +16314,13 @@
    *  this round yet" rather than a real zero-latency reading, so it's
    *  skipped rather than ingested.
    *
-   *  Destination: TE's endpoint views expose NO per-agent (or even
-   *  aggregate) 8.8.8.8 PoP location — the companion geoname endpoint
-   *  returns the AGENTS' own location clusters, not the destination's. So
-   *  every endpoint flow uses the existing nearest-edge ESTIMATE (dashed/
-   *  amber, "(est.)" tagged) relative to that agent's own coordinates —
-   *  there is no confirmed destination geo to fall back from here.
+   *  Destination: each round with fresh latency data also gets a
+   *  liveTestFetchEndpointDest() call for that same (testId, roundId), which
+   *  pulls the REAL per-agent traceroute topology (the "eyebrow" graph — the
+   *  endpoint equivalent of the enterprise path-vis graph) and resolves the
+   *  actual Google PoP each agent landed on. Only agents that graph doesn't
+   *  cover (data not materialized yet, etc.) fall back to the nearest-edge
+   *  ESTIMATE (dashed/amber, "(est.)" tagged) relative to their own coords.
    *
    *  roundId is recomputed FRESH each call from intervalSec (the test's own
    *  configured measurement interval — CONFIRMED via multiple live-captured
@@ -16294,6 +16373,7 @@
       if (rows.length >= pageSize) {
         log(`LIVE TEST: endpoint agents/paginated round=${roundId} returned a full page (${rows.length}) — some agents may be missing (no pagination yet)`, 'tep-log-info');
       }
+      const seenThisRound = [];
       for (const row of rows) {
         if (!row || row.machineId == null) continue;
         const key = String(row.machineId);
@@ -16307,21 +16387,98 @@
         if (Number.isFinite(lossFrac)) e.loss = lossFrac * 100;   // 0..1 fraction → percentage points
         liveTestLatency.set(key, e);
         n++;
-        if (!liveTestDestByAgent.has(key)) {
-          const src = liveTestAgentOwnCoords(key);
-          const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
-          if (nearest) {
-            const cityLabel = nearest.city + ' (nearest edge, estimated)';   // already display-cased in LIVE_TEST_EDGE_HUBS
-            liveTestDestByAgent.set(key, {
-              lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel,
-              info: { ip: LIVE_TEST_TARGET, name: 'dns.google', location: cityLabel },
-              estimated: true,
-            });
-          }
+        seenThisRound.push(key);
+      }
+      // Traceroute path data lives at the SAME (testId, roundId) as the latency
+      // we just pulled — try to resolve the agents seen this round to a REAL
+      // confirmed Google PoP before anything falls back to an estimate.
+      if (seenThisRound.length) {
+        try { await liveTestFetchEndpointDest(testId, roundId, seenThisRound); }
+        catch (e) { log(`LIVE TEST: endpoint dest graph error ${e.message}`, 'tep-log-info'); }
+      }
+    }
+    // Anything still unresolved (this round's graph didn't cover it, data not
+    // materialized yet, etc.) falls back to the nearest-edge estimate relative
+    // to that agent's own coordinates, same as the enterprise path.
+    for (const key of wantIds) {
+      if (liveTestLatency.has(key) && !liveTestDestByAgent.has(key)) {
+        const src = liveTestAgentOwnCoords(key);
+        const nearest = src ? liveTestNearestMetro(src.lat, src.lng) : null;
+        if (nearest) {
+          const cityLabel = nearest.city + ' (nearest edge, estimated)';   // already display-cased in LIVE_TEST_EDGE_HUBS
+          liveTestDestByAgent.set(key, {
+            lat: nearest.lat, lng: nearest.lng, label: LIVE_TEST_TARGET, location: cityLabel,
+            info: { ip: LIVE_TEST_TARGET, name: 'dns.google', location: cityLabel },
+            estimated: true,
+          });
         }
       }
     }
     return n;
+  }
+
+  /**
+   * Resolve each endpoint agent's REAL 8.8.8.8 traceroute destination from the
+   * "eyebrow" topology graph (the endpoint equivalent of the enterprise
+   * path-vis graph) → liveTestDestByAgent. Confirmed endpoint + shape (live
+   * capture, no machineId filter → one call covers every agent on the test):
+   *   POST /ajax/topology/eyebrow/test/{testId}/net/round/{roundId}/paged-graph
+   *   → { nodes:[ { agentId, location, geonameId, ipAddress, ... },
+   *               … { destination:true, location, geonameId, ipAddress } ],
+   *       links:[ { source, target } ], routes:[ { source, route:[{link}] } ] }
+   * Each route's `source` is a node index whose `agentId` identifies the
+   * agent; walking that route's LAST link to its target node gives the
+   * destination node for that specific path.
+   */
+  async function liveTestFetchEndpointDest(testId, roundId, agentIds) {
+    if (testId == null || roundId == null || !Array.isArray(agentIds) || !agentIds.length) return 0;
+    const wanted = agentIds.map(String).filter((id) => !liveTestDestByAgent.has(id) || liveTestDestByAgent.get(id).estimated);
+    if (!wanted.length) return 0;
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
+    const url = `/ajax/topology/eyebrow/test/${encodeURIComponent(testId)}/net/round/${encodeURIComponent(roundId)}/paged-graph`;
+    const body = JSON.stringify({
+      testId, savedEventId: null, layer: 'net', roundId,
+      searchFilters: [],
+      graphOptions: { sourcePagination: { page: 0, pageSize: Math.max(20, wanted.length * 4) }, agentGrouping: 'BY_AGENT' },
+    });
+    let data;
+    try {
+      const r = await ajax(url, { method: 'POST', headers, body });
+      if (!r.ok) return 0;
+      data = await r.json().catch(() => null);
+    } catch (_) { return 0; }
+    if (!data) return 0;
+    const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    const links = Array.isArray(data.links) ? data.links : [];
+    const routes = Array.isArray(data.routes) ? data.routes : [];
+    if (!nodes.length || !routes.length) return 0;
+    const wantSet = new Set(wanted);
+    let stored = 0;
+    for (const rt of routes) {
+      if (!rt || rt.source == null || !Array.isArray(rt.route) || !rt.route.length) continue;
+      const srcNode = nodes[rt.source];
+      const aId = srcNode && srcNode.agentId != null ? String(srcNode.agentId) : null;
+      if (!aId || !wantSet.has(aId)) continue;
+      if (liveTestDestByAgent.has(aId) && !liveTestDestByAgent.get(aId).estimated) continue;
+      const lastHop = rt.route[rt.route.length - 1];
+      const link = lastHop ? links[lastHop.link] : null;
+      const destNode = link ? nodes[link.target] : null;
+      if (!destNode || destNode.destination !== true || !destNode.location) continue;
+      const geo = liveTestResolveDestGeo(destNode.location);
+      if (!geo) continue;
+      const info = {
+        ip: destNode.ipAddress || LIVE_TEST_TARGET, name: destNode.name || 'dns.google',
+        asn: destNode.asn != null ? destNode.asn : 15169, asName: destNode.asName || 'Google LLC',
+        prefix: destNode.prefix || null, countryName: destNode.countryName || null,
+        location: destNode.location, cloudProvider: null, cloudRegion: null,
+        geonameId: destNode.geonameId != null ? destNode.geonameId : null,
+      };
+      liveTestDestByAgent.set(aId, { lat: geo.lat, lng: geo.lng, label: LIVE_TEST_TARGET, location: info.location, info, estimated: false });
+      stored++;
+      log(`LIVE TEST: endpoint agent ${aId} → 8.8.8.8 @ ${tepEscapeHtmlText(destNode.location)}`, 'tep-log-ok');
+    }
+    return stored;
   }
 
   /** Enterprise A2S instant test to 8.8.8.8 — TCP SYN, path trace in-session. */
@@ -16534,27 +16691,58 @@
     return null;
   }
 
-  /** Major real internet interconnection/peering hubs — where Google's anycast
+  /** Google Cloud's real Edge Points of Presence — where Google's anycast
    *  edges actually concentrate. Used ONLY for the "no confirmed city" nearest-
-   *  edge ESTIMATE (liveTestNearestMetro below); confirmed-city matching still
-   *  uses the full METRO_COORDS table above. Restricting the estimate to real
-   *  hubs avoids landing on some arbitrary nearby small city that isn't
-   *  actually where an edge PoP would be. */
+   *  edge ESTIMATE (liveTestNearestMetro below) and as the seeded reference
+   *  layer on the LIVE TEST map; confirmed-city matching still uses the full
+   *  METRO_COORDS table above. Sourced from Google Cloud's own edge-location
+   *  list (cloud.google.com/vpc/docs/edge-locations) so the estimate always
+   *  lands on somewhere Google actually peers, not an arbitrary nearby city. */
   const LIVE_TEST_EDGE_HUBS = {
-    'Ashburn, VA': [39.0437, -77.4875],
-    'Chicago, IL': [41.8781, -87.6298],
-    'New York / New Jersey': [40.7128, -74.0060],
-    'Silicon Valley, CA': [37.3382, -121.8863],
-    'Los Angeles, CA': [34.0522, -118.2437],
-    'Dallas, TX': [32.7767, -96.7970],
-    'Frankfurt': [50.1109, 8.6821],
-    'London': [51.5074, -0.1278],
-    'Amsterdam': [52.3676, 4.9041],
-    'Tokyo': [35.6762, 139.6503],
-    'Singapore': [1.3521, 103.8198],
-    'Hong Kong': [22.3193, 114.1694],
-    'São Paulo': [-23.5505, -46.6333],
-    'Johannesburg': [-26.2041, 28.0473],
+    // North America
+    'Ashburn, VA': [39.04, -77.49], 'Atlanta, GA': [33.75, -84.39], 'Aurora, IL': [41.76, -88.32],
+    'Austin, TX': [30.27, -97.74], 'Boston, MA': [42.36, -71.06], 'Calgary, Canada': [51.05, -114.07],
+    'Chicago, IL': [41.88, -87.63], 'Columbus, OH': [39.96, -83.00], 'Council Bluffs, IA': [41.26, -95.86],
+    'Denver, CO': [39.74, -104.99], 'Dallas, TX': [32.78, -96.80], 'Houston, TX': [29.76, -95.37],
+    'Kansas City, MO': [39.10, -94.58], 'Las Vegas, NV': [36.17, -115.14], 'Los Angeles, CA': [34.05, -118.24],
+    'Miami, FL': [25.76, -80.19], 'Minneapolis, MN': [44.98, -93.27], 'Montreal, Canada': [45.50, -73.57],
+    'New York, NY': [40.71, -74.01], 'Palo Alto, CA': [37.44, -122.14], 'Philadelphia, PA': [39.95, -75.17],
+    'Phoenix, AZ': [33.45, -112.07], 'Portland, OR': [45.52, -122.68], 'Salt Lake City, UT': [40.76, -111.89],
+    'San Antonio, TX': [29.42, -98.49], 'San Jose, CA': [37.34, -121.89], 'Santa Clara, CA': [37.35, -121.95],
+    'Seattle, WA': [47.61, -122.33], 'Querétaro, Mexico': [20.59, -100.39], 'Toronto, Canada': [43.65, -79.38],
+    'Vancouver, Canada': [49.28, -123.12],
+    // South America
+    'Bogotá, Colombia': [4.71, -74.07], 'Buenos Aires, Argentina': [-34.60, -58.38],
+    'Rio de Janeiro, Brazil': [-22.91, -43.17], 'Santiago, Chile': [-33.45, -70.67], 'São Paulo, Brazil': [-23.55, -46.63],
+    // Europe
+    'Amsterdam, Netherlands': [52.37, 4.90], 'Athens, Greece': [37.98, 23.73], 'Barcelona, Spain': [41.39, 2.17],
+    'Berlin, Germany': [52.52, 13.40], 'Brussels, Belgium': [50.85, 4.35], 'Bucharest, Romania': [44.43, 26.10],
+    'Budapest, Hungary': [47.50, 19.04], 'Copenhagen, Denmark': [55.68, 12.57], 'Dublin, Ireland': [53.35, -6.26],
+    'Düsseldorf, Germany': [51.23, 6.77], 'Frankfurt, Germany': [50.11, 8.68], 'Geneva, Switzerland': [46.20, 6.14],
+    'Hamburg, Germany': [53.55, 9.99], 'Helsinki, Finland': [60.17, 24.94], 'Kyiv, Ukraine': [50.45, 30.52],
+    'Lisbon, Portugal': [38.72, -9.14], 'London, UK': [51.51, -0.13], 'Madrid, Spain': [40.42, -3.70],
+    'Manchester, UK': [53.48, -2.24], 'Marseille, France': [43.30, 5.37], 'Milan, Italy': [45.46, 9.19],
+    'Moscow, Russia': [55.75, 37.62], 'Munich, Germany': [48.14, 11.58], 'Oslo, Norway': [59.91, 10.75],
+    'Paris, France': [48.86, 2.35], 'Prague, Czechia': [50.08, 14.44], 'Rome, Italy': [41.90, 12.50],
+    'Saint Petersburg, Russia': [59.94, 30.31], 'Sofia, Bulgaria': [42.70, 23.32], 'Stockholm, Sweden': [59.33, 18.07],
+    'Turin, Italy': [45.07, 7.69], 'Vienna, Austria': [48.21, 16.37], 'Warsaw, Poland': [52.23, 21.01],
+    'Zürich, Switzerland': [47.37, 8.54],
+    // Middle East
+    'Dammam, Saudi Arabia': [26.43, 50.10], 'Doha, Qatar': [25.29, 51.53], 'Dubai, UAE': [25.20, 55.27],
+    'Fujairah, UAE': [25.12, 56.34], 'Muscat, Oman': [23.59, 58.38], 'Tel Aviv, Israel': [32.09, 34.78],
+    // Asia Pacific
+    'Bangkok, Thailand': [13.76, 100.50], 'Busan, South Korea': [35.18, 129.08], 'Chennai, India': [13.08, 80.27],
+    'Delhi, India': [28.61, 77.21], 'Hong Kong': [22.32, 114.17], 'Hsinchu, Taiwan': [24.80, 120.97],
+    'Hyderabad, India': [17.39, 78.49], 'Jakarta, Indonesia': [-6.21, 106.85], 'Kolkata, India': [22.57, 88.36],
+    'Kuala Lumpur, Malaysia': [3.14, 101.69], 'Manila, Philippines': [14.60, 120.98], 'Mumbai, India': [19.08, 72.88],
+    'Osaka, Japan': [34.69, 135.50], 'Seoul, South Korea': [37.57, 126.98], 'Singapore': [1.35, 103.82],
+    'Taipei, Taiwan': [25.03, 121.57], 'Tokyo, Japan': [35.68, 139.69],
+    // Oceania
+    'Auckland, New Zealand': [-36.85, 174.76], 'Brisbane, Australia': [-27.47, 153.03], 'Canberra, Australia': [-35.28, 149.13],
+    'Melbourne, Australia': [-37.81, 144.96], 'Perth, Australia': [-31.95, 115.86], 'Sydney, Australia': [-33.87, 151.21],
+    // Africa
+    'Cape Town, South Africa': [-33.92, 18.42], 'Johannesburg, South Africa': [-26.20, 28.05],
+    'Lagos, Nigeria': [6.52, 3.38], 'Mombasa, Kenya': [-4.04, 39.67],
   };
 
   /** Nearest major interconnection hub to a given point (haversine over
@@ -16814,6 +17002,9 @@
     const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds,
       epOk: false, epMsg: '', epTestId: null, epRoundIntervalSec: null, epFallback: false,
       epTestName: '', epAgentIds: [], epView: null };
+    // Kept by reference — mutations below (entView/epView etc.) stay visible to
+    // liveTestAgentResultUrl() without needing to re-assign this each time.
+    liveTestResultsCache = results;
     if (entIds.length) {
       try {
         const r = await liveTestCreateEnterprise(entIds);
