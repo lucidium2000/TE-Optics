@@ -18562,6 +18562,12 @@
     const dot = document.getElementById('tep-livetest-badge-dot');
     const pulse = document.getElementById('tep-livetest-screenpulse');
     if (!dot || !pulse) return;
+    // Re-append so this stays the LAST child of <html> — same z-index ties
+    // (e.g. the fullscreen map overlay, also 2147483647) are broken by DOM
+    // order, and the overlay is built/appended well after this element, so
+    // without this the map paints over the pulse instead of the other way
+    // around.
+    document.documentElement.appendChild(pulse);
     const r = dot.getBoundingClientRect();
     pulse.style.left = (r.left + r.width / 2) + 'px';
     pulse.style.top = (r.top + r.height / 2) + 'px';
