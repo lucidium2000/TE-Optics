@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.14';
+  const TEP_VERSION = '3.15';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1759,6 +1759,17 @@
     @media (prefers-reduced-motion: reduce) {
       .tep-agent-map-marker--online svg { animation: none; }
     }
+    /* Map search box (bottom-middle, fullscreen only): matches get a pulsing
+       gold glow and jump to the front; everything else dims so hits pop. */
+    .tep-agent-map-marker--searchdim { opacity: .25; }
+    .tep-agent-map-marker--searchhit {
+      z-index: 5;
+      animation: tep-search-hit-pulse 1s ease-in-out infinite;
+    }
+    @keyframes tep-search-hit-pulse {
+      0%, 100% { filter: drop-shadow(0 0 3px rgba(250,204,21,.9)) drop-shadow(0 0 9px rgba(250,204,21,.55)); }
+      50%      { filter: drop-shadow(0 0 7px rgba(250,204,21,1)) drop-shadow(0 0 16px rgba(250,204,21,.9)); }
+    }
     .tep-agent-map-marker--cluster svg text {
       fill: #fff7ed; font: 700 11px -apple-system, Segoe UI, Roboto, sans-serif;
       text-anchor: middle; dominant-baseline: central;
@@ -1941,6 +1952,10 @@
     .tep-dashmap-full-widgets {
       position: absolute; top: 12px; left: 12px; right: 60px; z-index: 4;
       display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; pointer-events: none;
+      /* Column 1 grows taller than its siblings once the ISP stack appears
+         below Enterprise Agents — align-items:start keeps the other 4 tiles
+         their natural short height instead of stretching to match it. */
+      align-items: start;
     }
     @media (max-width: 1000px) { .tep-dashmap-full-widgets { grid-template-columns: repeat(2, 1fr); } }
     .tep-dash-widget {
@@ -1973,7 +1988,43 @@
     .tep-saas-health { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .tep-saas-health .tep-dash-widget-sub { margin-top: 3px; }
     .tep-w-saas-clickable { cursor: pointer; }
+    .tep-isp-health { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .tep-isp-health .tep-dash-widget-sub { margin-top: 3px; }
     .tep-w-saas-clickable:hover .tep-dash-widget-main { color: #fdba74; }
+    /* ISP Health stack: sits in the widget grid's first column, directly under
+       the Enterprise Agents tile, growing downward as each ISP qualifies.
+       col1 is capped a few px short of the viewport bottom (68px = the 56px
+       map inset + the widgets row's own 12px top offset, both measured from
+       the viewport top; 5vh reserved below) so the stack can flex to fill
+       essentially all of the remaining height instead of cutting off at an
+       arbitrary fraction partway down. */
+    .tep-dashmap-col1 {
+      min-width: 0; display: flex; flex-direction: column;
+      max-height: calc(100vh - 68px - 5vh);
+    }
+    .tep-isp-stack {
+      margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
+      flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+      width: 50%; min-width: 150px;
+      /* The scroll container itself must match the (half-width) tiles' width
+         so the scrollbar hugs them directly, instead of sitting way out at
+         the full column's right edge with a big empty gap in between. */
+      direction: rtl; padding-left: 8px;
+      scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
+    }
+    /* Undo the rtl flip for the actual tiles — it's only on the stack
+       container to relocate the scrollbar to the left; content stays normal. */
+    .tep-isp-stack > * { direction: ltr; }
+    .tep-isp-stack::-webkit-scrollbar { width: 6px; }
+    .tep-isp-stack::-webkit-scrollbar-track { background: transparent; }
+    .tep-isp-stack::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 3px; }
+    .tep-isp-stack::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
+    .tep-isp-widget { width: 100%; min-width: 0; padding: 8px 10px; pointer-events: auto; }
+    .tep-isp-widget .tep-dash-widget-title { margin-bottom: 4px; }
+    .tep-isp-widget .tep-dash-widget-main { font-size: 18px; }
+    .tep-isp-widget .tep-health-ring { width: 38px; height: 38px; flex: 0 0 38px; }
+    @keyframes tep-isp-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .tep-isp-widget--in { animation: tep-isp-fadein .4s ease-out both; }
     .tep-saas-breakdown-pop {
       position: fixed; z-index: 2147483647; min-width: 220px; max-width: 320px;
       max-height: 320px; overflow-y: auto;
@@ -2021,6 +2072,28 @@
     }
     .tep-dashmap-full-zoom:hover { border-color: #f97316; color: #fdba74; }
     .tep-dashmap-full-zoom-out { top: 98px; }
+    .tep-dashmap-search {
+      position: absolute; bottom: calc(14px + 5%); left: 50%; transform: translateX(-50%); z-index: 6;
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 12px; border-radius: 20px;
+      background: rgba(15,23,42,.92); border: 1px solid #475569; box-shadow: 0 2px 8px rgba(0,0,0,.5);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    }
+    .tep-dashmap-search:focus-within { border-color: #f97316; box-shadow: 0 0 0 2px rgba(249,115,22,.25), 0 2px 8px rgba(0,0,0,.5); }
+    .tep-dashmap-search svg { flex: 0 0 auto; color: #94a3b8; }
+    .tep-dashmap-search input {
+      width: 240px; max-width: 38vw; background: transparent; border: none; outline: none;
+      color: #e2e8f0; font-size: 13px; font-family: inherit;
+    }
+    .tep-dashmap-search input::placeholder { color: #64748b; }
+    .tep-dashmap-search-count { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: #94a3b8; white-space: nowrap; }
+    .tep-dashmap-search-count--none { color: #f87171; }
+    .tep-dashmap-search-clear {
+      flex: 0 0 auto; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: pointer; color: #94a3b8; background: rgba(148,163,184,.15);
+      border: none; font-size: 10px; line-height: 1; padding: 0;
+    }
+    .tep-dashmap-search-clear:hover { color: #fff; background: rgba(148,163,184,.3); }
     .tep-dash-kind {
       font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
       padding: 1px 5px; border-radius: 4px; margin-left: 4px; vertical-align: middle;
@@ -2054,11 +2127,17 @@
     }
     .tep-map-tip-agent:hover { background: rgba(249,115,22,.16); }
     .tep-map-tip-agent:hover .tep-map-tip-name { color: #fdba74; }
+    /* Matches the pulsing gold marker highlight from the map search box, so a
+       cluster's hover list makes it obvious which row(s) matched. */
+    .tep-map-tip-agent--searchhit { background: rgba(250,204,21,.16); box-shadow: inset 2px 0 0 #facc15; }
+    .tep-map-tip-agent--searchhit:hover { background: rgba(250,204,21,.24); }
+    .tep-map-tip-agent--searchhit .tep-map-tip-name { color: #fde68a; }
     .tep-map-tip-name { font-weight: 700; color: #f8fafc; }
     .tep-map-tip-typeicon { flex-shrink: 0; vertical-align: -2px; margin-right: 4px; }
     .tep-map-tip-user { color: #e2e8f0; margin-top: 1px; }
     .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: #94a3b8; }
     .tep-map-tip-meta svg { vertical-align: -2px; }
+    .tep-map-tip-isp { color: #7dd3fc; font-size: 10.5px; margin-top: 3px; }
     .tep-map-tip-dest {
       display: flex; align-items: center; gap: 5px; margin-top: 4px; padding-top: 4px;
       border-top: 1px dashed rgba(148,163,184,.22); color: #cbd5e1; font-size: 10.5px;
@@ -2823,7 +2902,7 @@
   const liveTestBtn = document.createElement('div');
   liveTestBtn.id = 'tep-livetest-btn';
   liveTestBtn.textContent = 'LIVE TEST';
-  liveTestBtn.title = 'Experimental: instant network test to 8.8.8.8 from all online enterprise agents, plus endpoint agents if an existing endpoint test already targets 8.8.8.8';
+  liveTestBtn.title = 'Experimental: instant network test to 8.8.8.8 from all online enterprise agents, plus endpoint agents if an existing endpoint test already targets 8.8.8.8 — also enriches endpoint/enterprise agents with their reported ISP. Honors the map’s enterprise/endpoint-only filter.';
   liveTestBtn.style.cssText = 'position:fixed;bottom:74px;right:20px;z-index:2147483647;padding:0 14px;height:34px;' +
     'border-radius:17px;background:#dc2626;color:#fff;font-size:12px;font-weight:800;letter-spacing:.6px;' +
     'display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);' +
@@ -2843,6 +2922,25 @@
     'max-width:280px;padding:8px 12px;border-radius:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;' +
     'font-size:11px;line-height:1.5;box-shadow:0 4px 16px rgba(0,0,0,.45);user-select:none;';
   document.documentElement.appendChild(liveTestBadge);
+
+  // "Clear results" — sits just under the LIVE TEST button. While latency data
+  // lingers (liveTestLatencyActive), paintMarker keeps filtering the map down
+  // to online-only agents (the "during a run" behavior) with no other visible
+  // way to back out of it short of re-opening the fullscreen map — which also
+  // silently broke search for anything offline. This gives that reset an
+  // always-visible affordance; visibility kept in sync via
+  // liveTestUpdateClearVisibility(), called from refreshLiveTestOverlay().
+  const liveTestClearBtn = document.createElement('div');
+  liveTestClearBtn.id = 'tep-livetest-clear';
+  liveTestClearBtn.textContent = 'Clear results';
+  liveTestClearBtn.title = 'Clear LIVE TEST results and return the map to its pre-test view';
+  liveTestClearBtn.style.cssText = 'position:fixed;bottom:58px;right:20px;z-index:2147483647;display:none;' +
+    'width:80px;text-align:center;font-size:10px;font-weight:600;letter-spacing:.2px;color:#94a3b8;' +
+    'text-decoration:underline;cursor:pointer;user-select:none;font-family:inherit;transition:color .15s;';
+  liveTestClearBtn.addEventListener('mouseenter', () => { liveTestClearBtn.style.color = '#e2e8f0'; });
+  liveTestClearBtn.addEventListener('mouseleave', () => { liveTestClearBtn.style.color = '#94a3b8'; });
+  liveTestClearBtn.addEventListener('click', () => { liveTestClearLatency(); liveTestSetBadge(''); });
+  document.documentElement.appendChild(liveTestClearBtn);
 
   const mainStyles = tepInjectCSS(STYLES);
 
@@ -7640,6 +7738,8 @@
           // location (the virtual-agents copy often lacks city/coordinates).
           const statusMap = {};
           const geoMap = {};
+          const ipMap = {};
+          const ispMap = {};
           for (const pa of physicalAgents) {
             const id = pa.agentId || pa.id;
             if (!id) continue;
@@ -7657,6 +7757,23 @@
               geoMap[id] = geo;
               if (pa.vAgentId) geoMap['v_' + pa.vAgentId] = geo;
             }
+            // Field name unconfirmed — best-effort across the usual candidates so
+            // the map search box can still match on it when present.
+            const ip = pa.ipAddress || pa.publicIp || pa.privateIp || pa.ip || pa.lastIp || pa.agentIp || '';
+            if (ip) {
+              ipMap[id] = ip;
+              if (pa.vAgentId) ipMap['v_' + pa.vAgentId] = ip;
+            }
+            // CONFIRMED via live capture: pa.network.asName (org that owns the
+            // agent's ASN — e.g. "Atlantic Health System") is this enterprise
+            // agent's ISP Health equivalent. No latency/loss rides along with
+            // it here (unlike the endpoint side), so it's grouping/tooltip only.
+            const net = (pa.network && typeof pa.network === 'object') ? pa.network : null;
+            const isp = net ? (net.asName || net.candidateName || net.shortName || '') : '';
+            if (isp) {
+              ispMap[id] = isp;
+              if (pa.vAgentId) ispMap['v_' + pa.vAgentId] = isp;
+            }
           }
 
           // Log first physical agent structure for debugging
@@ -7664,6 +7781,11 @@
             const sample = physicalAgents[0];
             const statusKeys = Object.keys(sample).filter(k => /status|state|online|last/i.test(k));
             log(`Physical agents: ${physicalAgents.length}, status keys: ${statusKeys.join(', ')} = ${statusKeys.map(k => sample[k]).join(', ')}`, 'tep-log-info');
+            // ISP Health investigation: does this payload carry anything
+            // network-provider-shaped for enterprise agents? Logged once so a
+            // reload surfaces it without needing DevTools.
+            const ispKeys = Object.keys(sample).filter(k => /isp|provider|carrier|asn|as_name|asname|network/i.test(k));
+            log(`Physical agents: ISP/network-looking keys: ${ispKeys.length ? ispKeys.join(', ') + ' = ' + ispKeys.map(k => JSON.stringify(sample[k])).join(', ') : '(none found)'}`, 'tep-log-info');
           }
 
           // Match physical agent status + location/coords to virtual agents
@@ -7677,6 +7799,10 @@
               if ((a.lat == null || a.lng == null) && geo.ll) { a.lat = geo.ll.lat; a.lng = geo.ll.lng; geoFilled++; }
               if ((!a.location || a.location.length <= 3) && geo.loc) a.location = geo.loc;
             }
+            const ip = ipMap[a.physicalId] || ipMap['v_' + a.agentId];
+            if (ip) a.ip = ip;
+            const isp = ispMap[a.physicalId] || ispMap['v_' + a.agentId];
+            if (isp) a.isp = isp;
           }
           log(`Matched status for ${matched} enterprise agent(s); filled coordinates for ${geoFilled}.`, 'tep-log-info');
         }
@@ -12962,6 +13088,9 @@
       location: String(epAgentPickField(raw, ['locationName', 'location', 'city', 'geo']) || ''),
       lat: ll ? ll.lat : null,
       lng: ll ? ll.lng : null,
+      // Field name unconfirmed — best-effort across the usual candidates so the
+      // map search box can still match on it when present; empty just means no match.
+      ip: String(epAgentPickField(raw, ['ip', 'ipAddress', 'publicIp', 'privateIp', 'lastIp', 'agentIp', 'localIp', 'ipv4']) || ''),
       license: String(epAgentPickField(raw, ['licenceType', 'licenseType', 'license', 'licenceTier', 'licenseTier', 'tier']) || ''),
       platform: String(epAgentPickField(raw, ['platform', 'os', 'operatingSystem']) || ''),
       osVersion: String(epAgentPickField(raw, ['osVersion', 'osVer', 'systemVersion']) || ''),
@@ -13785,6 +13914,28 @@
   // entirely (not just visually — excluded from the map's own counts too,
   // same as the existing offline/health filtering during a LIVE TEST).
   let dashMapAgentTypeFilter = null;
+  // null shows every ISP; an ISP name hides every agent not on that ISP
+  // (per-tile radio on the ISP stack, same "show only" pattern as above).
+  let dashMapIspFilter = null;
+  // Fullscreen map search box (bottom-middle): lower-cased query, matched
+  // against name/IP/username. Never hides agents (unlike the type filter
+  // above) — it only highlights/dims markers in place, so it survives a
+  // preserveZoom re-render the same way.
+  let dashMapSearchQuery = '';
+  // Search hook (parallels dashMapZoomHook) — refresh()/highlighting logic
+  // lives inside renderDashboardAgentMap's closure; this is how the search
+  // input (built in openDashMapFullscreen, a different scope) reaches in.
+  let dashMapSearchHook = null;
+  /** True when this map item's name, IP, or (endpoint) username matches the
+   *  lower-cased search query. Field coverage is best-effort — ip/users may
+   *  be empty for agents whose raw record didn't carry a recognized field. */
+  function dashMapItemMatchesQuery(it, q) {
+    if (!q || !it) return false;
+    if (it.name && it.name.toLowerCase().includes(q)) return true;
+    if (it.ip && it.ip.toLowerCase().includes(q)) return true;
+    if (Array.isArray(it.users) && it.users.some((u) => u && u.toLowerCase().includes(q))) return true;
+    return false;
+  }
 
   function tepEnterpriseHealth(status) {
     if (status === 'online') return 'healthy';
@@ -13902,6 +14053,10 @@
     for (const a of agents) {
       if (a.agentType !== 'Enterprise') continue;
       if (dashMapAgentTypeFilter === 'endpoint') continue;
+      if (dashMapIspFilter) {
+        const ih = ispHealthByAgent.get(String(a.agentId));
+        if (!ih || ih.isp !== dashMapIspFilter) continue;
+      }
       if (liveMapSession && tepEnterpriseHealth(a.status) !== 'healthy') continue;
       entTotal++;
       // Prefer the agent's configured coordinates; fall back to geocoding text.
@@ -13931,10 +14086,15 @@
         // Only offer a maps link when the coordinates are the agent's real ones.
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.agentId, latencyMs: liveTestLatencyFor(a.agentId),
+        ip: a.ip || '',
       });
     }
     for (const a of allEndpointAgents) {
       if (dashMapAgentTypeFilter === 'enterprise') continue;
+      if (dashMapIspFilter) {
+        const ih = ispHealthByAgent.get(String(a.id));
+        if (!ih || ih.isp !== dashMapIspFilter) continue;
+      }
       if (liveMapSession && tepEndpointHealth(a.lastSeenMs) !== 'healthy') continue;
       epTotal++;
       // Prefer the agent's real coordinates; fall back to geocoding its location text.
@@ -13955,6 +14115,7 @@
         url: epLiveUrl || epBaseUrl, liveResultLink: !!epLiveUrl, baseUrl: epBaseUrl,
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.id, latencyMs: liveTestLatencyFor(a.id),
+        ip: a.ip || '', users: a.users || [],
       });
     }
     return { list, entTotal, entMapped, epTotal, epMapped };
@@ -13962,7 +14123,9 @@
 
   function tepDashTipRow(it, idx) {
     const clickable = !!(it.url && it.url !== '#');
-    const cls = 'tep-map-tip-agent' + (clickable ? ' tep-dash-tip-clickable' : ' tep-dash-tip-noclick');
+    const isSearchMatch = !!(dashMapSearchQuery && dashMapItemMatchesQuery(it, dashMapSearchQuery));
+    const cls = 'tep-map-tip-agent' + (clickable ? ' tep-dash-tip-clickable' : ' tep-dash-tip-noclick')
+      + (isSearchMatch ? ' tep-map-tip-agent--searchhit' : '');
     const hc = tepHealthColor(it.health);
     const iconStyle = `style="fill:${hc.fill};stroke:${hc.stroke};stroke-width:2"`;
     // Match the map marker: rounded square = enterprise, head/shoulders = user.
@@ -13978,8 +14141,9 @@
     const geo = it.mapUrl
       ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></a>`
       : '';
+    const latGoalMs = it.kind === 'endpoint' ? ISP_HEALTH_LATENCY_GOAL_MS : undefined;
     const lat = Number.isFinite(it.latencyMs)
-      ? `<span class="tep-map-tip-lat" style="color:${tepLiveNodeColor(it.latencyMs, it.lossPct).stroke};font-weight:700;">${it.latencyMs}ms</span>`
+      ? `<span class="tep-map-tip-lat" style="color:${tepLiveNodeColor(it.latencyMs, it.lossPct, latGoalMs).stroke};font-weight:700;">${it.latencyMs}ms</span>`
       : '';
     const loss = (Number.isFinite(it.lossPct) && it.lossPct > 0)
       ? `<span class="tep-map-tip-lat" style="color:#fca5a5;font-weight:700;">${Math.round(it.lossPct * 10) / 10}% loss</span>`
@@ -13989,9 +14153,18 @@
     const destHtml = (dest && dest.lat != null)
       ? `<div class="tep-map-tip-dest"><span class="tep-map-tip-dest-g">${tepGoogleGIconSvg(11)}</span>${tepEscapeHtmlText(dest.location || '8.8.8.8')}${dest.estimated ? ' <span class="tep-gcard-est-tag">est.</span>' : ''}</div>`
       : '';
+    const usersHtml = (it.kind === 'endpoint' && Array.isArray(it.users) && it.users.length)
+      ? `<div class="tep-map-tip-user">${tepEscapeHtmlText(it.users.join(', '))}</div>` : '';
+    // ISP Health mode: agent's reported ISP (+ public IP for endpoint agents), when loaded.
+    const isp = (it.agentId != null) ? ispHealthByAgent.get(String(it.agentId)) : null;
+    const ispHtml = isp
+      ? `<div class="tep-map-tip-isp">${tepEscapeHtmlText(isp.isp)}${isp.publicIp ? ' · ' + tepEscapeHtmlText(isp.publicIp) : ''}</div>`
+      : '';
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
+      ${usersHtml}
       <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${lat}${loss}${health}</div>
+      ${ispHtml}
       ${destHtml}
     </div>`;
   }
@@ -14118,8 +14291,21 @@
       const cl = m._cluster;
       // During a LIVE TEST, only online agents are shown — hide offline-only
       // markers in place (no DOM rebuild → the map never repositions/zooms).
+      // An active search query is exempt from that filter: search exists to
+      // locate ANY agent by name/IP/user, so a match must stay visible and
+      // highlighted even if it's offline and would otherwise be hidden here
+      // (this is what made search look completely broken during/after a run —
+      // every offline match was being silently hidden before it ever got the
+      // chance to show as a hit).
       const liveMapSession = liveTestRunning || liveTestLatencyActive;
-      const items = liveMapSession ? cl.items.filter((it) => it.health === 'healthy') : cl.items;
+      const searchMatches = dashMapSearchQuery
+        ? cl.items.filter((it) => dashMapItemMatchesQuery(it, dashMapSearchQuery))
+        : [];
+      const items = liveMapSession
+        ? (searchMatches.length
+          ? Array.from(new Set([...cl.items.filter((it) => it.health === 'healthy'), ...searchMatches]))
+          : cl.items.filter((it) => it.health === 'healthy'))
+        : cl.items;
       if (liveMapSession && !items.length) { m.style.display = 'none'; return; }
       m.style.display = '';
       const count = items.length;
@@ -14137,10 +14323,12 @@
       // Enterprise (instant test) and endpoint (run-once, when an existing
       // 8.8.8.8 test is found) can both be live sources — pulse either kind.
       const isSrc = liveTestRunning && items.length > 0;
+      const searchHit = searchMatches.length > 0;
       m.className = 'tep-agent-map-marker tep-dash-map-marker'
         + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
         + (anyOnline ? ' tep-agent-map-marker--online' : '')
-        + (isSrc ? ' tep-livetest-src' : '');
+        + (isSrc ? ' tep-livetest-src' : '')
+        + (dashMapSearchQuery ? (searchHit ? ' tep-agent-map-marker--searchhit' : ' tep-agent-map-marker--searchdim') : '');
       const latVals = items.map((it) => it.latencyMs).filter((v) => Number.isFinite(v));
       const latAvg = latVals.length ? Math.round(latVals.reduce((s, v) => s + v, 0) / latVals.length) : null;
       const lossVals = items.map((it) => it.lossPct).filter((v) => Number.isFinite(v));
@@ -14148,13 +14336,17 @@
       const useLat = liveTestLatencyActive && latAvg != null;
       const useLoss = liveTestLatencyActive && Number.isFinite(lossMax) && lossMax > 0;
       const lossTxt = useLoss ? (Math.round(lossMax * 10) / 10) + '% loss' : '';
+      // Endpoint agents' latency is a home-network hop (judged against ISP
+      // Health's looser 30ms goal); enterprise keeps LIVE TEST's tighter
+      // 20ms default. A mixed cluster falls back to the tighter default.
+      const latencyGoalMs = items.every((it) => it.kind === 'endpoint') ? ISP_HEALTH_LATENCY_GOAL_MS : undefined;
       if (count > 1) {
         // Shade the cluster by its members' AVERAGE health (not just one of 3
         // buckets) so a mostly-healthy cluster reads greener than a mixed one.
         const healthF = { healthy: 0, warning: 0.5, unhealthy: 1 };
         const knownHealth = items.map((it) => healthF[it.health]).filter((v) => v != null);
         const avgHealthF = knownHealth.length ? knownHealth.reduce((s, v) => s + v, 0) / knownHealth.length : null;
-        const c = (useLat || useLoss) ? tepLiveNodeColor(latAvg, lossMax)
+        const c = (useLat || useLoss) ? tepLiveNodeColor(latAvg, lossMax, latencyGoalMs)
           : (avgHealthF != null ? tepHealthColorFrac(avgHealthF) : { fill: '#64748b', stroke: '#cbd5e1' });
         m.setAttribute('aria-label', (items[0].location || 'Unknown') + ' — ' + count + ' agents'
           + (useLat ? ` — ${latAvg}ms avg` : '') + (useLoss ? ` — ${lossTxt}` : ''));
@@ -14162,7 +14354,7 @@
           + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"/><text x="12" y="12">' + count + '</text></svg>';
       } else {
         const it = items[0];
-        const c = (useLat || useLoss) ? tepLiveNodeColor(it.latencyMs, it.lossPct) : tepHealthColor(it.health);
+        const c = (useLat || useLoss) ? tepLiveNodeColor(it.latencyMs, it.lossPct, latencyGoalMs) : tepHealthColor(it.health);
         const style = 'style="fill:' + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"';
         m.setAttribute('aria-label', (it.name || 'Agent') + ' — ' + (it.kind === 'enterprise' ? 'enterprise' : 'user')
           + (useLat ? ` — ${it.latencyMs}ms` : '') + (useLoss ? ` — ${lossTxt}` : ''));
@@ -14525,7 +14717,32 @@
       layoutMarkers();
       wrap.classList.toggle('tep-agent-map-wrap--zoomed', epDashMapZoom.s > 1);
     }
+    // Eased pan/zoom for jumps the user didn't drive by hand (currently just
+    // the search box's "center on the first match"). Manual wheel/drag input
+    // cancels it immediately so it never fights a real interaction.
+    let dashMapZoomAnimFrame = null;
+    function cancelZoomAnim() {
+      if (dashMapZoomAnimFrame) { cancelAnimationFrame(dashMapZoomAnimFrame); dashMapZoomAnimFrame = null; }
+    }
+    function animateZoomTo(target, duration) {
+      cancelZoomAnim();
+      const from = { s: epDashMapZoom.s, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
+      const dur = duration || 500;
+      const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+      const step = (now) => {
+        const p = Math.min(1, (now - t0) / dur);
+        const e = easeOutCubic(p);
+        epDashMapZoom.s = from.s + (target.s - from.s) * e;
+        epDashMapZoom.tx = from.tx + (target.tx - from.tx) * e;
+        epDashMapZoom.ty = from.ty + (target.ty - from.ty) * e;
+        apply();
+        dashMapZoomAnimFrame = p < 1 ? requestAnimationFrame(step) : null;
+      };
+      dashMapZoomAnimFrame = requestAnimationFrame(step);
+    }
     function zoomAt(factor, clientX, clientY) {
+      cancelZoomAnim();
       const rect = wrap.getBoundingClientRect();
       const px = clientX - rect.left, py = clientY - rect.top;
       const ns = Math.min(MAX, Math.max(MIN, epDashMapZoom.s * factor));
@@ -14546,6 +14763,7 @@
     let down = null, moved = false;
     wrap.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.tep-agent-map-zoom') || e.target.closest('.tep-agent-map-tip')) return;
+      cancelZoomAnim();
       hideTip();
       down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
       moved = false;
@@ -14584,6 +14802,27 @@
       dashMapZoomHook = {
         in: () => { const r = wrap.getBoundingClientRect(); zoomAt(1.4, r.left + r.width / 2, r.top + r.height / 2); },
         out: () => { const r = wrap.getBoundingClientRect(); zoomAt(1 / 1.4, r.left + r.width / 2, r.top + r.height / 2); },
+      };
+      // Search box (bottom-middle, built in openDashMapFullscreen) reaches in
+      // here the same way: re-paint every marker with the current query (adds
+      // the highlight/dim classes, never rebuilds the map — zoom/pan survive),
+      // then jump the view to the first hit so a match is never off-screen.
+      dashMapSearchHook = {
+        refresh: () => {
+          for (const m of markerEls) paintMarker(m);
+          layoutMarkers();
+          const hits = markerEls.filter((m) => m.classList.contains('tep-agent-map-marker--searchhit'));
+          if (dashMapSearchQuery && hits.length) {
+            const w = wrap.clientWidth, h = wrap.clientHeight;
+            if (w > 0 && h > 0) {
+              const first = hits[0];
+              const s = Math.min(MAX, Math.max(epDashMapZoom.s, 3));
+              const topShift = 0.05 * host.clientHeight;
+              animateZoomTo({ s, tx: w / 2 - first._fx * w * s, ty: h / 2 - first._fy * h * s + topShift });
+            }
+          }
+          return hits.length;
+        },
       };
     } else {
       const zc = document.createElement('div');
@@ -14717,11 +14956,32 @@
    * the flow overlay IN PLACE (no DOM rebuild → zoom/pan untouched). Falls back to
    * a full render only if the in-place hook isn't available yet.
    */
+  /** Shows the "Clear results" link whenever there's lingering LIVE TEST data
+   *  to reset (latency/loss readings and/or the ISP stack) and no run is
+   *  currently in flight — while liveTestRunning, the LIVE TEST button itself
+   *  doubles as Cancel, so both controls doing the same thing would be
+   *  confusing clutter. */
+  function liveTestUpdateClearVisibility() {
+    const btn = document.getElementById('tep-livetest-clear');
+    if (!btn) return;
+    const hasData = liveTestLatencyActive || liveTestLatency.size > 0 || ispHealthByAgent.size > 0;
+    btn.style.display = (!liveTestRunning && hasData) ? 'block' : 'none';
+  }
+
   function refreshLiveTestOverlay() {
     // Strictly in-place: never trigger a full re-render (which would re-frame and
     // fight the user's zoom). If the hook isn't ready, do nothing.
     if (dashMapFullEl && typeof dashMapLivePaint === 'function') {
       try { dashMapLivePaint(); } catch (_) { /* */ }
+    }
+    liveTestUpdateClearVisibility();
+    // The ISP stack (under Enterprise Agents) piggybacks on this same
+    // "in-place repaint" flow — renderDashWidgets/tepIspStackHtml themselves
+    // decide what's qualified to show so far, so every call site of this
+    // function (start, poll, final sync, stop/clear) grows/clears it for free.
+    if (dashMapFullEl) {
+      const widgetsEl = dashMapFullEl.querySelector('#tep-dashmap-widgets');
+      if (widgetsEl) { try { renderDashWidgets(widgetsEl); } catch (_) { /* */ } }
     }
   }
 
@@ -14758,12 +15018,56 @@
   }
   /** Small radio button pinned to a widget card's top-right corner (requires
    *  the card to have position:relative) — selecting it filters the fullscreen
-   *  map down to just that agent kind. Both share one `name` for native
-   *  mutual exclusivity; clicking the already-selected one deselects it back
-   *  to "show both" (handled in renderDashWidgets, since a plain radio can't
-   *  toggle itself off natively). */
-  function tepWidgetFilterCheckbox(id, checked) {
-    return `<label class="tep-dash-widget-filter" title="Show only this type on the map"><input type="radio" name="tep-dashmap-agent-filter" id="${id}"${checked ? ' checked' : ''}></label>`;
+   *  map down to just that agent kind (or, for the ISP stack, just that ISP).
+   *  Every radio in a given `group` shares one `name` for native mutual
+   *  exclusivity; clicking the already-selected one deselects it back to
+   *  "show all" (handled in renderDashWidgets, since a plain radio can't
+   *  toggle itself off natively). `title`/`value` let ISP tiles carry the
+   *  actual ISP name without it needing to be DOM-id-safe. */
+  function tepWidgetFilterCheckbox(id, checked, group, title, value) {
+    const g = group || 'tep-dashmap-agent-filter';
+    const t = title || 'Show only this type on the map';
+    const v = value != null ? ` data-value="${tepEscapeHtmlText(value)}"` : '';
+    return `<label class="tep-dash-widget-filter" title="${tepEscapeHtmlText(t)}"><input type="radio" name="${g}" id="${id}"${v}${checked ? ' checked' : ''}></label>`;
+  }
+  /** ISP mini-tiles stacked vertically under the Enterprise Agents widget,
+   *  growing downward as each ISP first gets a qualifying latency/loss
+   *  reading (ispHealthAggregates already filters for that). Empty string —
+   *  not even a placeholder card — until the first one qualifies, per the
+   *  "don't show until detected" requirement. Sorted worst health first, tied
+   *  scores broken by agent count descending — ispHealthAggregates' discovery
+   *  order is only the final tiebreaker, via Array.sort's stability. Each
+   *  tile plays a one-shot fade-in only the first time that ISP appears
+   *  (ispHealthFadedIn), not on every repaint. Half-width (.tep-isp-widget)
+   *  to keep screen real estate open; scrolls internally if the list grows
+   *  past a reasonable height rather than pushing into the map below. A
+   *  corner radio filters the map down to just that ISP's agents, same
+   *  "show only" pattern as the Enterprise/Endpoint widget radios. */
+  function tepIspStackHtml() {
+    const aggs = ispHealthAggregates();
+    if (!aggs.length) return '';
+    const scored = aggs.map((g) => {
+      const sev = Math.max(tepLatencySeverity(g.avgLatency, g.allEndpoint ? ISP_HEALTH_LATENCY_GOAL_MS : undefined) || 0, tepLossSeverity(g.avgLoss));
+      return { g, sev, score: Math.round((1 - sev) * 100) };
+    });
+    scored.sort((a, b) => (a.score - b.score) || (b.g.count - a.g.count));
+    const tiles = scored.map(({ g, sev, score }, i) => {
+      const lossTxt = g.avgLoss != null ? `${Math.round(g.avgLoss * 10) / 10}% avg loss` : 'no loss data';
+      const latTxt = g.avgLatency != null ? `${g.avgLatency}ms avg latency` : 'no latency data';
+      const isNew = !ispHealthFadedIn.has(g.isp);
+      if (isNew) ispHealthFadedIn.add(g.isp);
+      const radio = tepWidgetFilterCheckbox(`tep-dashmap-isp-filter-${i}`, dashMapIspFilter === g.isp,
+        'tep-dashmap-isp-filter', `Show only ${g.isp} on the map`, g.isp);
+      return tepWidgetCard(tepEscapeHtmlText(g.isp),
+        radio
+        + '<div class="tep-isp-health">'
+        + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
+        + `<div class="tep-dash-widget-sub">${g.count} agent${g.count === 1 ? '' : 's'}</div>`
+        + `<div class="tep-dash-widget-sub">${latTxt} · ${lossTxt}</div></div>`
+        + tepSeverityRingHtml(sev, '')
+        + '</div>', 'tep-isp-widget' + (isNew ? ' tep-isp-widget--in' : ''));
+    }).join('');
+    return `<div class="tep-isp-stack" id="tep-dashmap-isp-stack">${tiles}</div>`;
   }
   function renderDashWidgets(container) {
     if (!container) return;
@@ -14771,11 +15075,12 @@
     const entTot = s.entOnline + s.entOffline + s.entUnknown;
     const entBar = tepWidgetBar([{ v: s.entOnline, color: '#22c55e' }, { v: s.entOffline, color: '#ef4444' }, { v: s.entUnknown, color: '#64748b' }]);
     const epBar = tepWidgetBar([{ v: s.epOnline, color: '#22c55e' }, { v: s.epOffline, color: '#ef4444' }]);
+    const entWidget = tepWidgetCard('Enterprise Agents',
+      tepWidgetFilterCheckbox('tep-dashmap-filter-ent', dashMapAgentTypeFilter === 'enterprise')
+      + `<div class="tep-dash-widget-main">${s.entOnline}<small> / ${entTot} online</small></div>${entBar}`
+      + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`);
     container.innerHTML =
-      tepWidgetCard('Enterprise Agents',
-        tepWidgetFilterCheckbox('tep-dashmap-filter-ent', dashMapAgentTypeFilter === 'enterprise')
-        + `<div class="tep-dash-widget-main">${s.entOnline}<small> / ${entTot} online</small></div>${entBar}`
-        + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`)
+      `<div class="tep-dashmap-col1">${entWidget}${tepIspStackHtml()}</div>`
       + tepWidgetCard('Endpoint Agents',
         tepWidgetFilterCheckbox('tep-dashmap-filter-ep', dashMapAgentTypeFilter === 'endpoint')
         + `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
@@ -14801,7 +15106,8 @@
         const radio = e.target.closest('input[type="radio"]');
         if (!radio || radio.dataset.wasChecked !== '1') return;
         radio.checked = false;
-        dashMapAgentTypeFilter = null;
+        if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = null;
+        else dashMapAgentTypeFilter = null;
         applyFilterChange();
       });
       container.addEventListener('change', (e) => {
@@ -14809,6 +15115,7 @@
         if (!radio) return;
         if (radio.id === 'tep-dashmap-filter-ent') dashMapAgentTypeFilter = 'enterprise';
         else if (radio.id === 'tep-dashmap-filter-ep') dashMapAgentTypeFilter = 'endpoint';
+        else if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = radio.dataset.value || null;
         else return;
         applyFilterChange();
       });
@@ -15364,6 +15671,25 @@
       </svg>${label}
     </div>`;
   }
+  /** Same ring visual as tepHealthRingHtml, but driven by a 0(healthy)–1(worst)
+   *  severity score (tepSeverityColor's scale — the one latency/loss severity
+   *  already use) instead of an availability percent. tepHealthRingHtml's
+   *  99%/95% cutoffs are tuned for uptime metrics and would misclassify a
+   *  perfectly fine 85/100 latency+loss score as "unhealthy". */
+  function tepSeverityRingHtml(sev, centerLabel) {
+    const s = Math.max(0, Math.min(1, Number(sev) || 0));
+    const score = Math.round((1 - s) * 100);
+    const c = tepSeverityColor(s);
+    const label = centerLabel
+      ? `<span class="tep-health-ring-label" style="color:${c.fill}">${tepEscapeHtmlText(centerLabel)}</span>`
+      : '';
+    return `<div class="tep-health-ring">
+      <svg viewBox="0 0 36 36" aria-hidden="true">
+        <circle class="tep-health-ring-track" cx="18" cy="18" r="15.5" pathLength="100"/>
+        <circle class="tep-health-ring-fill" cx="18" cy="18" r="15.5" pathLength="100" style="stroke:${c.fill};stroke-dasharray:${score.toFixed(1)} 100"/>
+      </svg>${label}
+    </div>`;
+  }
 
   // Set by fillDashWidgetsAsync whenever the SaaS Health average resolves to a
   // real per-widget breakdown; click on the widget shows it via these.
@@ -15619,7 +15945,17 @@
   let dashFullResizeFn = null;
   const TEP_HIDE_WHILE_FULL = ['te-panel-root', 'tep-toggle-btn', 'tep-resize-handle'];
   let dashFullHidden = [];
-  function dashFullEscHandler(e) { if (e.key === 'Escape') { e.preventDefault(); closeDashMapFullscreen(); } }
+  function dashFullEscHandler(e) {
+    if (e.key !== 'Escape') return;
+    // This is a capture-phase document listener, so it always runs before any
+    // listener on the search input itself — stopPropagation from inside the
+    // input can't reach back up here. Checking activeElement is the only way
+    // to let the search box handle its own Escape (clear + blur) instead of
+    // this closing the whole fullscreen map out from under the user.
+    if (document.activeElement && document.activeElement.id === 'tep-dashmap-search-input') return;
+    e.preventDefault();
+    closeDashMapFullscreen();
+  }
   // TE's own title bar (56px, see .tep-dashmap-full's top offset) is left
   // clickable above the overlay, but anything it opens — a menu, a dropdown —
   // expands DOWN into the region the map still covers at max z-index. Rather
@@ -15658,7 +15994,13 @@
       + '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>'
       + '</button>'
       + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>'
-      + '<button type="button" class="tep-dashmap-full-zoom tep-dashmap-full-zoom-out" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>';
+      + '<button type="button" class="tep-dashmap-full-zoom tep-dashmap-full-zoom-out" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>'
+      + '<div class="tep-dashmap-search" id="tep-dashmap-search">'
+      + '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+      + '<input type="text" id="tep-dashmap-search-input" placeholder="Search name, IP, or username…" autocomplete="off" spellcheck="false" aria-label="Search agents by name, IP, or username" />'
+      + '<span class="tep-dashmap-search-count" id="tep-dashmap-search-count"></span>'
+      + '<button type="button" class="tep-dashmap-search-clear" id="tep-dashmap-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">✕</button>'
+      + '</div>';
     // Mount on <html> (like the panel) so it sits above dark mode's blend
     // overlays instead of being tinted/inverted by them.
     document.documentElement.appendChild(ov);
@@ -15667,14 +16009,37 @@
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
     ov.querySelector('#tep-dashmap-zoom-in').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.in(); });
     ov.querySelector('#tep-dashmap-zoom-out').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.out(); });
+    const searchInput = ov.querySelector('#tep-dashmap-search-input');
+    const searchCount = ov.querySelector('#tep-dashmap-search-count');
+    const searchClear = ov.querySelector('#tep-dashmap-search-clear');
+    const runDashMapSearch = () => {
+      const q = searchInput.value.trim();
+      dashMapSearchQuery = q.toLowerCase();
+      searchClear.style.display = q ? '' : 'none';
+      const n = dashMapSearchHook ? dashMapSearchHook.refresh() : 0;
+      searchCount.textContent = q ? (n ? `${n} match${n === 1 ? '' : 'es'}` : 'No matches') : '';
+      searchCount.classList.toggle('tep-dashmap-search-count--none', !!q && !n);
+    };
+    searchInput.addEventListener('input', runDashMapSearch);
+    searchClear.addEventListener('click', () => { searchInput.value = ''; runDashMapSearch(); searchInput.focus(); });
+    // Typing (including Space, which the capture-phase handlers below could
+    // otherwise treat as a shortcut) must stay inside the box, not bubble to
+    // the map's own pan/zoom or the Esc-to-close handler.
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { searchInput.value = ''; runDashMapSearch(); searchInput.blur(); }
+      e.stopPropagation();
+    });
     document.addEventListener('keydown', dashFullEscHandler, true);
     document.addEventListener('click', dashFullTopBarHandler, true);
     // The LIVE TEST button + badge live inside the fullscreen map. Re-parent them
     // into the overlay so they sit above the map (the overlay isolates stacking).
     const ltBtn = document.getElementById('tep-livetest-btn');
     const ltBadge = document.getElementById('tep-livetest-badge');
+    const ltClear = document.getElementById('tep-livetest-clear');
     if (ltBtn) { ov.appendChild(ltBtn); ltBtn.style.display = 'flex'; }
     if (ltBadge) { ov.appendChild(ltBadge); }
+    if (ltClear) { ov.appendChild(ltClear); }
+    liveTestUpdateClearVisibility();
     renderDashWidgets(ov.querySelector('#tep-dashmap-widgets'));
     renderDashboardAgentMap(ov.querySelector('#tep-dashmap-mapbody'), { full: true });
     if (!dashMapAutoLoaded) { dashMapAutoLoaded = true; void loadDashboardMapAgents(false); }
@@ -15689,12 +16054,16 @@
     try { liveTestStop(); } catch (_) { /* */ }
     const ltBtn = document.getElementById('tep-livetest-btn');
     const ltBadge = document.getElementById('tep-livetest-badge');
+    const ltClear = document.getElementById('tep-livetest-clear');
     if (ltBtn) { document.documentElement.appendChild(ltBtn); ltBtn.style.display = 'none'; }
     if (ltBadge) { document.documentElement.appendChild(ltBadge); ltBadge.style.display = 'none'; }
+    if (ltClear) { document.documentElement.appendChild(ltClear); ltClear.style.display = 'none'; }
     dashMapFullEl.remove();
     dashMapFullEl = null;
     dashMapLivePaint = null;
     dashMapZoomHook = null;
+    dashMapSearchHook = null;
+    dashMapSearchQuery = '';
     document.documentElement.style.overflow = '';
     document.removeEventListener('keydown', dashFullEscHandler, true);
     document.removeEventListener('click', dashFullTopBarHandler, true);
@@ -16442,6 +16811,14 @@
   const liveTestLatency = new Map();
   let liveTestLatencyActive = false;
   const LIVE_TEST_LATENCY_BASELINE_MS = 20;
+  // ISP Health's own "healthy" latency goal — looser than LIVE TEST's 20ms
+  // bar since this is a home-ISP hop, not a direct agent→8.8.8.8 test.
+  const ISP_HEALTH_LATENCY_GOAL_MS = 30;
+  // "Omit contributors from local class subnets": how many hops out from the
+  // agent's own node (hop 0) to check for a private/CGNAT hop before giving
+  // up — a hop that's still on a local subnet this close in is the agent's
+  // own home router/LAN, not the wider ISP path.
+  const ISP_HEALTH_LOCAL_HOP_CUTOFF = 3;
   // Per-agent final-hop (8.8.8.8) geolocation: agentId(string) → { lat, lng }.
   // 8.8.8.8 is anycast, so different agents can reach DIFFERENT Google PoPs; each
   // agent's own resolved PoP is stored here (from the path-vis graph). Agents whose
@@ -16449,6 +16826,80 @@
   const liveTestDestByAgent = new Map();
   // Agents whose 8.8.8.8 hop TE only resolved to country level (skipped, logged once).
   const liveTestGeoSkip = new Set();
+
+  // ===========================================================================
+  // ISP Health — folded into LIVE TEST rather than a separate mode/button:
+  // endpoint agents' whoisRangeMeta/networkProfile ride along on the SAME
+  // agents/paginated rows liveTestFetchEndpointLatency already polls every 5s
+  // during a run, so it's captured there as a side effect (no extra fetch).
+  // Enterprise agents carry their ISP/network org (pa.network.asName,
+  // CONFIRMED via live capture — e.g. "Atlantic Health System") on the static
+  // physical-agents payload loadAgents() already has — no latency rides along
+  // with that side, so those entries feed the ISP grouping + hover card only,
+  // never marker recolouring. Deliberately never reads wirelessProfile
+  // (SSID/BSSID/MAC) — personal home-network detail, out of scope.
+  // ===========================================================================
+  // agentId(string) → { isp, publicIp, connType, latencyMs, lossPct, kind }
+  const ispHealthByAgent = new Map();
+  // Stable "as data comes in" order for the ISP stack widget — the first ISP
+  // to get a qualifying reading stays first rather than re-sorting (and
+  // visually jumping around) on every repaint. Reset alongside ispHealthByAgent.
+  let ispHealthDiscoveryOrder = [];
+  // ISPs that have already played their one-shot fade-in — the widget row is
+  // fully rebuilt on every repaint, so without this every tile would replay
+  // the animation each refresh instead of only when it first appears.
+  const ispHealthFadedIn = new Set();
+
+  /** Enterprise agents' static ISP/network org — called once when a run
+   *  starts (see runLiveTest), not on a poll cycle. Feeds the hover card's
+   *  ISP line; never the widget stack below, since enterprise entries never
+   *  carry a latency/loss reading (see ispHealthAggregates). */
+  function ispHealthAddEnterpriseAgents() {
+    let n = 0;
+    for (const a of agents) {
+      if (a.agentType !== 'Enterprise' || !a.isp) continue;
+      ispHealthByAgent.set(String(a.agentId), {
+        isp: a.isp, publicIp: a.ip || '', connType: '', latencyMs: null, lossPct: null, kind: 'enterprise',
+      });
+      n++;
+    }
+    return n;
+  }
+
+  /** ISPs that have at least one agent with an actual latency and/or loss
+   *  reading — excludes enterprise's static network-org-only entries, which
+   *  never carry either, so this only ever reflects live-measured data.
+   *  Ordered by when each ISP first qualified (ispHealthDiscoveryOrder), not
+   *  resorted by count, so the widget stack grows downward without agents
+   *  reshuffling tiles that are already showing. allEndpoint tracks whether
+   *  every counted member is an endpoint agent, so the caller can pick the
+   *  right "healthy" latency goal (endpoint's home-network hop is judged
+   *  more loosely than enterprise's own infra). */
+  function ispHealthAggregates() {
+    const groups = new Map();
+    for (const v of ispHealthByAgent.values()) {
+      if (!Number.isFinite(v.latencyMs) && !Number.isFinite(v.lossPct)) continue;
+      const g = groups.get(v.isp) || { isp: v.isp, count: 0, latSum: 0, latN: 0, lossSum: 0, lossN: 0, allEndpoint: true };
+      g.count++;
+      if (v.kind !== 'endpoint') g.allEndpoint = false;
+      if (Number.isFinite(v.latencyMs)) { g.latSum += v.latencyMs; g.latN++; }
+      if (Number.isFinite(v.lossPct)) { g.lossSum += v.lossPct; g.lossN++; }
+      groups.set(v.isp, g);
+    }
+    for (const isp of groups.keys()) {
+      if (!ispHealthDiscoveryOrder.includes(isp)) ispHealthDiscoveryOrder.push(isp);
+    }
+    return ispHealthDiscoveryOrder
+      .filter((isp) => groups.has(isp))
+      .map((isp) => {
+        const g = groups.get(isp);
+        return {
+          isp: g.isp, count: g.count, allEndpoint: g.allEndpoint,
+          avgLatency: g.latN ? Math.round(g.latSum / g.latN) : null,
+          avgLoss: g.lossN ? g.lossSum / g.lossN : null,
+        };
+      });
+  }
 
   /** Node colour by latency vs the 20ms baseline: ≤20 green, ≤60 amber, >60 red. */
   function tepLatencyColor(ms) {
@@ -16478,9 +16929,12 @@
     const light = rgb.map((c) => Math.round(c + (255 - c) * 0.5));
     return { fill: `rgb(${rgb.join(',')})`, stroke: `rgb(${light.join(',')})` };
   }
-  function tepLatencySeverity(ms) {
+  /** baselineMs defaults to LIVE TEST's 20ms; ISP Health passes its own
+   *  30ms goal (ISP_HEALTH_LATENCY_GOAL_MS) so its "healthy" cutoff reflects
+   *  what's realistic for a home ISP hop rather than LIVE TEST's tighter bar. */
+  function tepLatencySeverity(ms, baselineMs) {
     if (!Number.isFinite(ms)) return null;
-    const base = LIVE_TEST_LATENCY_BASELINE_MS;   // ≤20→0, 60→0.5, ≥120→1
+    const base = baselineMs || LIVE_TEST_LATENCY_BASELINE_MS;   // ≤base→0, 3×base→0.5, ≥6×base→1
     if (ms <= base) return 0;
     if (ms <= base * 3) return 0.5 * ((ms - base) / (base * 2));
     return Math.min(1, 0.5 + 0.5 * ((ms - base * 3) / (base * 3)));
@@ -16490,11 +16944,40 @@
     if (!Number.isFinite(loss) || loss <= 0) return 0;
     return Math.min(1, 0.5 + 0.5 * Math.min(1, loss / 10));
   }
+  /** RFC 1918 private ranges plus 100.64.0.0/10 (carrier-grade NAT, seen in
+   *  live captures e.g. T-Mobile) — none of these are "the ISP", they're the
+   *  agent's own home/local network segment or CGNAT hop in front of it. */
+  function tepIsLocalSubnetIp(ip) {
+    if (!ip || typeof ip !== 'string') return false;
+    const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+    if (!m) return false;
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  /** True when a path-vis route's own hop chain still shows a local/CGNAT
+   *  subnet IP within ISP_HEALTH_LOCAL_HOP_CUTOFF hops of the agent — the
+   *  path hasn't reached real ISP infrastructure yet at that point, so any
+   *  degradation this close in is the agent's own network, not the ISP's. */
+  function tepRouteHasLocalSubnetHop(route, nodesArr, linksArr) {
+    if (!route || !Array.isArray(route.route) || !route.route.length) return false;
+    const cutoff = Math.min(ISP_HEALTH_LOCAL_HOP_CUTOFF, route.route.length);
+    for (let i = 0; i < cutoff; i++) {
+      const hop = route.route[i];
+      const link = (hop && hop.link != null) ? linksArr[hop.link] : null;
+      const node = link ? nodesArr[link.target] : null;
+      if (node && tepIsLocalSubnetIp(node.ipAddress)) return true;
+    }
+    return false;
+  }
   /** Combined node colour from latency + loss (whichever is more severe). */
-  function tepLiveNodeColor(ms, loss) {
+  function tepLiveNodeColor(ms, loss, baselineMs) {
     const hasLat = Number.isFinite(ms), hasLoss = Number.isFinite(loss) && loss > 0;
     if (!hasLat && !hasLoss) return { fill: '#64748b', stroke: '#cbd5e1' };
-    const sev = Math.max(tepLatencySeverity(ms) || 0, tepLossSeverity(loss));
+    const sev = Math.max(tepLatencySeverity(ms, baselineMs) || 0, tepLossSeverity(loss));
     return tepSeverityColor(sev);
   }
 
@@ -16515,6 +16998,10 @@
     liveTestDestByAgent.clear();
     liveTestGeoSkip.clear();
     liveTestResultsCache = null;
+    ispHealthByAgent.clear();
+    ispHealthDiscoveryOrder = [];
+    ispHealthFadedIn.clear();
+    dashMapIspFilter = null;
     try { refreshLiveTestOverlay(); } catch (_) { /* */ }
   }
 
@@ -16766,11 +17253,28 @@
         const key = String(row.machineId);
         if (!wantIds.has(key)) continue;   // only agents this run actually targeted
         const ms = Number(row.latencyMs);
+        const lossFrac = Number(row.loss);
+        // ISP Health enrichment rides on the SAME row — CONFIRMED via live
+        // capture (whoisRangeMeta.orgName, networkProfile.publicIpAddress) —
+        // so capture it here instead of a separate fetch, regardless of
+        // whether this round's latency reading is valid yet.
+        const whois = (row.whoisRangeMeta && typeof row.whoisRangeMeta === 'object') ? row.whoisRangeMeta : {};
+        const net = (row.networkProfile && typeof row.networkProfile === 'object') ? row.networkProfile : {};
+        const isp = whois.orgName || '';
+        const publicIp = net.publicIpAddress || '';
+        if (isp || publicIp) {
+          ispHealthByAgent.set(key, {
+            isp: isp || 'Unknown ISP', publicIp, connType: net.type || '',
+            latencyMs: (Number.isFinite(ms) && ms > 0) ? Math.round(ms) : null,
+            lossPct: Number.isFinite(lossFrac) ? lossFrac * 100 : null,
+            kind: 'endpoint',
+          });
+        }
         if (!Number.isFinite(ms) || ms <= 0) continue;   // 0 looks like "no data yet" here, not a real reading
         const e = liveTestLatency.get(key) || { kind: 'endpoint' };
         e.kind = 'endpoint';
         e.ms = Math.round(ms);
-        const lossFrac = Number(row.loss);
+        e.roundId = roundId;   // last round this agent actually reported in
         if (Number.isFinite(lossFrac)) e.loss = lossFrac * 100;   // 0..1 fraction → percentage points
         liveTestLatency.set(key, e);
         n++;
@@ -16784,7 +17288,30 @@
         catch (e) { log(`LIVE TEST: endpoint dest graph error ${e.message}`, 'tep-log-info'); }
       }
     }
-    // Anything still unresolved (this round's graph didn't cover it, data not
+    // Every polling session re-checks any agent still lacking a CONFIRMED
+    // destination — not just the ones freshly seen in the current/previous
+    // round above. An agent's own measurement round can roll out of that
+    // 2-round window (e.g. it only reported once, early in the run) while its
+    // traceroute topology is still materializing server-side; without this,
+    // such an agent would never get retried again for the rest of the run.
+    // Retry against each agent's own LAST-KNOWN round (batched per round to
+    // minimize calls), which also naturally re-tries any estimated:true entry
+    // since liveTestFetchEndpointDest's own `wanted` filter includes those.
+    const staleRounds = new Map();   // roundId → [agentId, ...]
+    for (const key of wantIds) {
+      if (!liveTestLatency.has(key)) continue;
+      const dest = liveTestDestByAgent.get(key);
+      if (dest && !dest.estimated) continue;   // already confirmed
+      const lastRound = liveTestLatency.get(key).roundId;
+      if (lastRound == null || rounds.includes(lastRound)) continue;   // already covered above this poll
+      if (!staleRounds.has(lastRound)) staleRounds.set(lastRound, []);
+      staleRounds.get(lastRound).push(key);
+    }
+    for (const [rId, ids] of staleRounds) {
+      try { await liveTestFetchEndpointDest(testId, rId, ids); }
+      catch (e) { log(`LIVE TEST: endpoint dest graph re-check error ${e.message}`, 'tep-log-info'); }
+    }
+    // Anything STILL unresolved (this round's graph didn't cover it, data not
     // materialized yet, etc.) falls back to the nearest-edge estimate relative
     // to that agent's own coordinates, same as the enterprise path.
     for (const key of wantIds) {
@@ -17189,8 +17716,10 @@
   async function liveTestFetchPathVisDest(testId, agentIds, kindLabel) {
     kindLabel = kindLabel || 'enterprise';
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
-    // All agents already resolved → nothing to do.
-    if (agentIds.every((id) => liveTestDestByAgent.has(String(id)))) return 0;
+    // All agents already CONFIRMED (not just estimated) → nothing to do. An
+    // estimated entry must keep retrying on later polls in case TE resolves
+    // the real PoP after the fact — that's the whole point of estimated:true.
+    if (agentIds.every((id) => { const d = liveTestDestByAgent.get(String(id)); return d && !d.estimated; })) return 0;
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const enc = encodeURIComponent;
@@ -17217,6 +17746,42 @@
     } catch (_) { return 0; }
     const nodes = data && Array.isArray(data.nodes) ? data.nodes : [];
     if (!nodes.length) return 0;
+    const routesAll = data && Array.isArray(data.routes) ? data.routes : [];
+    const linksAll = data && Array.isArray(data.links) ? data.links : [];
+
+    // ISP Health enrichment: CONFIRMED via live capture — each agent's own
+    // source node on this SAME graph carries its outbound asName/publicIpAddress
+    // directly (e.g. a cloud-hosted enterprise agent's asName is its hosting
+    // provider, "DigitalOcean LLC"), no separate fetch needed. Paired with
+    // whatever latency/loss liveTestFetchEnterpriseLatency has already tracked
+    // for that agent (this function only resolves destinations, not latency).
+    // "Omit contributors with loss on local class subnets": a private/CGNAT
+    // hop within the first few hops is normal (every agent's own router/LAN)
+    // and doesn't by itself say anything about the ISP — it only disqualifies
+    // an agent's reading when that run ALSO shows loss, since TE doesn't
+    // expose true per-hop loss (only each agent's own end-to-end loss), so a
+    // local hop + measured loss together is the best available signal that
+    // the loss is happening on the agent's own network, not the ISP's.
+    // Latency is left alone either way — only loss gets zeroed out — since
+    // a local hop says nothing about whether the end-to-end latency reading
+    // is trustworthy.
+    for (const n of nodes) {
+      // hop:0 = the agent's own vantage point (confirmed on every sampled
+      // node) — skip anything else so a downstream router hop never gets
+      // mistaken for the agent's own ISP.
+      if (!n || n.agentId == null || n.hop !== 0 || !n.asName) continue;
+      const key = String(n.agentId);
+      const agentRoute = routesAll.find((rt) => rt && rt.source === n.index && rt.destinationIp === LIVE_TEST_TARGET);
+      const loss = liveTestLossFor(key);
+      const localLoss = Number.isFinite(loss) && loss > 0
+        && agentRoute && tepRouteHasLocalSubnetHop(agentRoute, nodes, linksAll);
+      ispHealthByAgent.set(key, {
+        isp: n.asName, publicIp: n.publicIpAddress || n.ipAddress || '', connType: '',
+        latencyMs: liveTestLatencyFor(key),
+        lossPct: localLoss ? null : loss,
+        kind: 'enterprise',
+      });
+    }
 
     // 3) Different agents can reach 8.8.8.8 at DIFFERENT Google PoPs — TE models
     //    that as multiple 8.8.8.8 destination nodes, each with its own
@@ -17241,7 +17806,6 @@
         log(`  destNode[${i}]: destination=${dn.destination} geonameId=${dn.geonameId} location="${dn.location}" `
           + `sourceIdToLocation keys=${keys.length} sample: ${sample}`, 'tep-log-info');
       });
-      const routesAll = data && Array.isArray(data.routes) ? data.routes : [];
       const destRoutes = routesAll.filter((rt) => rt && rt.destinationIp === LIVE_TEST_TARGET);
       log(`LIVE TEST path-vis (${kindLabel}): ${routesAll.length} route(s), ${destRoutes.length} landing on 8.8.8.8`, 'tep-log-info');
       destRoutes.slice(0, 6).forEach((rt, i) => {
@@ -17249,6 +17813,28 @@
         log(`  route[${i}]: source=${rt.source} (agentId=${srcNode && srcNode.agentId}) `
           + `destinationLocation="${rt.destinationLocation}" destinationGeonameId=${rt.destinationGeonameId}`, 'tep-log-info');
       });
+      // CONFIRMED (kept as a single sample): agent's own hop:0 node carries
+      // asn/asName/publicIpAddress — see the ISP capture block above this block.
+      const srcNodeSample = nodes.find((n) => n && n.agentId != null);
+      if (srcNodeSample) log(`  srcNode sample agentId=${srcNodeSample.agentId}: ${JSON.stringify(srcNodeSample).slice(0, 500)}`, 'tep-log-info');
+      // Hop-level loss/latency investigation ("omit contributors from the
+      // first 3 hops"): walk a route's full hop chain and dump each
+      // intermediate node, to see whether TE exposes PER-HOP loss/latency at
+      // all — the agent's own hop:0 node only carries its END-TO-END reading
+      // (testIdToData[testId].data.avgRtt/loss, agent→8.8.8.8), which is NOT
+      // hop-specific and can't answer "did this happen in the first 3 hops".
+      const chainRoute = destRoutes.find((rt) => rt && Array.isArray(rt.route) && rt.route.length);
+      if (chainRoute) {
+        log(`  route hop chain (source=${chainRoute.source}): ${chainRoute.route.length} hop(s)`, 'tep-log-info');
+        chainRoute.route.slice(0, 6).forEach((hop, i) => {
+          const link = (hop && hop.link != null) ? linksAll[hop.link] : null;
+          const hopNode = link ? nodes[link.target] : null;
+          log(`  hop[${i}]: link=${hop && hop.link} target=${link && link.target} node: `
+            + (hopNode ? JSON.stringify(hopNode).slice(0, 500) : '(none)'), 'tep-log-info');
+        });
+      } else {
+        log('  no route with a non-empty .route[] found to walk for hop-level data', 'tep-log-info');
+      }
     }
 
     // How specific a "City, Region, Country" string is (more parts = finer).
@@ -17305,7 +17891,8 @@
     let stored = 0;
     for (const id of agentIds) {
       const key = String(id);
-      if (liveTestDestByAgent.has(key)) continue;
+      const existing = liveTestDestByAgent.get(key);
+      if (existing && !existing.estimated) continue;   // already confirmed — done
       const loc = perAgentLoc.get(key);
       // Only resolve when we actually know THIS agent's destination — never
       // borrow another agent's PoP (that was the collapsing bug).
@@ -17358,6 +17945,10 @@
       return;
     }
     if (!isOnTEPage()) { toast('Run this on app.thousandeyes.com', 'err'); return; }
+    // Honor the map's Enterprise/Endpoint "show only" filter — when set, only
+    // that agent kind's test actually runs (not just displays).
+    const liveTestWantEnterprise = dashMapAgentTypeFilter !== 'endpoint';
+    const liveTestWantEndpoint = dashMapAgentTypeFilter !== 'enterprise';
     // Clean up any temp test / stale latency left over from a previous run.
     liveTestCleanupTemp();
     liveTestClearLatency();
@@ -17383,15 +17974,16 @@
     try { if (!allEndpointAgents.length) await loadEndpointAgents(); } catch (_) { /* */ }
     try { if (!allEndpointTests.length) await loadEndpointTests(); } catch (_) { /* */ }
 
-    let entIds = onlineEnterpriseVAgentIdsForLiveTest();
-    if (!entIds.length) {
+    let entIds = liveTestWantEnterprise ? onlineEnterpriseVAgentIdsForLiveTest() : [];
+    if (liveTestWantEnterprise && !entIds.length) {
       // Online status comes from the physical-agents fetch, which may still be in
       // flight if LIVE TEST was clicked during load — refresh agent status + retry.
       log('LIVE TEST: no online enterprise agents yet — refreshing agent status…', 'tep-log-info');
       try { await loadAgents(); } catch (_) { /* */ }
       entIds = onlineEnterpriseVAgentIdsForLiveTest();
     }
-    log(`LIVE TEST: ${entIds.length} online enterprise agent(s)`, 'tep-log-info');
+    log(liveTestWantEnterprise ? `LIVE TEST: ${entIds.length} online enterprise agent(s)`
+      : 'LIVE TEST: enterprise skipped — map filtered to endpoint agents only', 'tep-log-info');
 
     const results = { entView: null, entOk: false, entMsg: '', entTestId: null, entAgentIds: entIds,
       epOk: false, epMsg: '', epTestId: null, epRoundIntervalSec: null, epFallback: false,
@@ -17399,7 +17991,9 @@
     // Kept by reference — mutations below (entView/epView etc.) stay visible to
     // liveTestAgentResultUrl() without needing to re-assign this each time.
     liveTestResultsCache = results;
-    if (entIds.length) {
+    if (!liveTestWantEnterprise) {
+      results.entMsg = 'skipped — map filtered to endpoint agents only';
+    } else if (entIds.length) {
       try {
         const r = await liveTestCreateEnterprise(entIds);
         results.entOk = true; results.entView = r.view; results.entTestId = r.testId || null; results.entMsg = `${entIds.length} agent(s)`;
@@ -17407,11 +18001,18 @@
     } else {
       results.entMsg = 'no online enterprise agents';
     }
+    // Enterprise's ISP/network-org data is static (loadAgents already has it) —
+    // populate it once here rather than waiting on any poll, but only when
+    // enterprise is actually in scope for this run.
+    if (liveTestWantEnterprise) ispHealthAddEnterpriseAgents();
 
     // Endpoint: reuse an EXISTING scheduled test that already targets 8.8.8.8
     // (any name, any probe type) rather than creating one — just run it once.
-    const epTest = liveTestFindEndpoint8888Test();
-    if (epTest) {
+    const epTest = liveTestWantEndpoint ? liveTestFindEndpoint8888Test() : null;
+    if (!liveTestWantEndpoint) {
+      results.epMsg = 'skipped — map filtered to enterprise agents only';
+      log('LIVE TEST: endpoint skipped — map filtered to enterprise agents only', 'tep-log-info');
+    } else if (epTest) {
       const scheduledTestId = getEndpointTestId(epTest);
       results.epTestName = getEndpointTestName(epTest);
       results.epAgentIds = onlineEndpointAgentIdsForLiveTest();
