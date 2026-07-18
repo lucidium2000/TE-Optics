@@ -19,7 +19,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.15';
+  const TEP_VERSION = '3.16';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1822,6 +1822,20 @@
       0%   { width: 8px;  height: 8px;  opacity: .9; }
       100% { width: 48px; height: 48px; opacity: 0; }
     }
+    /* One-shot "whole screen" pulse fired from the badge's red dot the
+       instant a run starts (see liveTestFireScreenPulse) — same family as
+       the small pulse above, just filled (a shading wash, not only an
+       outline) and blown out to cover the viewport regardless of size/zoom
+       (vmax, not a fixed px). Plays once, then the element is hidden again
+       and ready for the next run. */
+    .tep-livetest-screenpulse--play {
+      display: block !important;
+      animation: tep-livetest-screenpulse 1.4s ease-out 1;
+    }
+    @keyframes tep-livetest-screenpulse {
+      0%   { width: 14px;   height: 14px;   opacity: .95; }
+      100% { width: 300vmax; height: 300vmax; opacity: 0; }
+    }
     /* Soft glowing base beneath the animated dashes for depth. */
     .tep-livetest-flowsvg .tep-livetest-flow-glow {
       fill: none; stroke: #4285F4; stroke-width: 6; opacity: .18;
@@ -2001,11 +2015,20 @@
       padding: 10px 13px; min-width: 0; pointer-events: auto;
       -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%);
       box-shadow: 0 4px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
-      /* Matches Enterprise/Endpoint's natural height (title + big number/bar
-         + sub line) so Alerts/Events/SaaS Health — which have less content —
-         don't read as visibly shorter tiles in the same row. */
-      box-sizing: border-box; min-height: 108px;
+      box-sizing: border-box;
     }
+    /* Matches Enterprise/Endpoint's natural height (title + big number/bar +
+       sub line) so Alerts/Events/SaaS Health — which have less content —
+       don't read as visibly shorter tiles in the same row. A dedicated
+       modifier, NOT part of the shared .tep-dash-widget base: putting
+       min-height there meant ISP tiles (which never want this) needed a
+       min-height:0 override — but that also strips a flex item's default
+       min-height:auto "don't shrink below your own content" protection.
+       With many ISP tiles stacked in a height-constrained, scrollable flex
+       column, that let them actually get squashed smaller than their
+       content instead of scrolling, which is exactly the "loading too
+       small" / overlapping-ring bug this fixes. */
+    .tep-dash-widget--matchheight { min-height: 108px; }
     .tep-dash-widget-filter {
       position: absolute; top: 8px; right: 8px; z-index: 1;
       display: flex; align-items: center; justify-content: center; cursor: pointer;
@@ -2058,7 +2081,7 @@
     .tep-isp-stack {
       margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
       flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-      width: 50%; min-width: 150px;
+      width: 55%; min-width: 150px;
       /* The scroll container itself must match the (half-width) tiles' width
          so the scrollbar hugs them directly, instead of sitting way out at
          the full column's right edge with a big empty gap in between. */
@@ -2072,7 +2095,7 @@
     .tep-isp-stack::-webkit-scrollbar-track { background: transparent; }
     .tep-isp-stack::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 3px; }
     .tep-isp-stack::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
-    .tep-isp-widget { width: 100%; min-width: 0; min-height: 0; padding: 8px 10px; pointer-events: auto; }
+    .tep-isp-widget { width: 100%; min-width: 0; padding: 8px 10px; pointer-events: auto; }
     .tep-isp-widget .tep-dash-widget-title { margin-bottom: 4px; }
     .tep-isp-widget .tep-dash-widget-main { font-size: 18px; }
     .tep-isp-widget .tep-health-ring { width: 38px; height: 38px; flex: 0 0 38px; }
@@ -3102,6 +3125,17 @@
   liveTestClearBtn.addEventListener('mouseleave', () => { liveTestClearBtn.style.color = '#94a3b8'; });
   liveTestClearBtn.addEventListener('click', () => { liveTestClearLatency(); liveTestSetBadge(''); });
   document.documentElement.appendChild(liveTestClearBtn);
+
+  // One-shot "whole screen" pulse fired from the LIVE TEST badge's red dot
+  // the instant a run starts — see liveTestFireScreenPulse(). A single
+  // persistent element (not rebuilt per-run) so re-triggering it is just a
+  // reflow + class toggle, not DOM churn.
+  const liveTestScreenPulse = document.createElement('div');
+  liveTestScreenPulse.id = 'tep-livetest-screenpulse';
+  liveTestScreenPulse.style.cssText = 'position:fixed;left:0;top:0;border-radius:50%;pointer-events:none;' +
+    'z-index:2147483647;transform:translate(-50%,-50%);background:rgba(239,68,68,.16);' +
+    'border:2px solid rgba(239,68,68,.6);display:none;';
+  document.documentElement.appendChild(liveTestScreenPulse);
 
   const mainStyles = tepInjectCSS(STYLES);
 
@@ -15644,13 +15678,14 @@
     const entWidget = tepWidgetCard('Enterprise Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ent', dashMapAgentTypeFilter === 'enterprise')
       + `<div class="tep-dash-widget-main">${s.entOnline}<small> / ${entTot} online</small></div>${entBar}`
-      + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`);
+      + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`,
+      'tep-dash-widget--matchheight');
     const col1Html = `<div class="tep-dashmap-col1" id="tep-dashmap-col1">${entWidget}${tepIspStackHtml()}</div>`;
     const epHtml = tepWidgetCard('Endpoint Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ep', dashMapAgentTypeFilter === 'endpoint')
       + `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
       + `<div class="tep-dash-widget-sub" title="online = seen in the last 24 h">${s.epOnline} online · ${s.epOffline} offline</div>`,
-      null, null, ' id="tep-dashmap-widget-ep"');
+      'tep-dash-widget--matchheight', null, ' id="tep-dashmap-widget-ep"');
     // Enterprise/Endpoint/ISP stack are cheap, synchronous, and driven by
     // data that's already in memory — safe to rebuild on every call (LIVE
     // TEST polls this in-place every 5s via refreshLiveTestOverlay). Alerts/
@@ -15667,9 +15702,9 @@
         + tepWidgetCard(
           `Alerts<a class="tep-dash-widget-openlink" href="${window.location.origin}/alerts/list?tab=active" `
           + 'target="_blank" rel="noopener noreferrer" title="Open Alerts page" aria-label="Open Alerts page">↗</a>',
-          '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert')
-        + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>', '', `${window.location.origin}/events/`)
-        + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>');
+          '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert tep-dash-widget--matchheight')
+        + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight', `${window.location.origin}/events/`)
+        + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight');
       void fillDashWidgetsAsync();
     } else {
       const col1El = container.querySelector('#tep-dashmap-col1');
@@ -18103,6 +18138,28 @@
     el.style.borderColor = isError ? '#7f1d1d' : '#334155';
   }
 
+  /** Fires the one-shot "whole screen" pulse from the LIVE TEST badge's red
+   *  dot — called once the badge (and its dot) actually exist in the DOM,
+   *  right after the running badge's first render. Positions the persistent
+   *  liveTestScreenPulse element at the dot's CURRENT on-screen center via
+   *  getBoundingClientRect (the dot itself is position:fixed, so this stays
+   *  correct regardless of scroll), then toggles the play class — removed
+   *  first and reflowed in case a previous run's animation is still
+   *  attached, so re-triggering it (a second LIVE TEST run) restarts
+   *  cleanly instead of no-op'ing on an already-applied class. */
+  function liveTestFireScreenPulse() {
+    const dot = document.getElementById('tep-livetest-badge-dot');
+    const pulse = document.getElementById('tep-livetest-screenpulse');
+    if (!dot || !pulse) return;
+    const r = dot.getBoundingClientRect();
+    pulse.style.left = (r.left + r.width / 2) + 'px';
+    pulse.style.top = (r.top + r.height / 2) + 'px';
+    pulse.classList.remove('tep-livetest-screenpulse--play');
+    void pulse.offsetWidth; // force reflow so the animation restarts if retriggered
+    pulse.classList.add('tep-livetest-screenpulse--play');
+    setTimeout(() => { pulse.classList.remove('tep-livetest-screenpulse--play'); }, 1450);
+  }
+
   function liveTestClock(ms, showMs) {
     const totalMs = Math.max(0, ms);
     const s = Math.floor(totalMs / 1000);
@@ -18390,10 +18447,20 @@
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const url = `/ajax/topology/eyebrow/test/${encodeURIComponent(testId)}/net/round/${encodeURIComponent(roundId)}/paged-graph`;
+    // pageSize is sized off `wanted` — but wanted SHRINKS over the run as
+    // agents resolve, so a late re-check pass (often just 1-3 still-unresolved
+    // agents) could request as few as 20 sources. If the graph paginates
+    // agents in some order unrelated to "still unresolved" (alphabetical,
+    // creation order, whatever), our few wanted agents can easily fall
+    // outside that small a page and never come back — a likely explanation
+    // for "the destination is visible in the real test but this never finds
+    // it": it wasn't missing, it was just never actually requested. A high
+    // floor makes that far less likely regardless of how few agents this
+    // particular call is chasing.
     const body = JSON.stringify({
       testId, savedEventId: null, layer: 'net', roundId,
       searchFilters: [],
-      graphOptions: { sourcePagination: { page: 0, pageSize: Math.max(20, wanted.length * 4) }, agentGrouping: 'BY_AGENT' },
+      graphOptions: { sourcePagination: { page: 0, pageSize: Math.max(200, wanted.length * 4) }, agentGrouping: 'BY_AGENT' },
     });
     let data;
     try {
@@ -18414,10 +18481,19 @@
       const aId = srcNode && srcNode.agentId != null ? String(srcNode.agentId) : null;
       if (!aId || !wantSet.has(aId)) continue;
       if (liveTestDestByAgent.has(aId) && !liveTestDestByAgent.get(aId).estimated) continue;
-      const lastHop = rt.route[rt.route.length - 1];
-      const link = lastHop ? links[lastHop.link] : null;
-      const destNode = link ? nodes[link.target] : null;
-      if (!destNode || destNode.destination !== true || !destNode.location) continue;
+      // The destination isn't necessarily the LAST hop — scan backward for
+      // the last hop whose target node is actually flagged destination:true,
+      // rather than assuming route[] always ends exactly there (a route
+      // with trailing hops past the real destination would otherwise silently
+      // miss it here every time).
+      let destNode = null;
+      for (let i = rt.route.length - 1; i >= 0; i--) {
+        const hop = rt.route[i];
+        const link = hop ? links[hop.link] : null;
+        const node = link ? nodes[link.target] : null;
+        if (node && node.destination === true) { destNode = node; break; }
+      }
+      if (!destNode || !destNode.location) continue;
       const geo = liveTestResolveDestGeo(destNode.location);
       if (!geo) continue;
       const info = {
@@ -19189,6 +19265,9 @@
       if (doneEl) doneEl.style.display = remaining <= 0 ? '' : 'none';
     };
     render();
+    // The dot only exists in the DOM once the badge has actually been built
+    // (just above) — firing any earlier would find nothing to position from.
+    liveTestFireScreenPulse();
     liveTestTimers.tick = setInterval(render, 50);
     liveTestTimers.poll = setInterval(() => { void liveTestPoll(results, startedAt); }, LIVE_TEST_POLL_MS);
     liveTestTimers.end = setTimeout(() => { void liveTestFinish(results); }, LIVE_TEST_DURATION_MS);
