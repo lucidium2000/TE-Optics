@@ -16055,7 +16055,10 @@
       // dominate the score on its own.
       const latSev = tepIspLatencySeverity(g.avgLatency);
       const lossSev = tepLossSeverity(g.avgLoss);
-      const sev = latSev * (2 / 3) + lossSev * (1 / 3);
+      // Excellent latency (<=15ms) earns an automatic perfect score, unless
+      // loss is actually present — loss should still tank it even then.
+      const excellentLatency = g.avgLatency != null && g.avgLatency <= 15 && !(g.avgLoss > 0);
+      const sev = excellentLatency ? 0 : (latSev * (2 / 3) + lossSev * (1 / 3));
       return { g, sev, score: Math.round((1 - sev) * 100) };
     });
     scored.sort((a, b) => (a.score - b.score) || (b.g.count - a.g.count));
