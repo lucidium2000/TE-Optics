@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.18</span>
+        TE Optics<span class="install-version" aria-label="Build">3.19</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.18';
+  const TEP_VERSION = '3.19';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -451,10 +451,29 @@
     if (existingToggle) { try { existingToggle.remove(); } catch (_) { /* */ } }
     if (existingHandle) { try { existingHandle.remove(); } catch (_) { /* */ } }
   } else if (existingRoot && existingToggle) {
-    const isHidden = existingRoot.style.display === 'none';
-    existingRoot.style.display = isHidden ? '' : 'none';
-    if (existingHandle) existingHandle.style.display = isHidden ? '' : 'none';
-    existingToggle.textContent = isHidden ? '✖' : '⌖';
+    // Full-screen map hides te-panel-root as a side effect (TEP_HIDE_WHILE_FULL)
+    // — that's NOT the same as the user having explicitly hidden the panel,
+    // so it must not be treated as "isHidden" below, or a re-click while
+    // full-screen would incorrectly re-show the sidebar UNDER the still-open
+    // overlay instead of closing it.
+    const fullscreenOpen = !!document.querySelector('.tep-dashmap-full');
+    const isHidden = existingRoot.style.display === 'none' && !fullscreenOpen;
+    if (isHidden) {
+      // Was hidden — show it again, same as always.
+      existingRoot.style.display = '';
+      if (existingHandle) existingHandle.style.display = '';
+      existingToggle.textContent = '✖';
+    } else if (typeof existingRoot._tepToggleFullscreenMap === 'function') {
+      // Already visible (sidebar or full-screen) — a second click now
+      // toggles between the two instead of hiding the panel (hiding is
+      // still available via the small toggle button in the corner).
+      existingRoot._tepToggleFullscreenMap();
+    } else {
+      // Fallback for a panel build old enough not to expose the hook.
+      existingRoot.style.display = 'none';
+      if (existingHandle) existingHandle.style.display = 'none';
+      existingToggle.textContent = '⌖';
+    }
     return;
   } else if (existingRoot) {
     return;
@@ -2032,11 +2051,13 @@
       background: #3b82f6;
     }
 
-    /* Header */
+    /* Header — fixed at exactly 56px, TE's own title bar height (same value
+       .tep-dashmap-full's top offset uses) — everything below it (status
+       bar, view tabs) then lines up flush with where TE's title bar ends. */
     .tep-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px; background: #1e293b; border-bottom: 1px solid #334155;
-      user-select: none; gap: 8px;
+      height: 56px; padding: 0 16px; background: #1e293b; border-bottom: 1px solid #334155;
+      user-select: none; gap: 8px; flex-shrink: 0; box-sizing: border-box;
     }
     .tep-header h2 { font-size: 15px; font-weight: 700; color: #f1f5f9; margin: 0; flex: 1; }
     .tep-title-version {
@@ -2136,6 +2157,50 @@
       box-shadow: 0 0 0 3px rgba(249,115,22,.32), 0 0 14px rgba(249,115,22,.5);
     }
     .tep-map-toggle.active svg { transform: none; }
+    /* Extra glossy layer for the header's full-screen-map icon specifically
+       (not the shared Endpoint Agents map-view toggle) — a soft top-down
+       highlight plus a brighter glow on top of the usual orange styling. */
+    .tep-map-toggle--shiny {
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.45) 0%, rgba(255,255,255,0) 42%),
+        linear-gradient(180deg, rgba(249,115,22,.28), rgba(249,115,22,.10));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 0 0 2px rgba(249,115,22,.2),
+        0 2px 6px rgba(0,0,0,.5), 0 0 10px rgba(249,115,22,.35);
+    }
+    .tep-map-toggle--shiny:hover {
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,0) 45%),
+        linear-gradient(180deg, rgba(249,115,22,.42), rgba(249,115,22,.18));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 0 0 3px rgba(249,115,22,.3),
+        0 3px 10px rgba(0,0,0,.55), 0 0 16px rgba(249,115,22,.55);
+    }
+    .tep-map-toggle--shiny.active {
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 42%),
+        radial-gradient(circle at 32% 28%, #fb923c, #c2410c 72%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 0 0 3px rgba(249,115,22,.35),
+        0 0 16px rgba(249,115,22,.6);
+    }
+    /* Header-only muted variant — Enterprise/Endpoint follow the panel's
+       regular slate button scheme instead of the map toggle's orange accent,
+       which stays reserved for the full-screen-map icon. */
+    .tep-map-toggle--muted {
+      color: #cbd5e1; border-color: #475569;
+      background: #334155; box-shadow: none;
+    }
+    .tep-map-toggle--muted:hover {
+      color: #f1f5f9; border-color: #64748b;
+      background: #475569; box-shadow: none;
+    }
+    .tep-map-toggle--muted:focus-visible { outline: 2px solid #64748b; outline-offset: 2px; }
+    .tep-map-toggle--muted.active {
+      color: #fff; border-color: #2563eb;
+      background: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,.28);
+    }
+    .tep-map-toggle--muted.active:hover {
+      color: #fff; border-color: #3b82f6;
+      background: #1d4ed8; box-shadow: 0 0 0 2px rgba(37,99,235,.32);
+    }
     .tep-mode-switch { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
     .tep-agent-map-wrap {
       position: relative; width: 100%; aspect-ratio: 2000 / 1434;
@@ -2485,6 +2550,29 @@
       padding: 2px 3px; border-radius: 4px; cursor: pointer;
     }
     .tep-dash-widget-openlink:hover { opacity: 1; background: rgba(148,163,184,.18); }
+    /* Combined Alerts+Events card: "Alerts" title is its own link to the
+       Alerts page; the rest of that column (count, sub text) opens the
+       active-alerts popover. Events (right) is entirely a real link to the
+       Events page — title and count both count as "go to Events". A short
+       vertical divider (not full height) separates the two columns. */
+    .tep-combo-row { display: flex; gap: 14px; }
+    .tep-combo-col { flex: 1 1 0; min-width: 0; }
+    .tep-combo-divider { width: 1px; flex-shrink: 0; background: #334155; margin: 14px 0; }
+    .tep-combo-title-link {
+      color: inherit; text-decoration: none; transition: color .12s ease;
+    }
+    .tep-combo-title-link:hover { color: #fdba74; }
+    .tep-combo-col--events {
+      text-align: right; color: inherit; text-decoration: none; display: block;
+      transition: color .12s ease;
+    }
+    /* .tep-dash-widget-title is a flex row (left-packed by default) —
+       text-align:right on the column above doesn't affect flex children, so
+       the title needs its own justify-content to actually sit at the right
+       edge. */
+    .tep-combo-col--events .tep-dash-widget-title { justify-content: flex-end; }
+    .tep-combo-col--events:hover { color: #93c5fd; }
+    .tep-combo-col--events:hover .tep-dash-widget-main { color: #93c5fd; }
     /* ISP Health stack: sits in the widget grid's first column, directly under
        the Enterprise Agents tile, growing downward as each ISP qualifies.
        col1 is capped a few px short of the viewport bottom (68px = the 56px
@@ -2519,6 +2607,10 @@
     .tep-isp-widget .tep-health-ring { width: 38px; height: 38px; flex: 0 0 38px; }
     .tep-isp-widget--clickable { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
     .tep-isp-widget--clickable:hover { border-color: #f97316; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+    /* Enterprise/Endpoint Agents widgets — same click-through agent list as
+       the ISP tiles. */
+    .tep-dash-widget--clickable { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
+    .tep-dash-widget--clickable:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     @keyframes tep-isp-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .tep-isp-widget--in { animation: tep-isp-fadein .4s ease-out both; }
     .tep-saas-breakdown-pop {
@@ -2598,7 +2690,16 @@
     }
     .tep-dashmap-search svg, .tep-dash-map-search svg { flex: 0 0 auto; color: #94a3b8; }
     .tep-dashmap-search input, .tep-dash-map-search input {
-      background: transparent; border: none; outline: none;
+      /* !important because some TE pages (Endpoint views specifically) ship
+         their own global text-input reset (border/box-shadow AND sizing —
+         padding/line-height/height) that otherwise wins the cascade over
+         ours on that page only — same markup rendered a visible extra line
+         and taller field there but not on the Dashboard page. */
+      background: transparent !important; border: none !important; outline: none !important;
+      box-shadow: none !important; background-image: none !important;
+      -webkit-appearance: none; appearance: none;
+      padding: 0 !important; margin: 0 !important; height: 18px !important; line-height: 18px !important;
+      box-sizing: content-box !important;
       color: #e2e8f0; font-size: 13px; font-family: inherit;
     }
     .tep-dashmap-search input { width: 240px; max-width: 38vw; }
@@ -3468,6 +3569,16 @@
   const root = document.createElement('div');
   root.id = 'te-panel-root';
   root.setAttribute('data-tep-version', TEP_VERSION);
+  // Exposed so a second bookmarklet click — a fresh script execution with no
+  // access to this closure, only to the DOM it left behind — can toggle
+  // full-screen map mode instead of hiding the panel. Safe to reference
+  // dashMapFullEl/openDashMapFullscreen/closeDashMapFullscreen here despite
+  // them being declared later in this same IIFE: function/let hoisting means
+  // they're already bound by the time this actually gets CALLED (always
+  // after the whole script has finished running, from a later re-click).
+  root._tepToggleFullscreenMap = () => {
+    if (dashMapFullEl) closeDashMapFullscreen(); else openDashMapFullscreen();
+  };
 
   // Toggle button — persists even when panel is hidden. Fixed bottom-right;
   // an earlier attempt to align it inline with TE's own top-right toolbar
@@ -3597,23 +3708,21 @@
       <button class="tep-dark-toggle" id="tep-dark-toggle" style="display:none;" aria-hidden="true" tabindex="-1"></button>
       <button class="tep-dark-reset" id="tep-dark-reset" title="Reset / turn off dark mode" style="display:none;">&#9728;</button>
       <div class="tep-mode-switch" role="group" aria-label="Switch sidebar mode">
-        <button type="button" class="tep-map-toggle" id="tep-mode-enterprise" title="Enterprise: Manage Tests" aria-label="Enterprise: Manage Tests">
+        <button type="button" class="tep-map-toggle tep-map-toggle--muted" id="tep-mode-enterprise" title="Enterprise: Manage Tests" aria-label="Enterprise: Manage Tests">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
           </svg>
         </button>
-        <button type="button" class="tep-map-toggle" id="tep-mode-endpoint" title="Open Endpoint views" aria-label="Open Endpoint views">
+        <button type="button" class="tep-map-toggle tep-map-toggle--muted" id="tep-mode-endpoint" title="Open Endpoint views" aria-label="Open Endpoint views">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 20.5a8 8 0 0 1 16 0Z"/>
             <circle cx="12" cy="7.5" r="4.2"/>
           </svg>
         </button>
-        <button type="button" class="tep-map-toggle" id="tep-mode-map" title="Open Dashboard" aria-label="Open Dashboard">
+        <button type="button" class="tep-map-toggle tep-map-toggle--shiny" id="tep-dash-map-full" title="Full screen map" aria-label="Full screen map">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="7" height="7" rx="1"/>
-            <rect x="14" y="3" width="7" height="7" rx="1"/>
-            <rect x="14" y="14" width="7" height="7" rx="1"/>
-            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <circle cx="12" cy="12" r="9"/>
+            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
           </svg>
         </button>
       </div>
@@ -3957,13 +4066,6 @@
                     <path d="M21 3v5h-5" />
                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
                     <path d="M3 21v-5h5" />
-                  </svg>
-                </button>
-                <button type="button" class="tep-map-toggle" id="tep-dash-map-full" title="Full screen map" aria-label="Full screen map">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
-                    <line x1="8" y1="2" x2="8" y2="18" />
-                    <line x1="16" y1="6" x2="16" y2="22" />
                   </svg>
                 </button>
               </div>
@@ -4505,16 +4607,10 @@
   }
   const modeEnterpriseBtn = root.querySelector('#tep-mode-enterprise');
   const modeEndpointBtn = root.querySelector('#tep-mode-endpoint');
-  const modeMapBtn = root.querySelector('#tep-mode-map');
   if (modeEnterpriseBtn) modeEnterpriseBtn.addEventListener('click', () => activateSidebarMode('manage'));
   if (modeEndpointBtn) {
     modeEndpointBtn.addEventListener('click', () => {
       window.open('https://app.thousandeyes.com/endpoint/views/?scenarioId=eyebrowNetworkTest', '_blank', 'noopener');
-    });
-  }
-  if (modeMapBtn) {
-    modeMapBtn.addEventListener('click', () => {
-      window.open('https://app.thousandeyes.com/dashboard', '_blank', 'noopener');
     });
   }
 
@@ -15034,6 +15130,19 @@
     host.innerHTML = '';
     const { list, entTotal, entMapped, epTotal, epMapped } = buildDashboardMapAgents();
     if (!entTotal && !epTotal) {
+      if (full) {
+        // Fullscreen: show the empty basemap immediately instead of a text
+        // placeholder — opened from a page where agent data isn't preloaded
+        // (e.g. Endpoint views), this render fires before
+        // loadDashboardMapAgents() resolves, and a blank/text "loading" flash
+        // where the map should be reads as broken. The next render (once
+        // agents actually arrive) replaces this wholesale and smoothly
+        // reframes to the real markers, same as any other agents-just-
+        // appeared case.
+        host.innerHTML = '<div class="tep-agent-map-wrap tep-agent-map-wrap--full"><svg class="tep-agent-map-svg" viewBox="0 0 '
+          + TEP_BASEMAP.vbw + ' ' + TEP_BASEMAP.vbh + '" preserveAspectRatio="none" aria-hidden="true">' + TEP_BASEMAP.paths + '</svg></div>';
+        return;
+      }
       host.innerHTML = '<div class="tep-dash-map-empty">No agents loaded yet — use the reload button above.</div>';
       if (countEl) countEl.textContent = 'No agents.';
       return;
@@ -15966,9 +16075,14 @@
     const jobs = [];
     // Endpoint agents are not fetched elsewhere on the dashboard page → load here.
     if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().catch(() => {}));
-    // Enterprise agents come from the portal load (auth flow). Only re-fetch on an
-    // explicit refresh to avoid racing that initial load.
-    if (force) jobs.push(loadAgents().catch(() => {}));
+    // Enterprise agents normally come from the portal load at auth time — but
+    // CONFIRMED that load is skipped entirely on the Endpoint Tools and Manage
+    // Alerts pages (see the page-mode branches around session init), so
+    // `agents` can still be genuinely empty here even outside an explicit
+    // refresh. Fetch whenever it's actually empty, not just on `force`,
+    // otherwise opening the full-screen map from those pages never shows any
+    // enterprise agents at all.
+    if (force || !agents.length) jobs.push(loadAgents().catch(() => {}));
     if (jobs.length) { try { await Promise.all(jobs); } catch (_) {} }
     refreshDashMapViews();
   }
@@ -16126,7 +16240,7 @@
       // Excellent latency (<=15ms) earns an automatic perfect score, unless
       // loss is actually present — loss should still tank it even then.
       const excellentLatency = g.avgLatency != null && g.avgLatency <= 15 && !(g.avgLoss > 0);
-      const sev = excellentLatency ? 0 : (latSev * (2 / 3) + lossSev * (1 / 3));
+      const sev = excellentLatency ? 0 : tepBlendLatencyLossSeverity(latSev, lossSev, g.avgLoss);
       return { g, sev, score: Math.round((1 - sev) * 100) };
     });
     scored.sort((a, b) => (a.score - b.score) || (b.g.count - a.g.count));
@@ -16161,13 +16275,15 @@
       tepWidgetFilterCheckbox('tep-dashmap-filter-ent', dashMapAgentTypeFilter === 'enterprise')
       + `<div class="tep-dash-widget-main">${s.entOnline}<small> / ${entTot} online</small></div>${entBar}`
       + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`,
-      'tep-dash-widget--matchheight');
+      'tep-dash-widget--matchheight tep-dash-widget--clickable', null,
+      ' id="tep-dashmap-widget-ent" title="Click to see Enterprise agents, worst latency first"');
     const col1Html = `<div class="tep-dashmap-col1" id="tep-dashmap-col1">${entWidget}${tepIspStackHtml()}</div>`;
     const epHtml = tepWidgetCard('Endpoint Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ep', dashMapAgentTypeFilter === 'endpoint')
       + `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
       + `<div class="tep-dash-widget-sub" title="online = seen in the last 24 h">${s.epOnline} online · ${s.epOffline} offline</div>`,
-      'tep-dash-widget--matchheight', null, ' id="tep-dashmap-widget-ep"');
+      'tep-dash-widget--matchheight tep-dash-widget--clickable', null,
+      ' id="tep-dashmap-widget-ep" title="Click to see Endpoint agents, worst latency first"');
     // Enterprise/Endpoint/ISP stack are cheap, synchronous, and driven by
     // data that's already in memory — safe to rebuild on every call (LIVE
     // TEST polls this in-place every 5s via refreshLiveTestOverlay). Alerts/
@@ -16180,13 +16296,29 @@
     // afterward, on its own 2-minute cadence.
     if (!container._tepBuilt) {
       container._tepBuilt = true;
+      // Alerts + Events share one card: Alerts (left, the "Alerts" title
+      // itself is a real link to the Alerts page; clicking anywhere else in
+      // that column — the count, sub text — opens the active-alerts popover)
+      // and Events (right, the whole column including the title is a real
+      // link straight to the Events page). A short vertical divider (not
+      // full height) separates the two columns.
+      const alertsEventsHtml = '<div class="tep-dash-widget tep-dash-widget--alert tep-dash-widget--matchheight" id="tep-w-alertsevents">'
+        + '<div class="tep-combo-row">'
+        + '<div class="tep-combo-col" id="tep-w-alerts-col">'
+        + `<div class="tep-dash-widget-title"><a class="tep-combo-title-link" href="${window.location.origin}/alerts/list?tab=active" `
+        + 'target="_blank" rel="noopener noreferrer" title="Open Alerts page">Alerts</a></div>'
+        + `<div id="tep-w-alerts">${tepWidgetPending()}</div>`
+        + '</div>'
+        + '<div class="tep-combo-divider" aria-hidden="true"></div>'
+        + `<a class="tep-combo-col tep-combo-col--events" href="${window.location.origin}/events/" target="_blank" rel="noopener noreferrer" title="Open Events page">`
+        + '<div class="tep-dash-widget-title">Events Active</div>'
+        + `<div id="tep-w-events">${tepWidgetPending()}</div>`
+        + '</a>'
+        + '</div></div>';
       container.innerHTML = col1Html + epHtml
         + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
-        + tepWidgetCard(
-          `Alerts<a class="tep-dash-widget-openlink" href="${window.location.origin}/alerts/list?tab=active" `
-          + 'target="_blank" rel="noopener noreferrer" title="Open Alerts page" aria-label="Open Alerts page">↗</a>',
-          '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert tep-dash-widget--matchheight')
-        + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight', `${window.location.origin}/events/`);
+        + tepWidgetCard('Network Health', '<div id="tep-w-network">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
+        + alertsEventsHtml;
       void fillDashWidgetsAsync();
     } else {
       const col1El = container.querySelector('#tep-dashmap-col1');
@@ -16229,11 +16361,15 @@
         if (saasEl) toggleSaasBreakdownPopover(saasEl);
       });
       container.addEventListener('click', (e) => {
-        // The top-right arrow is its own real link (opens the Alerts page) —
-        // don't also pop the active-alerts list open underneath it.
-        if (e.target.closest('.tep-dash-widget-openlink')) return;
-        const alertsEl = e.target.closest('#tep-w-alerts');
-        if (alertsEl) toggleAlertsPopover(alertsEl);
+        const netEl = e.target.closest('#tep-w-network');
+        if (netEl) toggleNetworkBreakdownPopover(netEl);
+      });
+      container.addEventListener('click', (e) => {
+        // The "Alerts" title and the Events column are their own real links
+        // — don't also pop the active-alerts list open underneath them.
+        if (e.target.closest('.tep-combo-title-link')) return;
+        const alertsColEl = e.target.closest('#tep-w-alerts-col');
+        if (alertsColEl) toggleAlertsPopover(alertsColEl);
       });
       container.addEventListener('click', (e) => {
         // The radio has its own click handler above (deselect-if-checked) —
@@ -16241,6 +16377,14 @@
         if (e.target.closest('.tep-dash-widget-filter')) return;
         const ispEl = e.target.closest('.tep-isp-widget');
         if (ispEl && ispEl.dataset.isp) toggleIspAgentsPopover(ispEl, ispEl.dataset.isp);
+      });
+      container.addEventListener('click', (e) => {
+        // Same radio exclusion as the ISP tiles above.
+        if (e.target.closest('.tep-dash-widget-filter')) return;
+        const entEl = e.target.closest('#tep-dashmap-widget-ent');
+        if (entEl) { toggleAgentsListPopover(entEl, 'enterprise'); return; }
+        const epEl = e.target.closest('#tep-dashmap-widget-ep');
+        if (epEl) toggleAgentsListPopover(epEl, 'endpoint');
       });
     }
   }
@@ -16351,6 +16495,93 @@
     return { avg, count: breakdown.length, breakdown };
   }
 
+  /** Same dashboard-independent mechanism as tepFetchAllHttpAvailability
+   *  (synthetic table widget, empty generalFilters = every test on that
+   *  metric), generalized to any NAS-* metric id. Returns
+   *  { byTest: Map<testId, number[]>, names: {testId: name} } or null. NOT
+   *  independently confirmed for NAS-NET_LATENCY/NAS-NET_LOSS specifically
+   *  (only NAS-WEB_AVAILABILITY has a live-captured confirmation) — reasoned
+   *  extension of the same "NAS" dataSourceId family, same endpoint. */
+  async function tepFetchNasMetricAllTests(metric) {
+    const fakeNode = {
+      widgetId: 'tep-nethealth-' + metric, id: 'tep-nethealth-' + metric, type: 'table',
+      config: {
+        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
+        metric, filters: {}, generalFilters: {},
+        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
+      },
+    };
+    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
+    const fakeDash = { defaultTimespan: { timespanDuration: 86400 } };
+    const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
+    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`Network Health: ${metric} fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Network Health: ${metric} fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    let json;
+    try { json = JSON.parse(text); } catch (_) { log(`Network Health: non-JSON ${metric} response`, 'tep-log-info'); return null; }
+    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
+    if (!points || !points.length) return { byTest: new Map(), names: {} };
+    const names = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
+    const byTest = new Map();
+    for (const p of points) {
+      if (!p || !p.aggIds) continue;
+      const testId = p.aggIds['NAS-TEST'];
+      const v = Number(p.v);
+      if (testId == null || !Number.isFinite(v)) continue;
+      if (!byTest.has(testId)) byTest.set(testId, []);
+      byTest.get(testId).push(v);
+    }
+    return { byTest, names };
+  }
+  /** Network Health: every Network-category test's loss+latency, averaged per
+   *  test across its agents, blended into one severity via the SAME formula
+   *  as ISP Health (latency 2/3, loss 1/3 — see tepIspLatencySeverity/
+   *  tepLossSeverity), then averaged across tests. Assumes NAS-NET_LATENCY is
+   *  milliseconds and NAS-NET_LOSS is already a 0–100 percent (matching
+   *  NAS-WEB_AVAILABILITY's confirmed scale) — NOT independently confirmed.
+   *  Returns { avgSev, count, breakdown:[{title,sev,score,testId,avgLat,
+   *  avgLoss}] } (breakdown sorted worst-first) or null. */
+  async function tepFetchAllNetworkHealth() {
+    const [lat, loss] = await Promise.all([
+      tepFetchNasMetricAllTests('NAS-NET_LATENCY'),
+      tepFetchNasMetricAllTests('NAS-NET_LOSS'),
+    ]);
+    if (!lat && !loss) return null;
+    const testIds = new Set([...(lat ? lat.byTest.keys() : []), ...(loss ? loss.byTest.keys() : [])]);
+    if (!testIds.size) return null;
+    const names = { ...((loss && loss.names) || {}), ...((lat && lat.names) || {}) };
+    const breakdown = [];
+    for (const testId of testIds) {
+      const latVals = lat && lat.byTest.get(testId);
+      const lossVals = loss && loss.byTest.get(testId);
+      const avgLat = latVals && latVals.length ? latVals.reduce((s, x) => s + x, 0) / latVals.length : null;
+      const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
+      if (avgLat == null && avgLoss == null) continue;
+      const latSev = avgLat != null ? tepIspLatencySeverity(avgLat) : null;
+      const lossSev = avgLoss != null ? tepLossSeverity(avgLoss) : null;
+      const sev = tepBlendLatencyLossSeverity(latSev, lossSev, avgLoss);
+      breakdown.push({
+        title: names[testId] || `Test ${testId}`, sev, score: Math.round((1 - sev) * 100),
+        testId: String(testId), avgLat, avgLoss,
+      });
+    }
+    if (!breakdown.length) return null;
+    breakdown.sort((a, b) => b.sev - a.sev); // worst first
+    const avgSev = breakdown.reduce((s, r) => s + r.sev, 0) / breakdown.length;
+    log(`Network Health: averaged ${breakdown.length} Network test(s) directly (no dashboard) → ${Math.round((1 - avgSev) * 100)} health`, 'tep-log-ok');
+    return { avgSev, count: breakdown.length, breakdown };
+  }
+
   /** Circular health ring whose arc length is the availability percent and whose
    *  colour follows availability health (green → amber → red). */
   function tepHealthRingHtml(pct, centerLabel) {
@@ -16443,6 +16674,61 @@
     }, 0);
   }
 
+  // Set by fillDashWidgetsAsync whenever the Network Health average resolves
+  // to a real per-test breakdown; click on the widget shows it via these.
+  let tepNetworkBreakdownData = null;   // { rows: [{title, sev, score, testId}] } | null
+  let tepNetworkPopoverEl = null;
+  function hideNetworkBreakdownPopover() {
+    if (tepNetworkPopoverEl) { try { tepNetworkPopoverEl.remove(); } catch (_) { /* */ } }
+    tepNetworkPopoverEl = null;
+    document.removeEventListener('click', tepNetworkPopoverOutsideClick, true);
+    document.removeEventListener('keydown', tepNetworkPopoverEscHandler, true);
+  }
+  function tepNetworkPopoverOutsideClick(e) {
+    if (tepNetworkPopoverEl && !tepNetworkPopoverEl.contains(e.target) && !e.target.closest('#tep-w-network')) hideNetworkBreakdownPopover();
+  }
+  function tepNetworkPopoverEscHandler(e) { if (e.key === 'Escape') hideNetworkBreakdownPopover(); }
+  /** Toggle the "what's behind this average" breakdown for the Network Health
+   *  widget — one row per Network-category test, worst-first, coloured by
+   *  severity (tepSeverityColor) rather than SaaS's uptime-style 99%/95%
+   *  cutoffs, since a health SCORE isn't an availability percent (see
+   *  tepSeverityRingHtml). Each row links to that test's own results. */
+  function toggleNetworkBreakdownPopover(anchorEl) {
+    if (tepNetworkPopoverEl) { hideNetworkBreakdownPopover(); return; }
+    if (!tepNetworkBreakdownData || !tepNetworkBreakdownData.rows || !tepNetworkBreakdownData.rows.length || !anchorEl) return;
+    const { rows } = tepNetworkBreakdownData;
+    const pop = document.createElement('div');
+    pop.className = 'tep-saas-breakdown-pop';
+    const rowsHtml = rows.map((r) => {
+      const c = tepSeverityColor(Math.max(0, Math.min(1, Number(r.sev) || 0)));
+      const url = r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null;
+      const tag = url ? 'a' : 'div';
+      const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
+      const detail = [
+        Number.isFinite(r.avgLat) ? `${Math.round(r.avgLat)}ms` : null,
+        Number.isFinite(r.avgLoss) && r.avgLoss > 0 ? `${Math.round(r.avgLoss * 10) / 10}% loss` : null,
+      ].filter(Boolean).join(' · ');
+      return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:#64748b;font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}</span><b style="color:${c.fill}">${r.score}</b></${tag}>`;
+    }).join('');
+    pop.innerHTML = '<div class="tep-saas-breakdown-head">Network tests behind this average'
+      + '<span class="tep-saas-breakdown-hint">click a row to open the test</span></div>'
+      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
+    document.documentElement.appendChild(pop);
+    tepNetworkPopoverEl = pop;
+    const rect = anchorEl.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    let top = rect.bottom + 6, left = rect.left;
+    const maxLeft = window.innerWidth - popRect.width - 8;
+    if (left > maxLeft) left = Math.max(8, maxLeft);
+    if (top + popRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - popRect.height - 6);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    setTimeout(() => {
+      document.addEventListener('click', tepNetworkPopoverOutsideClick, true);
+      document.addEventListener('keydown', tepNetworkPopoverEscHandler, true);
+    }, 0);
+  }
+
   // Set by fillDashWidgetsAsync whenever the Alerts fetch returns row-level
   // data (the count-only fallback leaves rows:[] — nothing to list then).
   // Clicking the widget body shows these; the widget's own top-right arrow
@@ -16457,7 +16743,7 @@
     document.removeEventListener('keydown', tepAlertsPopoverEscHandler, true);
   }
   function tepAlertsPopoverOutsideClick(e) {
-    if (tepAlertsPopoverEl && !tepAlertsPopoverEl.contains(e.target) && !e.target.closest('#tep-w-alerts')) hideAlertsPopover();
+    if (tepAlertsPopoverEl && !tepAlertsPopoverEl.contains(e.target) && !e.target.closest('#tep-w-alerts-col')) hideAlertsPopover();
   }
   function tepAlertsPopoverEscHandler(e) { if (e.key === 'Escape') hideAlertsPopover(); }
   /** Field names here are best-effort (same "usual candidates" approach as
@@ -16572,8 +16858,11 @@
         if (url) window.open(url, '_blank', 'noopener');
       });
     });
-    const rect = anchorEl.getBoundingClientRect();
-    // Matches the Alerts widget card's own width — the shared popover class's
+    // Sized/positioned against the WHOLE combined widget (both columns), not
+    // just the Alerts column that triggered it — "full width of the widget".
+    const widgetEl = anchorEl.closest('#tep-w-alertsevents') || anchorEl;
+    const rect = widgetEl.getBoundingClientRect();
+    // Matches the widget card's own width — the shared popover class's
     // min/max-width (220–320px) is otherwise unrelated to the anchor's size;
     // inline width here overrides it for just this popover, not the ISP/SaaS
     // ones that also reuse that class.
@@ -16666,6 +16955,96 @@
     }, 0);
   }
 
+  /** Every agent of one kind ('enterprise' or 'endpoint'), worst latency
+   *  first — same sort convention as ispHealthAgentsFor (loss-having agents
+   *  first, then worst latency, no-reading agents last). Feeds the
+   *  Enterprise/Endpoint Agents widgets' click-through agent-list popover,
+   *  reusing the exact same row renderer (tepIspAgentRowHtml) and click-to-
+   *  focus behavior as the ISP widgets. */
+  function tepAgentsListFor(kind) {
+    const out = [];
+    if (kind === 'enterprise') {
+      for (const a of agents) {
+        if (a.agentType !== 'Enterprise') continue;
+        out.push({
+          kind: 'enterprise', agentId: String(a.agentId), name: a.agentName || 'Agent',
+          latencyMs: liveTestLatencyFor(a.agentId), lossPct: liveTestLossFor(a.agentId), lanIssue: false,
+        });
+      }
+    } else {
+      for (const a of allEndpointAgents) {
+        out.push({
+          kind: 'endpoint', agentId: String(a.id), name: a.name || 'Agent',
+          latencyMs: liveTestLatencyFor(a.id), lossPct: liveTestLossFor(a.id), lanIssue: false,
+        });
+      }
+    }
+    out.sort((a, b) => {
+      const aLoss = Number.isFinite(a.lossPct) && a.lossPct > 0;
+      const bLoss = Number.isFinite(b.lossPct) && b.lossPct > 0;
+      if (aLoss !== bLoss) return aLoss ? -1 : 1;
+      const av = Number.isFinite(a.latencyMs) ? a.latencyMs : -1;
+      const bv = Number.isFinite(b.latencyMs) ? b.latencyMs : -1;
+      return bv - av;
+    });
+    return out;
+  }
+  let tepAgentsListPopoverEl = null;
+  function hideAgentsListPopover() {
+    if (tepAgentsListPopoverEl) { try { tepAgentsListPopoverEl.remove(); } catch (_) { /* */ } }
+    tepAgentsListPopoverEl = null;
+    document.removeEventListener('click', tepAgentsListPopoverOutsideClick, true);
+    document.removeEventListener('keydown', tepAgentsListPopoverEscHandler, true);
+  }
+  function tepAgentsListPopoverOutsideClick(e) {
+    if (tepAgentsListPopoverEl && !tepAgentsListPopoverEl.contains(e.target)
+      && !e.target.closest('#tep-dashmap-widget-ent') && !e.target.closest('#tep-dashmap-widget-ep')) {
+      hideAgentsListPopover();
+    }
+  }
+  function tepAgentsListPopoverEscHandler(e) { if (e.key === 'Escape') hideAgentsListPopover(); }
+  /** Toggle the Enterprise/Endpoint Agents widget's agent-list popover —
+   *  identical UX to toggleIspAgentsPopover (worst latency first, click an
+   *  agent to focus it on the map and open its hover card). */
+  function toggleAgentsListPopover(anchorEl, kind) {
+    if (tepAgentsListPopoverEl) { hideAgentsListPopover(); return; }
+    const list = tepAgentsListFor(kind);
+    if (!list.length || !anchorEl) return;
+    const label = kind === 'enterprise' ? 'Enterprise Agents' : 'Endpoint Agents';
+    const pop = document.createElement('div');
+    pop.className = 'tep-saas-breakdown-pop';
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(label)} — worst latency first`
+      + '<span class="tep-saas-breakdown-hint">click an agent to locate it on the map</span></div>'
+      + `<div class="tep-saas-breakdown-list">${list.map(tepIspAgentRowHtml).join('')}</div>`;
+    document.documentElement.appendChild(pop);
+    tepAgentsListPopoverEl = pop;
+    const rect = anchorEl.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    let top = rect.bottom + 6, left = rect.left;
+    const maxLeft = window.innerWidth - popRect.width - 8;
+    if (left > maxLeft) left = Math.max(8, maxLeft);
+    if (top + popRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - popRect.height - 6);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    pop.addEventListener('click', (e) => {
+      const row = e.target.closest('.tep-isp-agents-row');
+      if (!row) return;
+      const rowKind = row.dataset.kind, agentId = row.dataset.agentid;
+      hideAgentsListPopover();
+      const focused = dashMapFocusHook ? dashMapFocusHook.focusAgent(rowKind, agentId) : false;
+      if (!focused) toast('That agent isn’t currently shown on the map (filtered out or offline)', 'err');
+    });
+    pop.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('.tep-isp-agents-row');
+      if (row) { e.preventDefault(); row.click(); }
+    });
+    setTimeout(() => {
+      document.addEventListener('click', tepAgentsListPopoverOutsideClick, true);
+      document.addEventListener('keydown', tepAgentsListPopoverEscHandler, true);
+    }, 0);
+  }
+
   /**
    * Fill the Alerts / Events / SaaS widgets. Alerts & Events need TE's in-app
    * alert/event APIs (endpoints TBD via discovery) → they degrade to "—". SaaS
@@ -16700,7 +17079,36 @@
         saasEl.innerHTML = tepWidgetPending();
       }
     }
+    const netEl = document.getElementById('tep-w-network');
+    if (netEl) {
+      hideNetworkBreakdownPopover();   // stale rows would be confusing after a refresh
+      tepNetworkBreakdownData = null;
+      netEl.className = '';
+      try {
+        const fetched = await tepFetchAllNetworkHealth();
+        if (fetched && fetched.count) {
+          tepNetworkBreakdownData = { rows: fetched.breakdown };
+          const score = Math.round((1 - fetched.avgSev) * 100);
+          const tip = `Live average across ${fetched.count} Network test(s) — click to see each one`;
+          netEl.className = 'tep-w-saas-clickable';
+          netEl.innerHTML = '<div class="tep-saas-health">'
+            + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
+            + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} Network test${fetched.count === 1 ? '' : 's'}</div></div>`
+            + tepSeverityRingHtml(fetched.avgSev, '')
+            + '</div>';
+        } else {
+          const netN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'onewaynetwork').length;
+          netEl.innerHTML = netN
+            ? `<div class="tep-dash-widget-main">${netN}<small> Network tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">health fetch returned no data</div>`
+            : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">no Network tests found</div>';
+        }
+      } catch (e) {
+        log(`Network Health: fetch failed — ${e.message}`, 'tep-log-info');
+        netEl.innerHTML = tepWidgetPending();
+      }
+    }
     const alertsEl = document.getElementById('tep-w-alerts');
+    const alertsColEl = document.getElementById('tep-w-alerts-col');
     if (alertsEl) {
       hideAlertsPopover();   // stale rows would be confusing after a refresh
       tepAlertsData = null;
@@ -16709,7 +17117,7 @@
       alertsEl.innerHTML = a
         ? `<div class="tep-dash-widget-main">${a.active}<small> active</small></div><div class="tep-dash-widget-sub">${a.recent} in last 24h</div>`
         : tepWidgetPending();
-      alertsEl.className = (a && a.rows && a.rows.length) ? 'tep-w-alerts-clickable' : '';
+      if (alertsColEl) alertsColEl.classList.toggle('tep-w-alerts-clickable', !!(a && a.rows && a.rows.length));
     }
     const eventsEl = document.getElementById('tep-w-events');
     if (eventsEl) {
@@ -17013,6 +17421,7 @@
   function closeDashMapFullscreen() {
     if (!dashMapFullEl) return;
     hideIspAgentsPopover();
+    hideAgentsListPopover();
     hideAlertsPopover();
     stopDashWidgetsAutoRefresh();
     if (dashFullResizeFn) { window.removeEventListener('resize', dashFullResizeFn); dashFullResizeFn = null; }
@@ -18061,6 +18470,19 @@
   function tepLossSeverity(loss) {
     if (!Number.isFinite(loss) || loss <= 0) return 0;
     return Math.min(1, 0.5 + 0.5 * Math.min(1, loss / 10));
+  }
+  /** Blend latency + loss into one severity — latency counts 2/3, loss 1/3,
+   *  same as before, UNLESS loss is over 10%: at that point packet loss is
+   *  already a severe, user-visible problem on its own, so it overrides the
+   *  blend instead of being diluted down to its usual 1/3 share (a test with
+   *  great latency but 50% loss should read as a major health drop, not a
+   *  merely "moderate" score). Shared by ISP Health and Network Health so
+   *  both widgets treat loss the same way. */
+  function tepBlendLatencyLossSeverity(latSev, lossSev, avgLoss) {
+    const blend = (latSev != null && lossSev != null) ? (latSev * (2 / 3) + lossSev * (1 / 3))
+      : (latSev != null ? latSev : lossSev) || 0;
+    if (Number.isFinite(avgLoss) && avgLoss > 10 && lossSev != null) return Math.max(blend, lossSev);
+    return blend;
   }
   /** RFC 1918 private ranges plus 100.64.0.0/10 (carrier-grade NAT, seen in
    *  live captures e.g. T-Mobile) — none of these are "the ISP", they're the
@@ -20127,6 +20549,14 @@
   const bulkApplyBtn = $('#tep-bulk-apply');
   if (bulkApplyBtn) bulkApplyBtn.addEventListener('click', bulkApply);
 
+  // Lives in the persistent header (not the dashboard-tools-only markup
+  // below), so it must be wired unconditionally — isDashboardToolsPage()
+  // reflects the underlying TE page/route, not which panel mode is active,
+  // and openDashMapFullscreen() itself doesn't depend on being on that page
+  // (it builds its own overlay from already-loaded agent data).
+  const dashMapFull = root.querySelector('#tep-dash-map-full');
+  if (dashMapFull) dashMapFull.addEventListener('click', () => openDashMapFullscreen());
+
   if (isDashboardToolsPage()) {
     function wireDashSectionToggle(toggleId, expandId, defaultOpen, { onExpand } = {}) {
       const btn = root.querySelector('#' + toggleId);
@@ -20172,8 +20602,6 @@
     });
     const dashMapRefresh = root.querySelector('#tep-dash-map-refresh');
     if (dashMapRefresh) dashMapRefresh.addEventListener('click', () => { void loadDashboardMapAgents(true); });
-    const dashMapFull = root.querySelector('#tep-dash-map-full');
-    if (dashMapFull) dashMapFull.addEventListener('click', () => openDashMapFullscreen());
     wireDashSectionToggle('tep-dash-toggle-tests', 'tep-dash-expand-tests', false, {
       onExpand: () => showTestsPanelFromDashboard()
     });
