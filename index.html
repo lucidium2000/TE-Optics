@@ -3511,7 +3511,14 @@
     'transition:transform .15s,background .15s;user-select:none;font-family:inherit;';
   liveTestBtn.addEventListener('mouseenter', () => { liveTestBtn.style.transform = 'scale(1.06)'; });
   liveTestBtn.addEventListener('mouseleave', () => { liveTestBtn.style.transform = ''; });
-  liveTestBtn.addEventListener('click', () => { void runLiveTest(); });
+  liveTestBtn.addEventListener('click', () => {
+    // Create/resume the AudioContext HERE, synchronously inside the real
+    // click, not later inside runLiveTest() — by the time the first screen
+    // pulse fires we're several `await`s deep and may have fallen outside
+    // the browser's user-activation window for starting audio.
+    tepEnsureAudioCtx();
+    void runLiveTest();
+  });
   // Hidden globally — this button only lives inside the fullscreen map view
   // (openDashMapFullscreen re-parents it into the overlay and shows it).
   liveTestBtn.style.display = 'none';
@@ -18627,6 +18634,71 @@
     el.style.borderColor = isError ? '#7f1d1d' : '#334155';
   }
 
+  // Lazily-created, reused across runs — one AudioContext per page, not one
+  // per LIVE TEST. Warmed synchronously on the LIVE TEST button's click (see
+  // its listener) so it starts inside real user activation.
+  let tepAudioCtx = null;
+  function tepEnsureAudioCtx() {
+    try {
+      if (!tepAudioCtx) tepAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (tepAudioCtx.state === 'suspended') void tepAudioCtx.resume();
+    } catch (_) { /* Web Audio unavailable — the pulse still works without sound */ }
+    return tepAudioCtx;
+  }
+  /** Submarine-sonar "ping" for the first screen pulse — fully synthesized
+   *  (oscillators + gain/filter/delay nodes), not an audio file, so there's
+   *  nothing to fetch or bundle. Two sine oscillators a few cents apart beat
+   *  against each other for a metallic "ring" (a single tone reads as a
+   *  plain beep, not sonar), with a sharp attack and a quick exponential
+   *  decay for a deep, punchy character, plus a short filtered feedback
+   *  delay for an echoing, underwater-reverb tail. Tuning landed on after
+   *  sampling several variants with the user — this one specifically. Purely
+   *  decorative — any failure here (no Web Audio, autoplay blocked, etc.) is
+   *  swallowed so it can never affect the actual pulse/test. */
+  function tepPlaySonarPing() {
+    const ctx = tepEnsureAudioCtx();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const master = ctx.createGain();
+      master.gain.value = 0.17;
+      master.connect(ctx.destination);
+
+      // The ping itself: two detuned sines beating for a metallic shimmer.
+      const freq = 450;
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      osc1.type = 'sine'; osc2.type = 'sine';
+      osc1.frequency.setValueAtTime(freq, now);
+      osc2.frequency.setValueAtTime(freq * 1.005, now);
+      const ping = ctx.createGain();
+      ping.gain.setValueAtTime(0.0001, now);
+      ping.gain.exponentialRampToValueAtTime(1, now + 0.005);   // sharp attack
+      ping.gain.exponentialRampToValueAtTime(0.0001, now + 1.0); // punchy ring-out
+      osc1.connect(ping);
+      osc2.connect(ping);
+      ping.connect(master);
+
+      // Underwater echo: a filtered feedback delay so the ping repeats and
+      // darkens on each pass, instead of just cutting off dry.
+      const delay = ctx.createDelay(1);
+      delay.delayTime.value = 0.16;
+      const feedback = ctx.createGain();
+      feedback.gain.value = 0.28;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 680;
+      ping.connect(delay);
+      delay.connect(filter);
+      filter.connect(feedback);
+      feedback.connect(delay);
+      filter.connect(master);
+
+      osc1.start(now); osc2.start(now);
+      osc1.stop(now + 2.2); osc2.stop(now + 2.2);
+    } catch (_) { /* */ }
+  }
+
   /** Fires the one-shot "whole screen" pulse from the LIVE TEST badge's red
    *  dot — called once the badge (and its dot) actually exist in the DOM,
    *  right after the running badge's first render. Positions the persistent
@@ -18640,6 +18712,7 @@
     const dot = document.getElementById('tep-livetest-badge-dot');
     const pulse = document.getElementById('tep-livetest-screenpulse');
     if (!dot || !pulse) return;
+    tepPlaySonarPing();
     // Re-append so this stays the LAST child of <html> — same z-index ties
     // (e.g. the fullscreen map overlay, also 2147483647) are broken by DOM
     // order, and the overlay is built/appended well after this element, so
