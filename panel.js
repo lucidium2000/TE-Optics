@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.21';
+  const TEP_VERSION = '3.22';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -6750,6 +6750,14 @@
   async function fetchDashboardCatalogForCleanup() {
     await ensureCurrentAidForDashboard();
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    // /namespace/dash-api/dashboard (no id) is the confirmed-working catalog
+    // endpoint — CONFIRMED via live capture on two separate accounts, it
+    // returns the full dashboard list including built-ins. The three /ajax/*
+    // URLs below are legacy fallbacks for older TE deployments; on every
+    // account tested so far they 404 unconditionally, so they're only tried
+    // if the primary endpoint comes back empty/failed, not on every call —
+    // no point eating 3 guaranteed-404 round trips when the first URL
+    // already has everything.
     const urls = [
       withAidQuery('/namespace/dash-api/dashboard', aid),
       withAidQuery('/ajax/dashboards', aid),
@@ -6788,6 +6796,7 @@
       } catch (e) {
         log(`Dashboard cleanup list: ${url} → ${e.message}`, 'tep-log-err');
       }
+      if (merged.size) break; // primary (or an earlier fallback) already has usable rows
     }
     return [...merged.entries()].map(([id, v]) => ({
       id,
@@ -8204,8 +8213,11 @@
       }
       // If the dashboard Agent Map is already open (inline or fullscreen), refresh
       // now that enterprise agents + their online/offline status are available.
+      // preserveZoom: this fires on any loadAgents() completion, including quiet
+      // background refreshes — CONFIRMED via user report that not preserving
+      // zoom here was yanking the fullscreen map back to auto-fit mid-session.
       if (isDashboardToolsPage() && dashMapAutoLoaded) {
-        try { refreshDashMapViews(); } catch (_) {}
+        try { refreshDashMapViews(true); } catch (_) {}
       }
     } catch (e) {
       agentsBox.innerHTML = `<span class="tep-log-err">Error: ${e.message}</span>`;
@@ -13821,7 +13833,7 @@
     if (agent.cpu != null) meta.push(`<span title="Last CPU usage" style="color:#f8fafc;font-weight:600;">CPU ${tepEscapeHtmlText(agent.cpu)}</span>`);
     if (agent.ram != null) meta.push(`<span title="Last RAM usage" style="color:#f8fafc;font-weight:600;">RAM ${tepEscapeHtmlText(agent.ram)}</span>`);
     if (agent.disk != null) meta.push(`<span title="Disk usage">Disk ${tepEscapeHtmlText(agent.disk)}</span>`);
-    if (agent.battery != null) meta.push(`<span title="Battery level">🔋 ${tepEscapeHtmlText(agent.battery)}</span>`);
+    if (agent.battery != null) meta.push(tepBatteryHtml(agent));
     const labelsHtml = agent.labels.length
       ? `<div class="tep-test-card-meta">${agent.labels.map((l) => `<span class="tep-type-badge tep-type-other">${tepEscapeHtmlText(l)}</span>`).join(' ')}</div>`
       : '';
@@ -13985,7 +13997,7 @@
     if (a.cpu != null) metrics.push('CPU ' + tepEscapeHtmlText(a.cpu));
     if (a.ram != null) metrics.push('RAM ' + tepEscapeHtmlText(a.ram));
     if (a.disk != null) metrics.push('Disk ' + tepEscapeHtmlText(a.disk));
-    if (a.battery != null) metrics.push('🔋 ' + tepEscapeHtmlText(a.battery));
+    if (a.battery != null) metrics.push(tepBatteryHtml(a));
     const users = a.users && a.users.length
       ? `<div class="tep-map-tip-user">${tepEscapeHtmlText(a.users.join(', '))}</div>` : '';
     const labels = a.labels && a.labels.length
@@ -14609,6 +14621,7 @@
         // has been enriched (segment-visualisation) — lazily, on-demand, via
         // showTip()'s own enrichment call when its hover card first opens.
         cpu: a.cpu || null, ram: a.ram || null, disk: a.disk || null, battery: a.battery || null,
+        batteryHealthPct: a.batteryHealthPct,
         connKind: a.connKind || null, vpn: a.vpn === true,
       });
     }
@@ -14675,7 +14688,7 @@
       it.cpu != null ? `<span title="Last CPU usage">CPU ${tepEscapeHtmlText(it.cpu)}</span>` : '',
       it.ram != null ? `<span title="Last RAM usage">RAM ${tepEscapeHtmlText(it.ram)}</span>` : '',
       it.disk != null ? `<span title="Disk usage">Disk ${tepEscapeHtmlText(it.disk)}</span>` : '',
-      it.battery != null ? `<span title="Battery level">🔋 ${tepEscapeHtmlText(it.battery)}</span>` : '',
+      it.battery != null ? tepBatteryHtml(it) : '',
       connHtml, vpnHtml,
     ].filter(Boolean) : [];
     const metricsHtml = metricParts.length ? `<div class="tep-map-tip-metrics">${metricParts.join('')}</div>` : '';
@@ -15298,7 +15311,7 @@
     });
 
     // --- Zoom / pan (viewBox-based, vector-crisp) ---------------------------
-    const MIN = 1, MAX = 8;
+    const MIN = 1, MAX = 16;
     function clampPan() {
       const w = wrap.clientWidth, hh = wrap.clientHeight, s = epDashMapZoom.s;
       // epDashMapZoom is shared module state between the inline map and the
@@ -15860,11 +15873,11 @@
       renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
     }
   }
-  function refreshDashMapViews() {
-    if ($('#tep-dash-map-host')) renderDashboardAgentMap();
+  function refreshDashMapViews(preserveZoom) {
+    if ($('#tep-dash-map-host')) renderDashboardAgentMap(null, { preserveZoom: !!preserveZoom });
     if (dashMapFullEl) {
       renderDashWidgets(dashMapFullEl.querySelector('#tep-dashmap-widgets'));
-      renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true });
+      renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: !!preserveZoom });
     }
   }
 
@@ -17428,15 +17441,27 @@
       log(`Loaded ${allEndpointAgents.length} endpoint agent(s)`, 'tep-log-ok');
       populateEndpointAgentTagFilter();
       renderEndpointAgents();
-      // CPU/RAM/battery for the whole fleet in one shot (see tepFetchAllEyebrowMetrics
-      // below) — fetched in the background so it never delays the initial list paint;
-      // re-renders whatever's currently showing (sidebar list and/or fullscreen map)
-      // once the numbers land.
+      // CPU/RAM (see tepFetchAllEyebrowMetrics below) + battery status (see
+      // fetchEndpointAgentBatteryStatus below) for the whole fleet, fetched
+      // together in the background so neither delays the initial list paint;
+      // re-renders whatever's currently showing (sidebar list and/or fullscreen
+      // map) once the numbers land.
       void (async () => {
-        const snap = await tepFetchAllEyebrowMetrics();
-        if (snap && applyEyebrowMetricsToAgents(snap) > 0) {
+        const [snap, batteryById] = await Promise.all([
+          tepFetchAllEyebrowMetrics(),
+          fetchEndpointAgentBatteryStatus().catch((e) => { log(`Battery status: ${e.message}`, 'tep-log-info'); return null; }),
+        ]);
+        let changed = false;
+        if (snap && applyEyebrowMetricsToAgents(snap) > 0) changed = true;
+        if (batteryById && applyBatteryStatusToAgents(batteryById) > 0) changed = true;
+        if (changed) {
           renderEndpointAgents();
-          refreshDashMapViews();
+          // preserveZoom: this background enrichment can land well after the
+          // map is open and the user has zoomed/panned — CONFIRMED via user
+          // report that resetting to auto-fit here was yanking the view back
+          // mid-session, more noticeably once battery status (a second
+          // paginated fetch) made this land later/less predictably.
+          refreshDashMapViews(true);
         }
       })();
     } catch (e) {
@@ -17450,10 +17475,18 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Fleet-wide CPU/RAM/battery via /dash-api/dash/data-stream — CONFIRMED via
+  // Fleet-wide CPU/RAM via /dash-api/dash/data-stream — CONFIRMED via
   // live capture (user built a scratch dashboard with a 3-metric table and
   // captured the real request/response). segment-visualisation (below) simply
-  // does not carry these fields; this is the actual source. Unlike
+  // does not carry these fields; this is the actual source. Battery used to
+  // ride along on this same path (ENDPOINT_GATEWAY_BATTERY_HEALTH_PERCENT),
+  // but that's state-of-health (long-term wear), not the state-of-charge
+  // "how much life is left right now" reading users actually want — and
+  // there's no dashboard-widget metric for state-of-charge at all. It's
+  // fetched separately below via fetchEndpointAgentBatteryStatus(), straight
+  // from the same per-agent settings/search endpoint the Agent View page
+  // uses (CONFIRMED via live capture: batteryMetrics.batteryLevelNormalizedPercent),
+  // keyed directly by agent id — no dashboard-anchoring needed for that one. Unlike
   // self-service/data (used by the SaaS/Network Health widgets), data-stream
   // 404s on a fully made-up dashboardId — CONFIRMED it accepts any REAL
   // dashboard id the account can see, with a made-up widgetId (server treats
@@ -17467,7 +17500,6 @@
   const TEP_EYEBROW_METRICS = {
     cpu: 'EYEBROW_GATEWAY_CPU_LOAD_PERCENT',
     ram: 'EYEBROW_GATEWAY_MEMORY_LOAD_PERCENT',
-    battery: 'ENDPOINT_GATEWAY_BATTERY_HEALTH_PERCENT',
   };
   let tepAnyDashboardIdCache = null;
 
@@ -17592,18 +17624,17 @@
     if (!force && tepEyebrowMetricsCache && (Date.now() - tepEyebrowMetricsCache.ts) < TEP_EYEBROW_CACHE_MS) {
       return tepEyebrowMetricsCache;
     }
-    const [cpu, ram, battery] = await Promise.all([
+    const [cpu, ram] = await Promise.all([
       tepFetchEyebrowMetric(TEP_EYEBROW_METRICS.cpu),
       tepFetchEyebrowMetric(TEP_EYEBROW_METRICS.ram),
-      tepFetchEyebrowMetric(TEP_EYEBROW_METRICS.battery),
     ]);
-    tepEyebrowMetricsCache = { ts: Date.now(), cpu, ram, battery };
+    tepEyebrowMetricsCache = { ts: Date.now(), cpu, ram };
     return tepEyebrowMetricsCache;
   }
 
-  /** Applies a fetched CPU/RAM/battery snapshot onto every allEndpointAgents
-   *  entry by matching hostname (case-insensitive). Returns how many agents
-   *  got at least one field updated. */
+  /** Applies a fetched CPU/RAM snapshot onto every allEndpointAgents entry by
+   *  matching hostname (case-insensitive). Returns how many agents got at
+   *  least one field updated. */
   function applyEyebrowMetricsToAgents(snapshot) {
     if (!snapshot) return 0;
     let applied = 0;
@@ -17613,10 +17644,105 @@
       let hit = false;
       if (snapshot.cpu && snapshot.cpu.has(key)) { agent.cpu = `${Math.round(snapshot.cpu.get(key))}%`; hit = true; }
       if (snapshot.ram && snapshot.ram.has(key)) { agent.ram = `${Math.round(snapshot.ram.get(key))}%`; hit = true; }
-      if (snapshot.battery && snapshot.battery.has(key)) { agent.battery = `${Math.round(snapshot.battery.get(key))}%`; hit = true; }
       if (hit) applied++;
     }
     return applied;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Battery status (state-of-charge — "how much life is left right now") via
+  // the same v3 agent-management-service search the Agent View/Settings pages
+  // use — CONFIRMED via live capture: POST .../v3/agent/management/settings/search
+  // returns every agent's batteryMetrics.batteryLevelNormalizedPercent (0-1)
+  // directly, keyed by the agent's own `id` (same UUID scheme normalizeEndpointAgent
+  // already uses), no dashboard-anchoring or hostname matching needed. That
+  // payload also carries batteryHealthNormalizedPercent (long-term wear,
+  // 1.0 = no measurable degradation yet) and batteryChargeCyclesCount
+  // (unused). Health is surfaced as a plain Healthy/Degraded label rather
+  // than its own percentage — the exact wear number isn't very actionable,
+  // whether it's degraded at all is.
+  // ---------------------------------------------------------------------------
+  const ENDPOINT_AGENT_SETTINGS_SEARCH_PATH = '/namespace/endpoint-api/agent-management-service/v3/agent/management/settings/search';
+
+  /** Battery state-of-charge + health for every endpoint agent in one
+   *  paginated sweep. Returns Map<agentId, { pct: 0-100, healthy: boolean }>. */
+  async function fetchEndpointAgentBatteryStatus() {
+    const pageSize = 100;
+    const byId = new Map();
+    let page = 0, totalCount = null, fetchedCount = 0;
+    for (let guard = 0; guard < 50; guard++) {
+      const url = `${ENDPOINT_AGENT_SETTINGS_SEARCH_PATH}?page=${page}&pageSize=${pageSize}&sortDirection=DESCENDING&sortProperty=LAST_MODIFIED`;
+      let resp;
+      try {
+        resp = await ajax(url, { method: 'POST', body: JSON.stringify({ searchTerm: '', searchTermFields: [], filters: [] }) });
+      } catch (e) {
+        log(`Battery status: fetch error — ${e.message}`, 'tep-log-info');
+        break;
+      }
+      const text = await resp.text().catch(() => '');
+      if (!resp.ok) { log(`Battery status: HTTP ${resp.status} — ${text.slice(0, 160)}`, 'tep-log-info'); break; }
+      let data;
+      try { data = JSON.parse(text); } catch (e) { log(`Battery status: JSON parse error — ${e.message}`, 'tep-log-info'); break; }
+      const elements = Array.isArray(data && data.elements) ? data.elements : [];
+      for (const el of elements) {
+        const id = el && el.id;
+        const bm = el && el.batteryMetrics;
+        const levelPct = bm && Number(bm.batteryLevelNormalizedPercent);
+        const healthPct = bm && Number(bm.batteryHealthNormalizedPercent);
+        if (id && Number.isFinite(levelPct)) {
+          byId.set(String(id), {
+            pct: Math.round(levelPct * 100),
+            healthPct: Number.isFinite(healthPct) ? Math.round(healthPct * 100) : null,
+          });
+        }
+      }
+      fetchedCount += elements.length;
+      if (data && data.totalCount != null) totalCount = Number(data.totalCount);
+      if (!elements.length || elements.length < pageSize) break;
+      if (totalCount != null && fetchedCount >= totalCount) break;
+      page++;
+    }
+    if (byId.size) log(`Battery status: ${byId.size} agent(s)`, 'tep-log-ok');
+    return byId;
+  }
+
+  /** Applies a fetched battery-status map onto every allEndpointAgents entry
+   *  by matching agent id. Returns how many agents got updated. */
+  function applyBatteryStatusToAgents(byId) {
+    if (!byId || !byId.size) return 0;
+    let applied = 0;
+    for (const agent of allEndpointAgents) {
+      if (!agent.id) continue;
+      const v = byId.get(String(agent.id));
+      if (v != null) { agent.battery = `${v.pct}%`; agent.batteryHealthPct = v.healthPct; applied++; }
+    }
+    return applied;
+  }
+
+  /** Battery health tiers (state-of-health %, wear-based): Optimal 98-100,
+   *  Good 90-97, Fair 85-89, Degraded 80-84, Poor 79 and below. Colors step
+   *  through the app's traffic-light palette (green → amber → orange → red)
+   *  to match. */
+  function tepBatteryHealthTier(healthPct) {
+    if (healthPct == null) return null;
+    if (healthPct >= 98) return { label: 'Optimal', color: '#4ade80', bold: false };
+    if (healthPct >= 90) return { label: 'Good', color: '#86efac', bold: false };
+    if (healthPct >= 85) return { label: 'Fair', color: '#fbbf24', bold: false };
+    if (healthPct >= 80) return { label: 'Degraded', color: '#f97316', bold: true };
+    return { label: 'Poor', color: '#f87171', bold: true };
+  }
+
+  /** Battery charge + health as one HTML span: "🔋 NN% <tier>", tier label
+   *  colored per tepBatteryHealthTier and rendered smaller than the charge
+   *  number so it reads as a qualifier, not the headline figure. Color is a
+   *  wear signal only, deliberately independent of the charge percentage
+   *  itself (a fully-charged but Poor-health battery still shows red; a
+   *  low-charge Optimal-health one doesn't). */
+  function tepBatteryHtml(agent) {
+    if (agent.battery == null) return '';
+    const tier = tepBatteryHealthTier(agent.batteryHealthPct);
+    const label = tier ? ` <span style="font-size:.85em;color:${tier.color};font-weight:${tier.bold ? 700 : 600};">${tier.label}</span>` : '';
+    return `<span title="Battery${tier ? ' — health: ' + tier.label : ''}">🔋 ${tepEscapeHtmlText(agent.battery)}${label}</span>`;
   }
 
   // ---------------------------------------------------------------------------
