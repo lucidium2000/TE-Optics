@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.20';
+  const TEP_VERSION = '3.21';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2403,11 +2403,33 @@
     }
     .tep-map-tip-geo:hover { color: #fdba74; }
     .tep-agent-map-tip {
+      /* Box is 25% bigger than the original (was 150-250px / 8x10 padding) —
+         extra room for the endpoint CPU/RAM/disk/battery/IP lines — but the
+         text itself stays at the original 11px; only the bubble grew. */
       position: absolute; z-index: 5; pointer-events: auto;
-      min-width: 150px; max-width: 250px;
+      min-width: 187.5px; max-width: 312.5px;
       background: rgba(15,23,42,.97); border: 1px solid #475569; border-radius: 8px;
-      box-shadow: 0 8px 22px rgba(0,0,0,.55); padding: 8px 10px;
+      box-shadow: 0 8px 22px rgba(0,0,0,.55); padding: 10px 12.5px;
       font-size: 11px; line-height: 1.35; color: #cbd5e1;
+    }
+    /* Speech-bubble tail pointing at the marker the tip spawned from — a
+       rotated square, half hidden behind the bubble's own edge, so only a
+       diamond tip pokes out (classic CSS bubble-tail technique). Helps tell
+       which marker a tip belongs to when others are nearby/overlapping.
+       --tep-tip-tail-left is set per-show by positionTip() to the marker's
+       actual x position relative to the tip (not just dead-center — the
+       tip's own left edge gets clamped near viewport edges). Falls back to
+       50% for any hover-card implementation that doesn't set it. */
+    .tep-agent-map-tip::after {
+      content: ''; position: absolute; left: var(--tep-tip-tail-left, 50%);
+      width: 12px; height: 12px; background: rgba(15,23,42,.97);
+      transform: translateX(-50%) rotate(45deg); pointer-events: none;
+    }
+    .tep-agent-map-tip:not(.tep-agent-map-tip--below)::after {
+      bottom: -7px; border-right: 1px solid #475569; border-bottom: 1px solid #475569;
+    }
+    .tep-agent-map-tip--below::after {
+      top: -7px; border-left: 1px solid #475569; border-top: 1px solid #475569;
     }
     .tep-map-tip-head {
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
@@ -2437,6 +2459,7 @@
     .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: #94a3b8; }
     .tep-map-tip-meta svg { vertical-align: -2px; }
     .tep-map-tip-isp { color: #7dd3fc; font-size: 10.5px; margin-top: 3px; }
+    .tep-map-tip-ip { color: #94a3b8; font-size: 10.5px; margin-top: 3px; font-family: var(--font-mono, monospace); }
     .tep-map-tip-dest {
       display: flex; align-items: center; gap: 5px; margin-top: 4px; padding-top: 4px;
       border-top: 1px dashed rgba(148,163,184,.22); color: #cbd5e1; font-size: 10.5px;
@@ -2446,7 +2469,7 @@
     .tep-map-tip-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
     .tep-map-tip-labels span { background: #334155; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #cbd5e1; }
     .tep-map-tip-more { color: #64748b; margin-top: 4px; }
-    .tep-map-tip-body { max-height: 220px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; margin: 0 -2px; padding: 0 2px; }
+    .tep-map-tip-body { max-height: 275px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; margin: 0 -2px; padding: 0 2px; }
     .tep-map-tip-body::-webkit-scrollbar { width: 8px; }
     .tep-map-tip-body::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
     .tep-map-tip-body::-webkit-scrollbar-track { background: transparent; }
@@ -13442,6 +13465,13 @@
       // rest stay as best-effort fallbacks in case this agent's payload shapes it
       // differently.
       ip: String(epAgentPickField(raw, ['publicIpAddress', 'ip', 'ipAddress', 'publicIp', 'privateIp', 'lastIp', 'agentIp', 'localIp', 'ipv4']) || ''),
+      // Dedicated local/private-IP pick, kept separate from `ip` above (which
+      // stays public — that's what search-by-IP was originally fixed to use)
+      // so the fullscreen map's IP line can show/search the local address
+      // instead without disturbing existing public-IP search elsewhere. Field
+      // names are best-effort (not independently confirmed the way
+      // publicIpAddress was) — comes back empty rather than guessing wrong.
+      localIp: String(epAgentPickField(raw, ['privateIpAddress', 'localIpAddress', 'internalIpAddress', 'privateIp', 'localIp', 'internalIp', 'lanIp']) || ''),
       license: String(epAgentPickField(raw, ['licenceType', 'licenseType', 'license', 'licenceTier', 'licenseTier', 'tier']) || ''),
       platform: String(epAgentPickField(raw, ['platform', 'os', 'operatingSystem']) || ''),
       osVersion: String(epAgentPickField(raw, ['osVersion', 'osVer', 'systemVersion']) || ''),
@@ -14368,13 +14398,16 @@
   // Never cleared — an agent that's been shown once doesn't need to
   // re-announce itself just because a filter hid and reshowed it.
   const markersFadedIn = new Set();
-  /** True when this map item's name, IP, or (endpoint) username matches the
-   *  lower-cased search query. Field coverage is best-effort — ip/users may
-   *  be empty for agents whose raw record didn't carry a recognized field. */
+  /** True when this map item's name, location, IP (public/local), or
+   *  (endpoint) username matches the lower-cased search query. Field coverage
+   *  is best-effort — location/ip/users may be empty for agents whose raw
+   *  record didn't carry a recognized field. */
   function dashMapItemMatchesQuery(it, q) {
     if (!q || !it) return false;
     if (it.name && it.name.toLowerCase().includes(q)) return true;
+    if (it.location && it.location.toLowerCase().includes(q)) return true;
     if (it.ip && it.ip.toLowerCase().includes(q)) return true;
+    if (it.localIp && it.localIp.toLowerCase().includes(q)) return true;
     if (Array.isArray(it.users) && it.users.some((u) => u && u.toLowerCase().includes(q))) return true;
     return false;
   }
@@ -14501,7 +14534,7 @@
       // only ever sees clusters/items that made it into this list to begin
       // with). Search exists to locate a SPECIFIC agent; it should win.
       const searchHit = dashMapSearchQuery
-        && dashMapItemMatchesQuery({ name: a.agentName, ip: a.ip }, dashMapSearchQuery);
+        && dashMapItemMatchesQuery({ name: a.agentName, location: a.location, ip: a.ip }, dashMapSearchQuery);
       if (dashMapAgentTypeFilter === 'endpoint' && !searchHit) continue;
       if (dashMapIspFilter && !searchHit) {
         const ih = ispHealthByAgent.get(String(a.agentId));
@@ -14545,7 +14578,7 @@
       if (dashMapAgentTypeFilter === 'enterprise') continue;
       // Same search-overrides-every-filter treatment as enterprise above.
       const searchHit = dashMapSearchQuery
-        && dashMapItemMatchesQuery({ name: a.name, ip: a.ip, users: a.users }, dashMapSearchQuery);
+        && dashMapItemMatchesQuery({ name: a.name, location: a.location, ip: a.ip, localIp: a.localIp, users: a.users }, dashMapSearchQuery);
       if (dashMapIspFilter && !searchHit) {
         const ih = ispHealthByAgent.get(String(a.id));
         if (!ih || ih.isp !== dashMapIspFilter) continue;
@@ -14571,7 +14604,12 @@
         url: epLiveUrl || epBaseUrl, liveResultLink: !!epLiveUrl, baseUrl: epBaseUrl,
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.id, latencyMs: liveTestLatencyFor(a.id),
-        ip: a.ip || '', users: a.users || [],
+        ip: a.ip || '', localIp: a.localIp || '', users: a.users || [],
+        // cpu/ram/disk/battery/connKind/vpn are only present once this agent
+        // has been enriched (segment-visualisation) — lazily, on-demand, via
+        // showTip()'s own enrichment call when its hover card first opens.
+        cpu: a.cpu || null, ram: a.ram || null, disk: a.disk || null, battery: a.battery || null,
+        connKind: a.connKind || null, vpn: a.vpn === true,
       });
     }
     return { list, entTotal, entMapped, epTotal, epMapped };
@@ -14618,11 +14656,36 @@
     const ispHtml = isp
       ? `<div class="tep-map-tip-isp">${tepEscapeHtmlText(isp.isp)}${isp.publicIp ? ' · ' + tepEscapeHtmlText(isp.publicIp) : ''}</div>`
       : '';
+    // Endpoint-only IP — the LOCAL/private address (not public — that's what
+    // the ISP line above already shows), already threaded through from the
+    // raw agent record with no extra fetch. Hidden entirely (not falling back
+    // to public) when the agent's payload didn't carry a distinct local IP.
+    const ipHtml = (it.kind === 'endpoint' && it.localIp)
+      ? `<div class="tep-map-tip-ip">${tepEscapeHtmlText(it.localIp)}</div>` : '';
+    // CPU/RAM/disk/battery/connection/VPN — populated only after this
+    // agent's segment-visualisation enrichment resolves (triggered lazily
+    // by showTip() the first time its hover card opens; same mechanism the
+    // sidebar Endpoint Agents list already uses). Nothing shows until then.
+    const connColor = it.connKind === 'wifi' ? '#93c5fd' : (it.connKind === 'ethernet' ? '#86efac' : '#94a3b8');
+    const connHtml = it.kind === 'endpoint' && it.connKind && EP_CONN_ICON[it.connKind]
+      ? `<span title="${it.connKind === 'wifi' ? 'Wi-Fi' : 'Ethernet'}" style="display:inline-flex;color:${connColor};">${EP_CONN_ICON[it.connKind]}</span>` : '';
+    const vpnHtml = it.kind === 'endpoint' && it.vpn
+      ? `<span title="On VPN" style="display:inline-flex;color:#fbbf24;">${EP_VPN_ICON}</span>` : '';
+    const metricParts = it.kind === 'endpoint' ? [
+      it.cpu != null ? `<span title="Last CPU usage">CPU ${tepEscapeHtmlText(it.cpu)}</span>` : '',
+      it.ram != null ? `<span title="Last RAM usage">RAM ${tepEscapeHtmlText(it.ram)}</span>` : '',
+      it.disk != null ? `<span title="Disk usage">Disk ${tepEscapeHtmlText(it.disk)}</span>` : '',
+      it.battery != null ? `<span title="Battery level">🔋 ${tepEscapeHtmlText(it.battery)}</span>` : '',
+      connHtml, vpnHtml,
+    ].filter(Boolean) : [];
+    const metricsHtml = metricParts.length ? `<div class="tep-map-tip-metrics">${metricParts.join('')}</div>` : '';
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       ${usersHtml}
       <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${lat}${loss}${health}</div>
+      ${ipHtml}
       ${ispHtml}
+      ${metricsHtml}
       ${destHtml}
     </div>`;
   }
@@ -15106,10 +15169,71 @@
       tip.style.left = left + 'px';
       tip.style.top = top + 'px';
       tip.classList.toggle('tep-agent-map-tip--below', below);
+      // Speech-bubble tail follows the marker's REAL x position, not just the
+      // tip's own center — the tip's left edge gets clamped near viewport
+      // edges, so without this the tail would visually detach from the
+      // marker it's supposed to be pointing at. Clamped inside the tip's own
+      // rounded corners so the tail never renders off the bubble.
+      const tailLeft = Math.max(14, Math.min(tw - 14, cx - left));
+      tip.style.setProperty('--tep-tip-tail-left', tailLeft + 'px');
     }
     let hideTimer = null;
     function cancelHide() { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } }
     function scheduleHide() { cancelHide(); hideTimer = setTimeout(hideTip, 220); }
+    /** Lazily fetch connection type/VPN (and disk, best-effort) for one
+     *  endpoint agent via segment-visualisation — CPU/RAM/battery are already
+     *  populated fleet-wide by tepFetchAllEyebrowMetrics before this ever
+     *  runs, so this is now just a top-up for the fields data-stream doesn't
+     *  cover. Same call the sidebar Endpoint Agents list already uses,
+     *  triggered by hover instead of scroll-into-view, then re-renders the
+     *  tip IN PLACE — but only if it's still showing the SAME cluster;
+     *  hovering away before the fetch resolves must not stomp whatever the
+     *  tip has since moved on to. */
+    async function enrichEndpointAgentForTip(it, cluster, marker) {
+      if (it.kind !== 'endpoint' || it.agentId == null) {
+        log(`Map tip DIAG: skip enrich — kind=${it.kind} agentId=${it.agentId}`, 'tep-log-info');
+        return;
+      }
+      const agent = allEndpointAgents.find((x) => String(x.id) === String(it.agentId));
+      if (!agent) { log(`Map tip DIAG: no allEndpointAgents match for agentId=${it.agentId}`, 'tep-log-info'); return; }
+      if (agent._enriched || agent._enriching) {
+        log(`Map tip DIAG: agent ${agent.id} already enriched=${agent._enriched} enriching=${agent._enriching} — cpu=${agent.cpu} ram=${agent.ram}`, 'tep-log-info');
+        return;
+      }
+      agent._enriching = true;
+      const round = Math.floor((Date.now() / 1000 - 600) / 300) * 300;
+      log(`Map tip DIAG: fetching segment-visualisation for agent ${agent.id} (${agent.name}), round=${round}`, 'tep-log-info');
+      try {
+        const resp = await ajax(ENDPOINT_SEGMENT_PATH, {
+          method: 'POST',
+          body: JSON.stringify({ roundIdSeconds: round, agentId: agent.id, testIds: [] })
+        });
+        log(`Map tip DIAG: segment-visualisation response for ${agent.id} → ${resp.status}`, 'tep-log-info');
+        if (resp.ok) {
+          const text = await resp.text().catch(() => '');
+          if (text.trim()) {
+            let data = null;
+            try { data = JSON.parse(text); } catch (_) { data = null; }
+            if (data && typeof data === 'object') {
+              applySegmentMetricsToAgent(agent, data);
+              log(`Map tip DIAG: applied metrics for ${agent.id} → cpu=${agent.cpu} ram=${agent.ram} disk=${agent.disk} battery=${agent.battery} connKind=${agent.connKind} vpn=${agent.vpn}`, 'tep-log-ok');
+            } else {
+              log(`Map tip DIAG: response for ${agent.id} was not valid JSON — raw (first 300): ${text.slice(0, 300)}`, 'tep-log-info');
+            }
+          } else {
+            log(`Map tip DIAG: response for ${agent.id} had an empty body`, 'tep-log-info');
+          }
+        }
+      } catch (e) {
+        log(`Map tip DIAG: fetch error for ${agent.id} — ${e.message}`, 'tep-log-info');
+      }
+      agent._enriched = true;
+      agent._enriching = false;
+      if (tip._cluster === cluster && tip.style.display !== 'none') {
+        tip.innerHTML = tepDashTooltipHtml(cluster);
+        if (marker && marker.isConnected) positionTip(marker);
+      }
+    }
     function showTip(marker) {
       // Google (8.8.8.8) destination nodes carry a rich PoP card instead of a cluster.
       if (marker._gcard) {
@@ -15133,6 +15257,12 @@
       if (dashMapFocusAgentKey) {
         const hitRow = tip.querySelector('.tep-map-tip-agent--focushit');
         if (hitRow) { try { hitRow.scrollIntoView({ block: 'nearest' }); } catch (_) { /* */ } }
+      }
+      // Kick off lazy hardware enrichment for any endpoint agent shown here
+      // that hasn't been enriched yet (bounded to what's actually displayed,
+      // never a bulk fetch).
+      for (const it of marker._cluster.items) {
+        void enrichEndpointAgentForTip(it, marker._cluster, marker);
       }
     }
     function hideTip() { cancelHide(); tip.style.display = 'none'; tip._cluster = null; dashMapFocusAgentKey = null; }
@@ -17259,6 +17389,13 @@
       const dropped = liveElements.length - allEndpointAgents.length;
       if (dropped > 0) log(`Endpoint agents: skipped ${dropped} element(s) with no resolvable id`, 'tep-log-info');
       if (liveElements.length) log(`Agent element keys: ${topLevelKeysLabel(epAgentPickRaw(liveElements[0]))}`, 'tep-log-info');
+      // localIp field-name guess isn't independently confirmed (unlike ip/
+      // publicIpAddress) — log the hit rate so a 0 here is an obvious signal
+      // to go capture the real key name instead of guessing further.
+      if (allEndpointAgents.length) {
+        const withLocalIp = allEndpointAgents.filter((a) => a.localIp).length;
+        log(`Endpoint agents: local IP found for ${withLocalIp}/${allEndpointAgents.length} agent(s)`, withLocalIp ? 'tep-log-ok' : 'tep-log-info');
+      }
       // Merge tag-service labels onto agents two ways: by matching any of the
       // agent's id tokens against static tag assignments, AND by matching the
       // agent's own matchedLabels ids (epAgentMatchedLabelIds) against each
@@ -17291,6 +17428,17 @@
       log(`Loaded ${allEndpointAgents.length} endpoint agent(s)`, 'tep-log-ok');
       populateEndpointAgentTagFilter();
       renderEndpointAgents();
+      // CPU/RAM/battery for the whole fleet in one shot (see tepFetchAllEyebrowMetrics
+      // below) — fetched in the background so it never delays the initial list paint;
+      // re-renders whatever's currently showing (sidebar list and/or fullscreen map)
+      // once the numbers land.
+      void (async () => {
+        const snap = await tepFetchAllEyebrowMetrics();
+        if (snap && applyEyebrowMetricsToAgents(snap) > 0) {
+          renderEndpointAgents();
+          refreshDashMapViews();
+        }
+      })();
     } catch (e) {
       log(`Endpoint agent load failed: ${e.message}`, 'tep-log-err');
       if (isLikelyPermissionDenied(String(e.message), String(e.message))) setStatus(TEP_STATUS_SUPERPOWERS, 'err');
@@ -17302,9 +17450,183 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Per-agent enrichment via segment-visualisation: pulls last CPU/RAM/disk/
-  // battery (agent node) + connection type (Wi-Fi/Ethernet, connection node).
-  // Bounded to avoid hammering; runs after the list renders and refreshes it.
+  // Fleet-wide CPU/RAM/battery via /dash-api/dash/data-stream — CONFIRMED via
+  // live capture (user built a scratch dashboard with a 3-metric table and
+  // captured the real request/response). segment-visualisation (below) simply
+  // does not carry these fields; this is the actual source. Unlike
+  // self-service/data (used by the SaaS/Network Health widgets), data-stream
+  // 404s on a fully made-up dashboardId — CONFIRMED it accepts any REAL
+  // dashboard id the account can see, with a made-up widgetId (server treats
+  // widgetId as a fresh cache key, not a saved-widget lookup). One request per
+  // metric returns EVERY endpoint agent's reading at once, keyed by
+  // EYEBROW_MACHINE_ID (a machine GUID) — the trailing '#' JSON line maps that
+  // to a hostname via names.aggregatesMap, which matches normalizeEndpointAgent's
+  // `name` field, so no agentId/segment lookup is needed at all.
+  // ---------------------------------------------------------------------------
+  const TEP_EYEBROW_STREAM_PATH = '/namespace/dash-api/dash/data-stream';
+  const TEP_EYEBROW_METRICS = {
+    cpu: 'EYEBROW_GATEWAY_CPU_LOAD_PERCENT',
+    ram: 'EYEBROW_GATEWAY_MEMORY_LOAD_PERCENT',
+    battery: 'ENDPOINT_GATEWAY_BATTERY_HEALTH_PERCENT',
+  };
+  let tepAnyDashboardIdCache = null;
+
+  /** Any real, accessible dashboard id to anchor data-stream calls on. Prefers
+   *  the current page's own ?dashboardId= (zero extra requests when already on
+   *  a dashboard), otherwise reuses the existing dashboard-catalog fetch and
+   *  caches whichever id comes back first — this only costs one extra round
+   *  trip per panel session, not per metric/agent. */
+  async function tepGetAnyDashboardId() {
+    try {
+      const urlId = new URL(location.href).searchParams.get('dashboardId');
+      if (urlId) return urlId;
+    } catch (_) { /* */ }
+    if (tepAnyDashboardIdCache) return tepAnyDashboardIdCache;
+    try {
+      const rows = await fetchDashboardCatalogForCleanup();
+      if (rows && rows.length) {
+        tepAnyDashboardIdCache = rows[0].id;
+        log(`Eyebrow metrics: anchoring on dashboard ${tepAnyDashboardIdCache} (${rows[0].title})`, 'tep-log-info');
+        return tepAnyDashboardIdCache;
+      }
+    } catch (e) {
+      log(`Eyebrow metrics: dashboard discovery failed — ${e.message}`, 'tep-log-info');
+    }
+    return null;
+  }
+
+  /** Parses data-stream's hybrid text format: a leading '#'-prefixed JSON
+   *  config line, a CSV header + rows (`r,n,<dimensionKey>,v,m`), and a
+   *  trailing '#'-prefixed JSON line carrying names.aggregatesMap[dimensionKey]
+   *  (id → display name). Rows are emitted in ascending round order, so the
+   *  last row per id is the most recent reading. Returns Map<upper-cased
+   *  display name, latest value> or null if nothing usable was found. */
+  function tepParseEyebrowStreamText(text, dimensionKey) {
+    if (!text || typeof text !== 'string') return null;
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    let namesMap = null;
+    let cols = null; // { dimIdx, vIdx }
+    const latestById = new Map();
+    for (const line of lines) {
+      if (line[0] === '#') {
+        let obj = null;
+        try { obj = JSON.parse(line.slice(1).trim()); } catch (_) { continue; }
+        const am = obj && obj.names && obj.names.aggregatesMap && obj.names.aggregatesMap[dimensionKey];
+        if (am && typeof am === 'object') namesMap = am;
+        continue;
+      }
+      const parts = line.split(',');
+      if (!cols) {
+        const dimIdx = parts.indexOf(dimensionKey);
+        const vIdx = parts.indexOf('v');
+        if (dimIdx === -1 || vIdx === -1) return null;
+        cols = { dimIdx, vIdx };
+        continue;
+      }
+      const id = parts[cols.dimIdx];
+      const v = Number(parts[cols.vIdx]);
+      if (!id || !Number.isFinite(v)) continue;
+      latestById.set(id, v);
+    }
+    if (!namesMap || !latestById.size) return null;
+    const byName = new Map();
+    for (const [id, v] of latestById) {
+      const name = namesMap[id];
+      if (name) byName.set(String(name).toUpperCase(), v);
+    }
+    return byName.size ? byName : null;
+  }
+
+  /** One EYEBROW_* metric for every endpoint agent in a single request. Returns
+   *  Map<upper-cased hostname, percent number> or null. */
+  async function tepFetchEyebrowMetric(metricId) {
+    const dashboardId = await tepGetAnyDashboardId();
+    if (!dashboardId) {
+      log('Eyebrow metrics: no accessible dashboard id — skipping', 'tep-log-info');
+      return null;
+    }
+    const widgetId = 'tep-eyebrow-' + metricId.toLowerCase();
+    const body = {
+      areFiltersLocked: false, isToAggregateOnTime: true, isToCompare: true,
+      rowGroupBy: 'EYEBROW_MACHINE_ID', metric: metricId, aggregationType: 'MEAN',
+      dashboardId,
+      dataSourceFilters: {
+        dataSourceId: 'ENDPOINT_AGENTS',
+        filters: [{
+          filterId: 'EYEBROW_MACHINE_ID', metricIds: [metricId], values: [],
+          generalFilter: { filterDimensionId: 'EYEBROW_MACHINE_ID', operator: 'IN', values: [] },
+        }],
+      },
+      parentWidgetId: null, shouldConvertAlertStoreToStore: true, storeMap: {},
+      timeSpanConfig: { now: Date.now(), last: 86400, useGlobalTimespan: false },
+      widgetId, widgetType: 'multi-metric-table',
+    };
+    const url = `${TEP_EYEBROW_STREAM_PATH}?widgetId=${encodeURIComponent(widgetId)}&metricId=${encodeURIComponent(metricId)}&__bg=1`;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`Eyebrow metrics: ${metricId} fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Eyebrow metrics: ${metricId} fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    const byName = tepParseEyebrowStreamText(text, 'EYEBROW_MACHINE_ID');
+    if (!byName) {
+      log(`Eyebrow metrics: ${metricId} response had no usable rows`, 'tep-log-info');
+      return null;
+    }
+    log(`Eyebrow metrics: ${metricId} → ${byName.size} agent(s)`, 'tep-log-ok');
+    return byName;
+  }
+
+  let tepEyebrowMetricsCache = null; // { ts, cpu, ram, battery }
+  const TEP_EYEBROW_CACHE_MS = 2 * 60 * 1000;
+
+  /** CPU + RAM + battery for the whole fleet, fetched together and cached
+   *  briefly so repeated loads/hovers don't refetch every time. */
+  async function tepFetchAllEyebrowMetrics(force) {
+    if (!force && tepEyebrowMetricsCache && (Date.now() - tepEyebrowMetricsCache.ts) < TEP_EYEBROW_CACHE_MS) {
+      return tepEyebrowMetricsCache;
+    }
+    const [cpu, ram, battery] = await Promise.all([
+      tepFetchEyebrowMetric(TEP_EYEBROW_METRICS.cpu),
+      tepFetchEyebrowMetric(TEP_EYEBROW_METRICS.ram),
+      tepFetchEyebrowMetric(TEP_EYEBROW_METRICS.battery),
+    ]);
+    tepEyebrowMetricsCache = { ts: Date.now(), cpu, ram, battery };
+    return tepEyebrowMetricsCache;
+  }
+
+  /** Applies a fetched CPU/RAM/battery snapshot onto every allEndpointAgents
+   *  entry by matching hostname (case-insensitive). Returns how many agents
+   *  got at least one field updated. */
+  function applyEyebrowMetricsToAgents(snapshot) {
+    if (!snapshot) return 0;
+    let applied = 0;
+    for (const agent of allEndpointAgents) {
+      const key = String(agent.name || '').toUpperCase();
+      if (!key) continue;
+      let hit = false;
+      if (snapshot.cpu && snapshot.cpu.has(key)) { agent.cpu = `${Math.round(snapshot.cpu.get(key))}%`; hit = true; }
+      if (snapshot.ram && snapshot.ram.has(key)) { agent.ram = `${Math.round(snapshot.ram.get(key))}%`; hit = true; }
+      if (snapshot.battery && snapshot.battery.has(key)) { agent.battery = `${Math.round(snapshot.battery.get(key))}%`; hit = true; }
+      if (hit) applied++;
+    }
+    return applied;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-agent enrichment via segment-visualisation: connection type (Wi-Fi/
+  // Ethernet, connection node) + active VPN tunnels. CPU/RAM/battery are NOT
+  // in this payload — CONFIRMED via live capture that they come from the
+  // fleet-wide data-stream fetch above instead; the cpu/ram/battery key-sniffs
+  // below are left as a harmless no-op fallback (disk has no other source yet,
+  // so that one still runs for real). Bounded to avoid hammering; runs after
+  // the list renders and refreshes it.
   // ---------------------------------------------------------------------------
   const ENDPOINT_SEGMENT_PATH = '/namespace/endpoint-api/single-agent-view-service/v1/segment-visualisation';
 
