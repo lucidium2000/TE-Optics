@@ -17058,6 +17058,13 @@
     document.removeEventListener('click', dashFullTopBarHandler, true);
     for (const [el, prev] of dashFullHidden) el.style.display = prev;
     dashFullHidden = [];
+    // The inline map's host was hidden (0×0) the entire time fullscreen was
+    // open, so it never got a chance to lay itself out, and the shared
+    // epDashMapZoom (tx/ty/s) was last set by the much larger fullscreen
+    // view — applied to the small sidebar map that reads as "jumbled" until
+    // manually refreshed. Force a fresh auto-fit render now that the host
+    // is visible again with real dimensions, instead of leaving it stale.
+    if ($('#tep-dash-map-host')) renderDashboardAgentMap();
   }
 
   /** Show/update the "sorted by distance from map point" chip (list view only). */
