@@ -14582,6 +14582,24 @@
     return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${agentsHtml}</div>`;
   }
 
+  // Shared, persistent land/water lookup for marker-nudge placement — keyed
+  // by rounded basemap viewBox coordinates, which are invariant to pan/zoom
+  // and identical whether the point came from the inline or fullscreen map
+  // (both draw the same TEP_BASEMAP.paths), so one cache safely serves both
+  // and survives across re-renders.
+  const tepLandCache = new Map();
+  function tepIsViewboxPtOnLand(svg, vbx, vby) {
+    const key = Math.round(vbx) + ',' + Math.round(vby);
+    if (tepLandCache.has(key)) return tepLandCache.get(key);
+    let onLand = false;
+    const paths = svg.querySelectorAll('path');
+    for (let i = 0; i < paths.length; i++) {
+      if (paths[i].isPointInFill({ x: vbx, y: vby })) { onLand = true; break; }
+    }
+    tepLandCache.set(key, onLand);
+    return onLand;
+  }
+
   /** Render the combined enterprise+endpoint agent map. host defaults to the inline
    *  panel host; pass opts.full=true to fill a fullscreen container. */
   function renderDashboardAgentMap(hostEl, opts) {
@@ -14617,8 +14635,8 @@
     overlay.className = 'tep-agent-map-overlay';
     wrap.appendChild(overlay);
 
-    // Cluster agents (any type) within 15 miles of each other into one marker.
-    const CLUSTER_MI = 15;
+    // Cluster agents (any type) within 5 miles of each other into one marker.
+    const CLUSTER_MI = 5;
     const clusters = [];
     for (const it of list) {
       let placed = false;
@@ -15055,19 +15073,36 @@
         const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
         de.el.style.left = x + 'px';
         de.el.style.top = y + 'px';
-        destPx.push({ x, y });
+        destPx.push({ x, y, movable: false });
       });
 
-      // Agent markers can genuinely coincide (or nearly so) with a G marker —
-      // e.g. an estimated nearest-edge guess for an agent whose own location is
-      // itself only approximately known, or a confirmed PoP right where the
-      // agent is. Left alone, the G (higher z-index) fully covers the agent
-      // marker and the connecting flow line collapses to ~0 length. Nudge the
-      // AGENT marker instead, pushed further along the real bearing from the
-      // conflicting point THROUGH the agent's own true position — a direction
-      // grounded in where the agent actually is, not an arbitrary angle, so a
-      // nudge is far less likely to land in open water than a random offset.
+      // Agent markers can genuinely coincide (or nearly so) with a G marker,
+      // or — now that clustering only merges agents within 5 miles — with
+      // each other. Left alone, the higher-z-index marker fully covers the
+      // other and (for a G conflict) the connecting flow line collapses to
+      // ~0 length. Nudge the AGENT marker instead of the conflicting point;
+      // Google's marker is never moved (the estimate IS the real answer to
+      // "where do we think the edge is" — nudging it would visually
+      // contradict the label). The nudge itself checks the REAL basemap
+      // geometry via SVG isPointInFill so it never lands a marker in open
+      // water: it fans out around the natural bearing looking for a land-safe
+      // angle, and only if every angle at this radius is water does it fall
+      // back to shifting the OTHER (movable, i.e. non-Google) marker further
+      // away to free up room — the conflicting marker itself is never forced
+      // into the ocean just to resolve the overlap.
       const MIN_SEP = 30; // px — clears the largest marker pair (24px cluster + 26px G) with a visible gap
+      const WATER_SEARCH_DEG = [0, 25, -25, 50, -50, 75, -75, 100, -100, 130, -130, 160, -160, 180];
+      function landSafeSpot(baseAngle, px, py) {
+        for (const offDeg of WATER_SEARCH_DEG) {
+          const angle = baseAngle + offDeg * Math.PI / 180;
+          const cx = px + Math.cos(angle) * MIN_SEP;
+          const cy = py + Math.sin(angle) * MIN_SEP;
+          const fxC = (cx - epDashMapZoom.tx) / (w * epDashMapZoom.s);
+          const fyC = (cy - epDashMapZoom.ty) / (h * epDashMapZoom.s);
+          if (tepIsViewboxPtOnLand(svg, fxC * TEP_BASEMAP.vbw, fyC * TEP_BASEMAP.vbh)) return { x: cx, y: cy };
+        }
+        return null;
+      }
       const placedPx = destPx.slice();
       const markerPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
                                           // flow line starting from the same agent marker
@@ -15085,14 +15120,34 @@
             const bx = trueX - p.x, by = trueY - p.y;
             const blen = Math.hypot(bx, by);
             const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
-            x = p.x + Math.cos(angle) * MIN_SEP;
-            y = p.y + Math.sin(angle) * MIN_SEP;
+            const spot = landSafeSpot(angle, p.x, p.y);
+            if (spot) {
+              x = spot.x; y = spot.y;
+            } else if (p.movable && p.el) {
+              // No land-safe angle around this conflict for OUR marker —
+              // shift the OTHER (already-placed, movable) marker away
+              // instead, and keep ours at its true position.
+              const pushAngle = Math.atan2(p.y - trueY, p.x - trueX);
+              p.x += Math.cos(pushAngle) * MIN_SEP;
+              p.y += Math.sin(pushAngle) * MIN_SEP;
+              p.el.style.left = p.x + 'px';
+              p.el.style.top = p.y + 'px';
+              if (p.mapKey) markerPxByKey.set(p.mapKey, { x: p.x, y: p.y });
+              x = trueX; y = trueY;
+            } else {
+              // Conflicting point is fixed (a G destination) with no
+              // land-safe angle available — fall back to the plain bearing
+              // nudge rather than leaving the markers stacked.
+              x = p.x + Math.cos(angle) * MIN_SEP;
+              y = p.y + Math.sin(angle) * MIN_SEP;
+            }
           }
         }
         m.style.left = x + 'px';
         m.style.top = y + 'px';
-        markerPxByKey.set(m._fx.toFixed(6) + ',' + m._fy.toFixed(6), { x, y });
-        placedPx.push({ x, y });
+        const mapKey = m._fx.toFixed(6) + ',' + m._fy.toFixed(6);
+        markerPxByKey.set(mapKey, { x, y });
+        placedPx.push({ x, y, movable: true, el: m, mapKey });
       }
 
       // LIVE TEST flow overlay: source follows the (possibly nudged) agent
@@ -17945,7 +18000,13 @@
         if (a) name = a.name || name;
       }
       const v = ispHealthDisplayValues(key, raw);
-      out.push({ kind: raw.kind, agentId: key, name, latencyMs: v.latencyMs, lossPct: v.lossPct, lanIssue: v.lanIssue });
+      // Per-agent list still SHOWS the real reading even when lanIssue is
+      // set — ispHealthDisplayValues nulls latencyMs so the ISP-wide AVERAGE
+      // (ispHealthAggregates) correctly excludes it, but that shouldn't also
+      // hide the actual number from someone looking at this one agent; the
+      // "(LAN)" tag already tells them why it's excluded from the average.
+      const displayLatency = raw.kind === 'enterprise' ? liveTestLatencyFor(key) : v.latencyMs;
+      out.push({ kind: raw.kind, agentId: key, name, latencyMs: displayLatency, lossPct: v.lossPct, lanIssue: v.lanIssue });
     }
     out.sort((a, b) => {
       const aLoss = Number.isFinite(a.lossPct) && a.lossPct > 0;
