@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.17';
+  const TEP_VERSION = '3.18';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -8595,7 +8595,6 @@
   // ---------------------------------------------------------------------------
   let allTests = [];
   let loadTestsInFlight = false;
-  let tepSaasBgTestsLoadTried = false;
   let selectedTestIds = new Set();
   /** Restore import (Create → Restore tab). */
   let testsRestoreImportData = null;
@@ -15765,12 +15764,12 @@
     if (!container._tepBuilt) {
       container._tepBuilt = true;
       container.innerHTML = col1Html + epHtml
+        + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
         + tepWidgetCard(
           `Alerts<a class="tep-dash-widget-openlink" href="${window.location.origin}/alerts/list?tab=active" `
           + 'target="_blank" rel="noopener noreferrer" title="Open Alerts page" aria-label="Open Alerts page">↗</a>',
           '<div id="tep-w-alerts">' + tepWidgetPending() + '</div>', 'tep-dash-widget--alert tep-dash-widget--matchheight')
-        + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight', `${window.location.origin}/events/`)
-        + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight');
+        + tepWidgetCard('Events Active', '<div id="tep-w-events">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight', `${window.location.origin}/events/`);
       void fillDashWidgetsAsync();
     } else {
       const col1El = container.querySelector('#tep-dashmap-col1');
@@ -15828,229 +15827,13 @@
       });
     }
   }
-  /** Normalise an availability value to a 0–100 percent, or null if implausible.
-   *  TE reports availability as either a 0–1 fraction or an already-0–100 percent. */
-  function tepAvailToPct(v) {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < 0) return null;
-    if (n <= 1) return n * 100;   // fraction (0.998 → 99.8)
-    if (n <= 100) return n;       // already a percent
-    return null;                  // out of range → ignore
-  }
-  // TE's HTTP Server "Availability" metric id (NAS dashboards). Match the metric,
-  // not the widget's label — any widget using this metric counts.
-  const TEP_WEB_AVAIL_RE = /WEB_AVAILABILITY/i;
-  // Endpoint HTTP test "Availability" metric id (endpoint-agent data source),
-  // e.g. EYEBROW_TEST_HTTP_AVAILABILITY / ENDPOINT_TEST_HTTP_AVAILABILITY.
-  const TEP_EP_AVAIL_RE = /(?:EYEBROW|ENDPOINT)_TEST_HTTP_AVAILABILITY/i;
-  // Keys that carry a computed value inside a widget's runtime data store.
-  const TEP_VALUE_KEY_RE = /^(value|val|current|latest|avg|average|mean|score|availability|avail|y|metricValue|result)$/i;
-  // Config/presentation containers that must NOT be mined for values (e.g. a
-  // fixedYScale min/max of 95/100 is chrome, not data).
-  const TEP_SKIP_VALUE_KEYS = new Set(['config', 'viewConfig', 'meta', 'generalFilters', 'layout', 'fixedYScale', 'widgets', 'storeMap']);
-
-  /** A widget's configured metric id, from either config.metric or a bare metric. */
-  function tepWidgetMetricId(node) {
-    if (node && node.config && typeof node.config.metric === 'string') return node.config.metric;
-    if (node && typeof node.metric === 'string') return node.metric;
-    return '';
-  }
-  /** Pull plausible availability numbers out of a widget's runtime data store,
-   *  ignoring config/presentation chrome. */
-  function tepGrabAvailNumbers(node, out, depth) {
-    if (node == null || depth > 8) return;
-    if (Array.isArray(node)) { for (const x of node) tepGrabAvailNumbers(x, out, depth + 1); return; }
-    if (typeof node !== 'object') return;
-    for (const k of Object.keys(node)) {
-      if (TEP_SKIP_VALUE_KEYS.has(k)) continue;
-      const v = node[k];
-      if ((typeof v === 'number' || typeof v === 'string') && TEP_VALUE_KEY_RE.test(k)) {
-        const p = tepAvailToPct(v);
-        if (p != null) out.push(p);
-      } else if (v && typeof v === 'object') {
-        tepGrabAvailNumbers(v, out, depth + 1);
-      }
-    }
-  }
-  /** Walk a captured dashboard payload collecting every widget whose metric is
-   *  HTTP Server Availability, with any live values found in its data store. */
-  function tepCollectWebAvailWidgets(node, results, depth) {
-    if (node == null || depth > 12) return;
-    if (Array.isArray(node)) { for (const x of node) tepCollectWebAvailWidgets(x, results, depth + 1); return; }
-    if (typeof node !== 'object') return;
-    const metric = tepWidgetMetricId(node);
-    if (metric && (TEP_WEB_AVAIL_RE.test(metric) || TEP_EP_AVAIL_RE.test(metric))) {
-      const values = [];
-      tepGrabAvailNumbers(node.storeMap, values, 0);
-      tepGrabAvailNumbers(node.data, values, 0);
-      tepGrabAvailNumbers(node.series, values, 0);
-      results.push({
-        widgetId: node.widgetId || node.id || null,
-        label: (node.viewConfig && node.viewConfig.description) || (node.meta && node.meta.title) || '',
-        source: TEP_EP_AVAIL_RE.test(metric) ? 'endpoint' : 'web',
-        values,
-      });
-    }
-    for (const k of Object.keys(node)) {
-      const v = node[k];
-      if (v && typeof v === 'object') tepCollectWebAvailWidgets(v, results, depth + 1);
-    }
-  }
-  /** Scrape the focused dashboard's captured JSON for HTTP Server Availability
-   *  widgets and average their values. Returns
-   *  { avg|null, count, widgetsDetected }. */
-  function tepScrapeDashboardHttpAvailability() {
-    let focusId = null;
-    try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
-    const seen = new Set();
-    const widgets = [];
-    const consider = (data, urlOrPath) => {
-      if (!data || typeof data !== 'object' || seen.has(data)) return;
-      if (focusId && urlOrPath != null && !snapshotMatchesFocusDashboardId(urlOrPath, data, focusId)) return;
-      seen.add(data);
-      tepCollectWebAvailWidgets(data, widgets, 0);
-    };
-    try {
-      for (const e of TEP_DASH_CAPTURE.entries) consider(e && e.data, e && e.url);
-      for (const e of TEP_DASH_SNIFF_BODIES) consider(e && e.data, e && e.path);
-    } catch (_) { /* */ }
-    // A widget can appear in more than one capture — keep the best (valued) copy.
-    const byId = new Map();
-    for (const w of widgets) {
-      const key = w.widgetId || ('label:' + w.label);
-      const prev = byId.get(key);
-      if (!prev || (w.values.length && !prev.values.length)) byId.set(key, w);
-    }
-    const uniq = [...byId.values()];
-    const perWidgetAvgs = uniq
-      .filter((w) => w.values.length)
-      .map((w) => w.values.reduce((s, x) => s + x, 0) / w.values.length);
-    if (perWidgetAvgs.length) {
-      const avg = perWidgetAvgs.reduce((s, x) => s + x, 0) / perWidgetAvgs.length;
-      try { log(`SaaS widget: averaged ${perWidgetAvgs.length} HTTP Server Availability widget(s) on the focused dashboard → ${avg.toFixed(2)}%`, 'tep-log-ok'); } catch (_) { /* */ }
-      return { avg, count: perWidgetAvgs.length, widgetsDetected: uniq.length };
-    }
-    if (uniq.length) {
-      try { log(`SaaS widget: found ${uniq.length} HTTP Server Availability widget(s) but no live values in the captured payload (open the dashboard live so its data store is populated).`, 'tep-log-info'); } catch (_) { /* */ }
-    }
-    return { avg: null, count: 0, widgetsDetected: uniq.length };
-  }
-
   const TEP_DASH_DATA_PATH = '/namespace/dash-api/dash/self-service/data';
-  const TEP_NAS_METRICS_DEFAULT = ['NAS-WEB_AVAILABILITY', 'NAS-WEB_TTFB', 'NAS-WEB_THROUGHPUT', 'NAS-NET_LOSS', 'NAS-NET_LATENCY'];
   const TEP_NAS_FILTER_IDS = ['NAS-TEST', 'NAS-AGENT', 'NAS-TEST_TAG', 'NAS-AGENT_TAG'];
 
-  // Endpoint HTTP availability renders via dash-api/drill-down against the
-  // ENDPOINT_AGENTS data source (see API discovery). These mirror the request
-  // TE's endpoint number widgets make.
-  const TEP_DRILLDOWN_PATH = '/namespace/dash-api/drill-down';
-  const TEP_ENDPOINT_METRICS_DEFAULT = [
-    'ENDPOINT_TEST_HTTP_APPLICATION_SCORE', 'EYEBROW_GATEWAY_CPU_LOAD_PERCENT', 'EYEBROW_GATEWAY_MEMORY_LOAD_PERCENT',
-    'ENDPOINT_GATEWAY_CONNECTION_SCORE', 'EYEBROW_TEST_HTTP_AVAILABILITY', 'EYEBROW_TEST_HTTP_RESPONSE_TIME',
-    'EYEBROW_TEST_NET_LOSS', 'EYEBROW_TEST_NET_LATENCY', 'EYEBROW_TEST_HTTP_DNS_LOOKUP', 'ENDPOINT_AST_TEST_APPLICATION_SCORE',
-  ];
-  const TEP_ENDPOINT_FILTER_IDS = ['EYEBROW_MACHINE_ID', 'EYEBROW_AGENT_TAG'];
-
-  /** The focused dashboard object (with template.widgets) from the capture buffer. */
-  function tepFocusedDashboardObject() {
-    let focusId = null;
-    try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
-    const best = pickBestDashboardLikePayload(focusId);
-    let d = best && best.data;
-    d = unwrapIfSingleElementArray(d);
-    if (Array.isArray(d)) d = d.find((x) => x && String(x.id || x.dashboardId) === String(focusId)) || d[0];
-    return { dash: d && typeof d === 'object' ? d : null, dashboardId: focusId || (d && (d.id || d.dashboardId)) || null };
-  }
-  /** Every NAS-* metric id referenced anywhere in the dashboard (for dataSourceFilters). */
-  function tepDashboardNasMetricIds(dash) {
-    const set = new Set();
-    const walk = (n, depth) => {
-      if (n == null || depth > 12) return;
-      if (Array.isArray(n)) { for (const x of n) walk(x, depth + 1); return; }
-      if (typeof n !== 'object') return;
-      const m = (n.config && n.config.metric) || n.metric;
-      if (typeof m === 'string' && /^NAS-/.test(m)) set.add(m);
-      for (const k of Object.keys(n)) if (n[k] && typeof n[k] === 'object') walk(n[k], depth + 1);
-    };
-    walk(dash, 0);
-    return set.size ? [...set] : TEP_NAS_METRICS_DEFAULT.slice();
-  }
-  /** testId(s) a leaf widget is scoped to, via its own NAS-TEST general
-   *  filter — confirmed via a live dashboard backup: a per-test Numbers leaf
-   *  (e.g. one "SaaS Apps" tile) carries no title/name field of its own
-   *  (meta.title is null), but config.generalFilters['NAS-TEST'].values is
-   *  exactly that one testId. This is the REAL source of a leaf's identity,
-   *  not a title field. */
-  function tepWidgetTestIds(node) {
-    const cfg = (node && node.config && typeof node.config === 'object') ? node.config : {};
-    const gf = cfg.generalFilters;
-    const f = gf && typeof gf === 'object' ? gf['NAS-TEST'] : null;
-    return (f && Array.isArray(f.values)) ? f.values.map(String) : [];
-  }
-  // Logged once so an unresolved widget's raw node can be inspected further
-  // if neither the testId filter nor any title-ish field pans out.
-  let tepWidgetTitleFallbackLogged = false;
-  /** Best-effort display name for a dashboard widget node. Tries, in order:
-   *  (1) the real test name(s) via the leaf's own NAS-TEST filter — the
-   *  reliable source for per-test tiles; (2) meta.title / assorted title-ish
-   *  fields, for widget types that do carry their own label (a colorGrid
-   *  container's own title, etc); (3) a generic "Widget {id}" fallback so the
-   *  SaaS breakdown never shows a blank/undefined row. */
-  function tepWidgetTitle(node) {
-    if (!node) return 'Widget';
-    const testIds = tepWidgetTestIds(node);
-    if (testIds.length) {
-      const names = testIds.map((id) => {
-        const t = (allTests || []).find((x) => String(x.testId != null ? x.testId : x.id) === id);
-        return t && t.name ? t.name : null;
-      }).filter(Boolean);
-      if (names.length === testIds.length) return names.join(', ');
-    }
-    const cfg = (node.config && typeof node.config === 'object') ? node.config : {};
-    const meta = (node.meta && typeof node.meta === 'object') ? node.meta : {};
-    const name = node.title || node.name || node.label || meta.title
-      || cfg.title || cfg.label || cfg.name
-      || (node.target && String(node.target)) || (cfg.target && String(cfg.target));
-    if (name) return String(name);
-    if (!tepWidgetTitleFallbackLogged) {
-      tepWidgetTitleFallbackLogged = true;
-      try {
-        log(`SaaS widget: no title resolved for a widget (testIds=[${testIds.join(',')}], allTests loaded=${(allTests || []).length}) — raw node: ${JSON.stringify(node).slice(0, 1500)}`, 'tep-log-info');
-      } catch (_) { /* */ }
-    }
-    const id = node.widgetId || node.id;
-    return id != null ? `Widget ${id}` : 'Widget';
-  }
-  /** Leaf widgets on the dashboard whose metric is HTTP Server Availability. */
-  function tepFindAvailNumberWidgets(dash) {
-    const roots = (dash && dash.template && Array.isArray(dash.template.widgets)) ? dash.template.widgets
-      : (Array.isArray(dash && dash.widgets) ? dash.widgets : []);
-    const found = [];
-    // Walk to leaf (data) widgets; a leaf's effective metric is its own
-    // config.metric or the nearest ancestor's (colorGrid/timeseries containers
-    // declare the metric on the parent, not the leaf).
-    const walk = (node, ancestors) => {
-      if (!node || typeof node !== 'object') return;
-      const children = Array.isArray(node.widgets) ? node.widgets : null;
-      if (children) {
-        const chain = [node, ...ancestors];
-        for (const c of children) walk(c, chain);
-        return;
-      }
-      let metric = null, metricDeclarer = null;
-      for (const n of [node, ...ancestors]) {
-        const m = n && n.config && n.config.metric;
-        if (typeof m === 'string') { metric = m; metricDeclarer = n; break; }
-      }
-      if (metric && TEP_WEB_AVAIL_RE.test(metric)) {
-        found.push({ node, parent: ancestors[0] || null, metricDeclarer, metric });
-      }
-    };
-    for (const r of roots) walk(r, []);
-    return found;
-  }
   /** Rebuild the self-service/data POST body for one availability widget (mirrors
-   *  the request TE's dashboard makes). */
+   *  the request TE's dashboard makes). Reused by tepFetchAllHttpAvailability with
+   *  a SYNTHETIC entry/dash (no real dashboard involved) — the shape itself is
+   *  unchanged from the confirmed per-widget version. */
   function tepBuildWidgetDataBody(entry, dash, dashboardId, metricIds) {
     const { node, parent, metricDeclarer, metric } = entry;
     const leafCfg = (node.config && typeof node.config === 'object') ? node.config : {};
@@ -16081,281 +15864,74 @@
     body.measureId = leafCfg.aggregationType || decCfg.aggregationType || 'NAS-MEAN';
     return body;
   }
-  /** Pull availability percentages out of a self-service/data response.
-   *  The value lives in data.points[].v (0–100), one point per round; config
-   *  .startRound is the current period (a second point is the compare period). */
-  function tepExtractAvailFromWidgetData(json) {
-    const out = [];
-    const cfg = json && json.config;
-    const d = json && json.data;
-    const points = d && Array.isArray(d.points) ? d.points : null;
-    if (points && points.length) {
-      // Prefer the current period (startRound); else fall back to the latest round.
-      let targetRound = cfg && Number.isFinite(Number(cfg.startRound)) ? Number(cfg.startRound) : null;
-      if (targetRound == null) {
-        for (const p of points) {
-          const r = Number(p && p.r);
-          if (Number.isFinite(r) && (targetRound == null || r > targetRound)) targetRound = r;
-        }
-      }
-      for (const p of points) {
-        if (!p || typeof p !== 'object') continue;
-        if (targetRound != null && Number(p.r) !== targetRound) continue;
-        const v = Number(p.v);
-        if (Number.isFinite(v) && v >= 0 && v <= 100) out.push(v);
-      }
-      if (out.length) return out;
-    }
-    // Fallback for other shapes: generic value-key scan.
-    tepGrabAvailNumbers(d || json, out, 0);
-    return out;
-  }
-  /** Fetch + average one availability widget's value. Returns a percent or null. */
-  async function tepFetchWidgetAvailability(entry, dash, dashboardId, metricIds) {
-    const node = entry.node;
-    const widgetId = node.widgetId || node.id;
-    const metricId = entry.metric;
-    if (!widgetId || !metricId) return null;
-    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(widgetId)}&metricId=${encodeURIComponent(metricId)}&__bg=1`;
-    const body = tepBuildWidgetDataBody(entry, dash, dashboardId, metricIds);
+
+  /** Direct, dashboard-independent HTTP Server availability — no dashboard or
+   *  widget dependency. CONFIRMED via a live capture: a "table" widget with an
+   *  EMPTY generalFilters (no test filter at all), grouped by NAS-TEST then
+   *  NAS-AGENT, returns one point per (test, agent) pair covering EVERY HTTP
+   *  Server test in the account — TE itself treats "no filter" as "every test",
+   *  so there's no need to enumerate test ids ourselves. This synthesizes that
+   *  same widget shape (via tepBuildWidgetDataBody, unchanged/already-confirmed)
+   *  with a made-up widgetId and no real dashboardId — self-service/data appears
+   *  to use widgetId only as a cache key, not a lookup into a saved widget row.
+   *  Averages each test's own points across its agents first (one number per
+   *  test), then averages those together — every test counts once regardless of
+   *  how many agents/vantage points it has. Test display names come straight
+   *  from the response's data.names.aggregatesMap['NAS-TEST'] — no separate
+   *  allTests lookup needed. Returns { avg, count, breakdown:[{title,value,
+   *  testId}] } (breakdown sorted worst-first) or null. */
+  async function tepFetchAllHttpAvailability() {
+    const fakeNode = {
+      widgetId: 'tep-saas-all-http', id: 'tep-saas-all-http', type: 'table',
+      config: {
+        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
+        metric: 'NAS-WEB_AVAILABILITY', filters: {}, generalFilters: {},
+        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
+      },
+    };
+    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric: 'NAS-WEB_AVAILABILITY' };
+    const fakeDash = { defaultTimespan: { timespanDuration: 86400 } };
+    const body = tepBuildWidgetDataBody(entry, fakeDash, null, ['NAS-WEB_AVAILABILITY']);
+    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=NAS-WEB_AVAILABILITY&__bg=1`;
     let resp;
     try {
       resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
     } catch (e) {
-      log(`SaaS widget: data fetch error for ${widgetId} — ${e.message}`, 'tep-log-info');
+      log(`SaaS widget: all-HTTP-tests fetch error — ${e.message}`, 'tep-log-info');
       return null;
     }
-    if (!resp || !resp.ok) { log(`SaaS widget: data ${widgetId} → ${resp ? resp.status : 'error'}`, 'tep-log-info'); return null; }
+    if (!resp || !resp.ok) {
+      log(`SaaS widget: all-HTTP-tests fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
     const text = await resp.text().catch(() => '');
-    let json; try { json = JSON.parse(text); } catch (_) { log(`SaaS widget: non-JSON data for ${widgetId}`, 'tep-log-info'); return null; }
-    const vals = tepExtractAvailFromWidgetData(json);
-    if (!vals.length) {
-      log(`SaaS widget: no availability number found in ${widgetId} response (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
+    let json;
+    try { json = JSON.parse(text); } catch (_) { log('SaaS widget: non-JSON all-HTTP-tests response', 'tep-log-info'); return null; }
+    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
+    if (!points || !points.length) {
+      log(`SaaS widget: all-HTTP-tests response had no points (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
       return null;
     }
-    return vals.reduce((s, x) => s + x, 0) / vals.length;
-  }
-  /** Every endpoint metric id referenced anywhere in the dashboard (for the
-   *  drill-down dataSourceFilters). Falls back to the discovered default set. */
-  function tepDashboardEndpointMetricIds(dash) {
-    const set = new Set();
-    const walk = (n, depth) => {
-      if (n == null || depth > 12) return;
-      if (Array.isArray(n)) { for (const x of n) walk(x, depth + 1); return; }
-      if (typeof n !== 'object') return;
-      const m = (n.config && n.config.metric) || n.metric;
-      if (typeof m === 'string' && /^(?:EYEBROW|ENDPOINT)_/.test(m)) set.add(m);
-      for (const k of Object.keys(n)) if (n[k] && typeof n[k] === 'object') walk(n[k], depth + 1);
-    };
-    walk(dash, 0);
-    // Always include the availability metric so the drill-down returns it.
-    for (const m of TEP_ENDPOINT_METRICS_DEFAULT) if (!set.has(m)) set.add(m);
-    return [...set];
-  }
-  /** Leaf widgets on the dashboard whose metric is Endpoint HTTP Availability. */
-  function tepFindEndpointAvailWidgets(dash) {
-    const roots = (dash && dash.template && Array.isArray(dash.template.widgets)) ? dash.template.widgets
-      : (Array.isArray(dash && dash.widgets) ? dash.widgets : []);
-    const found = [];
-    const walk = (node, ancestors) => {
-      if (!node || typeof node !== 'object') return;
-      const children = Array.isArray(node.widgets) ? node.widgets : null;
-      if (children) {
-        const chain = [node, ...ancestors];
-        for (const c of children) walk(c, chain);
-        return;
-      }
-      let metric = null, metricDeclarer = null;
-      for (const n of [node, ...ancestors]) {
-        const m = n && n.config && n.config.metric;
-        if (typeof m === 'string') { metric = m; metricDeclarer = n; break; }
-      }
-      if (metric && TEP_EP_AVAIL_RE.test(metric)) {
-        found.push({ node, parent: ancestors[0] || null, metricDeclarer, metric });
-      }
-    };
-    for (const r of roots) walk(r, []);
-    return found;
-  }
-  /** Rebuild the drill-down POST body for one endpoint availability widget
-   *  (mirrors the request TE's endpoint number widgets make). */
-  function tepBuildEndpointDrillDownBody(entry, dash, dashboardId, metricIds) {
-    const { node, parent, metricDeclarer, metric } = entry;
-    const leafCfg = (node.config && typeof node.config === 'object') ? node.config : {};
-    const decCfg = (metricDeclarer && metricDeclarer.config && typeof metricDeclarer.config === 'object') ? metricDeclarer.config : {};
-    const cfg = { ...decCfg, ...leafCfg };
-    const last = (dash && dash.defaultTimespan && Number(dash.defaultTimespan.timespanDuration)) || 86400;
-    return {
-      metric,
-      areFiltersLocked: false,
-      aggregationType: cfg.aggregationType || 'MEAN',
-      isToAggregateOnTime: true,
-      isToCompare: false,
-      shouldUseAlertSuppressionWindows: false,
-      shouldUseLocalProblemWindows: false,
-      aggregateProperties: [],
-      filters: cfg.filters || {},
-      generalFilters: cfg.generalFilters || (parent && parent.config && parent.config.generalFilters) || {},
-      dashboardId,
-      dataSourceFilters: {
-        dataSourceId: 'ENDPOINT_AGENTS',
-        filters: TEP_ENDPOINT_FILTER_IDS.map((fid) => ({
-          filterId: fid, metricIds, values: [],
-          generalFilter: { filterDimensionId: fid, operator: 'IN', values: [] },
-        })),
-      },
-      parentWidgetId: parent ? (parent.widgetId || parent.id || null) : null,
-      shouldConvertAlertStoreToStore: true,
-      storeMap: {},
-      timeSpanConfig: { now: Date.now(), last, useGlobalTimespan: false },
-      widgetId: node.widgetId || node.id,
-      widgetType: node.type || 'numbers',
-      groupByLabel: 'All',
-    };
-  }
-  /** Fetch + average one endpoint availability widget's value via drill-down.
-   *  Returns a percent or null. */
-  async function tepFetchEndpointAvailability(entry, dash, dashboardId, metricIds) {
-    const node = entry.node;
-    const widgetId = node.widgetId || node.id;
-    const metricId = entry.metric;
-    if (!widgetId || !metricId) return null;
-    const body = tepBuildEndpointDrillDownBody(entry, dash, dashboardId, metricIds);
-    let resp;
-    try {
-      resp = await ajax(TEP_DRILLDOWN_PATH, { method: 'POST', body: JSON.stringify(body) });
-    } catch (e) {
-      log(`SaaS widget: endpoint availability fetch error for ${widgetId} — ${e.message}`, 'tep-log-info');
-      return null;
+    const names = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
+    const byTest = new Map(); // testId → [v, v, ...]
+    for (const p of points) {
+      if (!p || !p.aggIds) continue;
+      const testId = p.aggIds['NAS-TEST'];
+      const v = Number(p.v);
+      if (testId == null || !Number.isFinite(v)) continue;
+      if (!byTest.has(testId)) byTest.set(testId, []);
+      byTest.get(testId).push(v);
     }
-    if (!resp || !resp.ok) { log(`SaaS widget: endpoint availability ${widgetId} → ${resp ? resp.status : 'error'}`, 'tep-log-info'); return null; }
-    const text = await resp.text().catch(() => '');
-    let json; try { json = JSON.parse(text); } catch (_) { log(`SaaS widget: non-JSON endpoint data for ${widgetId}`, 'tep-log-info'); return null; }
-    const vals = tepExtractAvailFromWidgetData(json);
-    if (!vals.length) {
-      log(`SaaS widget: no endpoint availability number found in ${widgetId} response (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
-      return null;
+    if (!byTest.size) return null;
+    const breakdown = [];
+    for (const [testId, vals] of byTest) {
+      const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
+      breakdown.push({ title: names[testId] || `Test ${testId}`, value: avg, testId: String(testId) });
     }
-    return vals.reduce((s, x) => s + x, 0) / vals.length;
-  }
-  /** Read HTTP Server Availability from the self-service/data responses the
-   *  dashboard already fetched (works for any widget type — the page built the
-   *  correct request). One value per widgetId, latest capture wins. `dash` (when
-   *  available) resolves each widgetId to a display name for the breakdown list —
-   *  captured entries only carry the raw id, not the dashboard's own widget tree. */
-  function tepAvailFromCapturedMetricData(dash) {
-    let focusId = null;
-    try { focusId = extractDashboardIdFromLocation(); } catch (_) { /* */ }
-    const webTitles = new Map(), epTitles = new Map();
-    if (dash) {
-      for (const w of tepFindAvailNumberWidgets(dash)) {
-        const id = String(w.node.widgetId || w.node.id || '');
-        if (id) webTitles.set(id, tepWidgetTitle(w.node));
-      }
-      for (const w of tepFindEndpointAvailWidgets(dash)) {
-        const id = String(w.node.widgetId || w.node.id || '');
-        if (id) epTitles.set(id, tepWidgetTitle(w.node));
-      }
-    }
-    const byWidgetWeb = new Map();
-    const byWidgetEp = new Map();
-    for (const e of TEP_DASH_METRIC_DATA.entries) {
-      if (!e || !e.metricId) continue;
-      const isWeb = TEP_WEB_AVAIL_RE.test(e.metricId);
-      const isEp = TEP_EP_AVAIL_RE.test(e.metricId);
-      if (!isWeb && !isEp) continue;
-      if (focusId && e.dashId && String(e.dashId) !== String(focusId)) continue;
-      const vals = tepExtractAvailFromWidgetData(e.data);
-      if (!vals.length) continue;
-      const key = e.widgetId || ('t' + e.t);
-      const bucket = isEp ? byWidgetEp : byWidgetWeb;
-      if (!bucket.has(key)) bucket.set(key, vals.reduce((s, x) => s + x, 0) / vals.length); // entries newest-first
-    }
-    const web = [...byWidgetWeb.values()];
-    const endpoint = [...byWidgetEp.values()];
-    if (!web.length && !endpoint.length) return null;
-    if (web.length) {
-      const a = web.reduce((s, x) => s + x, 0) / web.length;
-      log(`SaaS widget: averaged ${web.length} captured HTTP Server Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
-    }
-    if (endpoint.length) {
-      const a = endpoint.reduce((s, x) => s + x, 0) / endpoint.length;
-      log(`SaaS widget: averaged ${endpoint.length} captured Endpoint HTTP Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
-    }
-    const webBreakdown = [...byWidgetWeb.entries()].map(([id, value]) => ({ title: webTitles.get(String(id)) || `Widget ${id}`, value }));
-    const epBreakdown = [...byWidgetEp.entries()].map(([id, value]) => ({ title: epTitles.get(String(id)) || `Widget ${id}`, value }));
-    return { web, endpoint, webBreakdown, epBreakdown };
-  }
-  /** Combined HTTP availability for the focused dashboard: HTTP Server (NAS) plus
-   *  Endpoint HTTP test availability. Prefers the widget data the page already
-   *  loaded; falls back to actively fetching leaf availability widgets (NAS via
-   *  self-service/data, endpoint via drill-down). Every widget contributes one
-   *  value to a single average, and one row (title + value) to `breakdown` —
-   *  worst-first, so clicking the SaaS widget shows what's actually dragging it
-   *  down. `dashboardUrl` is wherever this data came FROM (this only resolves
-   *  to real data while the user is on that dashboard's own page, per
-   *  tepFocusedDashboardObject), used to link each breakdown row back to it —
-   *  TE has no separate per-test results page for a dashboard tile; clicking
-   *  one in the real UI opens an in-dashboard drilldown instead. Returns
-   *  { avg, count, webCount, endpointCount, widgetsDetected, breakdown, dashboardUrl } or null. */
-  async function tepFetchDashboardHttpAvailability() {
-    // Widget names (tepWidgetTitle) resolve via allTests, but a user viewing the
-    // SaaS breakdown may never have opened Manage Tests to populate it. Load the
-    // portal test list once, quietly, so names are available without asking the
-    // user to do that themselves.
-    if (!allTests.length && !loadTestsInFlight && !tepSaasBgTestsLoadTried) {
-      tepSaasBgTestsLoadTried = true;
-      try { await loadTests({ quiet: true, skipEnrich: true }); } catch (_) { /* */ }
-    }
-    const { dash, dashboardId } = tepFocusedDashboardObject();
-    const captured = tepAvailFromCapturedMetricData(dash);
-    let webVals = (captured && captured.web) ? captured.web.slice() : [];
-    let epVals = (captured && captured.endpoint) ? captured.endpoint.slice() : [];
-    let webBreakdown = (captured && captured.webBreakdown) ? captured.webBreakdown.slice() : [];
-    let epBreakdown = (captured && captured.epBreakdown) ? captured.epBreakdown.slice() : [];
-    let webDetected = webVals.length;
-    let epDetected = epVals.length;
-
-    // NAS / HTTP Server availability: active fetch when nothing was captured.
-    if (!webVals.length && dash && dashboardId) {
-      const widgets = tepFindAvailNumberWidgets(dash);
-      webDetected = widgets.length;
-      if (widgets.length) {
-        const metricIds = tepDashboardNasMetricIds(dash);
-        const results = await Promise.all(widgets.map((w) => tepFetchWidgetAvailability(w, dash, dashboardId, metricIds).catch(() => null)));
-        webVals = results.filter((v) => v != null && isFinite(v));
-        webBreakdown = widgets.map((w, i) => ({ title: tepWidgetTitle(w.node), value: results[i] })).filter((x) => x.value != null && isFinite(x.value));
-        if (webVals.length) {
-          const a = webVals.reduce((s, x) => s + x, 0) / webVals.length;
-          log(`SaaS widget: fetched + averaged ${webVals.length}/${widgets.length} HTTP Server Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
-        }
-      }
-    }
-
-    // Endpoint HTTP availability: active fetch (drill-down) when nothing captured.
-    if (!epVals.length && dash && dashboardId) {
-      const epWidgets = tepFindEndpointAvailWidgets(dash);
-      epDetected = epWidgets.length;
-      if (epWidgets.length) {
-        const epMetricIds = tepDashboardEndpointMetricIds(dash);
-        const results = await Promise.all(epWidgets.map((w) => tepFetchEndpointAvailability(w, dash, dashboardId, epMetricIds).catch(() => null)));
-        epVals = results.filter((v) => v != null && isFinite(v));
-        epBreakdown = epWidgets.map((w, i) => ({ title: tepWidgetTitle(w.node), value: results[i] })).filter((x) => x.value != null && isFinite(x.value));
-        if (epVals.length) {
-          const a = epVals.reduce((s, x) => s + x, 0) / epVals.length;
-          log(`SaaS widget: fetched + averaged ${epVals.length}/${epWidgets.length} Endpoint HTTP Availability widget(s) → ${a.toFixed(2)}%`, 'tep-log-ok');
-        }
-      }
-    }
-
-    const all = webVals.concat(epVals);
-    const widgetsDetected = webDetected + epDetected;
-    const breakdown = webBreakdown.concat(epBreakdown).sort((a, b) => a.value - b.value);
-    const dashboardUrl = dash ? window.location.href : null;
-    if (!all.length) return { avg: null, count: 0, webCount: 0, endpointCount: 0, widgetsDetected, breakdown, dashboardUrl };
-    const avg = all.reduce((s, x) => s + x, 0) / all.length;
-    log(`SaaS widget: combined availability → ${avg.toFixed(2)}% across ${all.length} widget(s) (${webVals.length} web · ${epVals.length} endpoint)`, 'tep-log-ok');
-    return { avg, count: all.length, webCount: webVals.length, endpointCount: epVals.length, widgetsDetected, breakdown, dashboardUrl };
+    breakdown.sort((a, b) => a.value - b.value); // worst first, matches other breakdown popovers
+    const avg = breakdown.reduce((s, r) => s + r.value, 0) / breakdown.length;
+    log(`SaaS widget: averaged ${breakdown.length} HTTP test(s) directly (no dashboard) → ${avg.toFixed(2)}%`, 'tep-log-ok');
+    return { avg, count: breakdown.length, breakdown };
   }
 
   /** Circular health ring whose arc length is the availability percent and whose
@@ -16395,8 +15971,8 @@
   }
 
   // Set by fillDashWidgetsAsync whenever the SaaS Health average resolves to a
-  // real per-widget breakdown; click on the widget shows it via these.
-  let tepSaasBreakdownData = null;   // { rows: [{title, value}], dashboardUrl } | null
+  // real per-test breakdown; click on the widget shows it via these.
+  let tepSaasBreakdownData = null;   // { rows: [{title, value, testId}] } | null
   let tepSaasPopoverEl = null;
   function hideSaasBreakdownPopover() {
     if (tepSaasPopoverEl) { try { tepSaasPopoverEl.remove(); } catch (_) { /* */ } }
@@ -16409,26 +15985,26 @@
   }
   function tepSaasPopoverEscHandler(e) { if (e.key === 'Escape') hideSaasBreakdownPopover(); }
   /** Toggle the "what's behind this average" breakdown for the SaaS Health
-   *  widget — one row per contributing dashboard widget, worst-first, each
-   *  linking back to the dashboard the data came from (TE has no separate
-   *  per-test page for a dashboard tile; the real UI drills in on the
-   *  dashboard itself, so that's where these point too). */
+   *  widget — one row per HTTP Server test, worst-first, each linking straight
+   *  to that test's own results (/view/tests/?testId=…), same URL shape as
+   *  every other test deep-link this panel builds. */
   function toggleSaasBreakdownPopover(anchorEl) {
     if (tepSaasPopoverEl) { hideSaasBreakdownPopover(); return; }
     if (!tepSaasBreakdownData || !tepSaasBreakdownData.rows || !tepSaasBreakdownData.rows.length || !anchorEl) return;
-    const { rows, dashboardUrl } = tepSaasBreakdownData;
+    const { rows } = tepSaasBreakdownData;
     const pop = document.createElement('div');
     pop.className = 'tep-saas-breakdown-pop';
     const rowsHtml = rows.map((r) => {
       const p = Math.max(0, Math.min(100, Number(r.value) || 0));
       const level = p >= 99 ? 'healthy' : (p >= 95 ? 'warning' : 'unhealthy');
       const c = tepHealthColor(level);
-      const tag = dashboardUrl ? 'a' : 'div';
-      const hrefAttr = dashboardUrl ? ` href="${tepEscapeHtmlText(dashboardUrl)}" target="_blank" rel="noopener noreferrer"` : '';
+      const url = r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null;
+      const tag = url ? 'a' : 'div';
+      const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
       return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
     }).join('');
-    pop.innerHTML = '<div class="tep-saas-breakdown-head">Metrics behind this average'
-      + (dashboardUrl ? '<span class="tep-saas-breakdown-hint">click a row to open the dashboard</span>' : '') + '</div>'
+    pop.innerHTML = '<div class="tep-saas-breakdown-head">HTTP tests behind this average'
+      + '<span class="tep-saas-breakdown-hint">click a row to open the test</span></div>'
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     // Mounted on <html>, not <body> — same reason as the rest of this panel's
     // floating chrome (toggle button, fullscreen overlay, etc.): body is
@@ -16676,55 +16252,35 @@
   /**
    * Fill the Alerts / Events / SaaS widgets. Alerts & Events need TE's in-app
    * alert/event APIs (endpoints TBD via discovery) → they degrade to "—". SaaS
-   * finds every widget on the focused dashboard using the HTTP Server Availability
-   * metric (NAS-WEB_AVAILABILITY), fetches each one's value from TE's
-   * dash-api self-service/data endpoint, and averages them.
+   * averages EVERY HTTP Server test's current availability directly (no
+   * dashboard dependency — see tepFetchAllHttpAvailability).
    */
   async function fillDashWidgetsAsync() {
     const saasEl = document.getElementById('tep-w-saas');
     if (saasEl) {
-      let done = false;
       hideSaasBreakdownPopover();   // stale rows would be confusing after a refresh
       tepSaasBreakdownData = null;
       saasEl.className = '';
       try {
-        const fetched = await tepFetchDashboardHttpAvailability();
+        const fetched = await tepFetchAllHttpAvailability();
         if (fetched && fetched.count) {
-          const parts = [];
-          if (fetched.webCount) parts.push(`${fetched.webCount} web`);
-          if (fetched.endpointCount) parts.push(`${fetched.endpointCount} endpoint`);
-          const breakdown = parts.length ? ` (${parts.join(' · ')})` : '';
-          const hasBreakdown = Array.isArray(fetched.breakdown) && fetched.breakdown.length > 0;
-          if (hasBreakdown) tepSaasBreakdownData = { rows: fetched.breakdown, dashboardUrl: fetched.dashboardUrl };
-          const tip = `Live average across ${fetched.count} HTTP availability widget(s) on this dashboard`
-            + (parts.length ? ` — ${parts.join(', ')}` : '')
-            + (hasBreakdown ? ' — click to see each one' : '');
-          saasEl.className = hasBreakdown ? 'tep-w-saas-clickable' : '';
+          tepSaasBreakdownData = { rows: fetched.breakdown };
+          const tip = `Live average across ${fetched.count} HTTP Server test(s) — click to see each one`;
+          saasEl.className = 'tep-w-saas-clickable';
           saasEl.innerHTML = '<div class="tep-saas-health">'
             + `<div><div class="tep-dash-widget-main">${fetched.avg.toFixed(1)}<small>% avail</small></div>`
-            + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} metric${fetched.count === 1 ? '' : 's'}${breakdown}</div></div>`
+            + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} HTTP test${fetched.count === 1 ? '' : 's'}</div></div>`
             + tepHealthRingHtml(fetched.avg, '')
             + '</div>';
-          done = true;
-        } else if (fetched && fetched.widgetsDetected) {
-          saasEl.innerHTML = `<div class="tep-dash-widget-main">${fetched.widgetsDetected}<small> SaaS widget${fetched.widgetsDetected === 1 ? '' : 's'}</small></div>`
-            + '<div class="tep-dash-widget-sub tep-dash-widget-pending">availability fetch returned no value</div>';
-          done = true;
-        }
-      } catch (e) {
-        log(`SaaS widget: availability fetch failed — ${e.message}`, 'tep-log-info');
-      }
-      if (!done) {
-        const scr = tepScrapeDashboardHttpAvailability();
-        if (scr && scr.widgetsDetected) {
-          saasEl.innerHTML = `<div class="tep-dash-widget-main">${scr.widgetsDetected}<small> SaaS widget${scr.widgetsDetected === 1 ? '' : 's'}</small></div>`
-            + '<div class="tep-dash-widget-sub tep-dash-widget-pending">open this dashboard to load availability</div>';
         } else {
           const httpN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'http').length;
           saasEl.innerHTML = httpN
-            ? `<div class="tep-dash-widget-main">${httpN}<small> HTTP tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">no HTTP availability on this dashboard</div>`
-            : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">open a dashboard with HTTP availability</div>';
+            ? `<div class="tep-dash-widget-main">${httpN}<small> HTTP tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">availability fetch returned no data</div>`
+            : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">no HTTP tests found</div>';
         }
+      } catch (e) {
+        log(`SaaS widget: availability fetch failed — ${e.message}`, 'tep-log-info');
+        saasEl.innerHTML = tepWidgetPending();
       }
     }
     const alertsEl = document.getElementById('tep-w-alerts');
