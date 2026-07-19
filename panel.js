@@ -1,7 +1,8 @@
 /*
  * TE Optics — browser bookmarklet / panel for ThousandEyes (app.thousandeyes.com).
  *
- * Copyright (c) Christopher Hunt. All rights reserved.
+ * Copyright (c) 2026 Christopher G. Hunt.
+ * Licensed under the MIT License — see LICENSE in the repository root.
  * Source & updates: https://github.com/lucidium2000/TE-Optics
  *
  * THIRD-PARTY MARKS / FAIR USE: “ThousandEyes”, Cisco product names, and related

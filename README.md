@@ -51,6 +51,13 @@ The installer page shows a **small build number** next to the title; the same nu
 
 - **Repository:** [github.com/lucidium2000/TE-Optics](https://github.com/lucidium2000/TE-Optics)  
 - **Main script:** `panel.js` (also embedded in `index.html` so the installer works from a simple static site)
+- **Author:** Christopher G. Hunt
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE) — free to use, modify, and redistribute, provided the copyright notice is retained.
 
 ---
 
