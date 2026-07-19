@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.19';
+  const TEP_VERSION = '3.20';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1896,7 +1896,8 @@
        and ready for the next run. */
     .tep-livetest-screenpulse--play {
       display: block !important;
-      animation: tep-livetest-screenpulse 1.4s ease-out 1;
+      /* 60% of the original speed = duration / 0.6 (was 1.4s). */
+      animation: tep-livetest-screenpulse 2.33s ease-out 1;
     }
     @keyframes tep-livetest-screenpulse {
       0%   { width: 14px;   height: 14px;   opacity: .95; }
@@ -2133,6 +2134,15 @@
       padding: 2px 3px; border-radius: 4px; cursor: pointer;
     }
     .tep-dash-widget-openlink:hover { opacity: 1; background: rgba(148,163,184,.18); }
+    /* Network Health's 1h/24h time-window toggle, pinned to the right of its title. */
+    .tep-nethealth-window { margin-left: auto; display: flex; gap: 3px; }
+    .tep-nethealth-window-btn {
+      font-size: 10px; font-weight: 700; letter-spacing: 0; text-transform: none;
+      padding: 2px 6px; border-radius: 4px; border: 1px solid #334155;
+      background: transparent; color: #64748b; cursor: pointer; line-height: 1.4;
+    }
+    .tep-nethealth-window-btn:hover { color: #cbd5e1; border-color: #475569; }
+    .tep-nethealth-window-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
     /* Combined Alerts+Events card: "Alerts" title is its own link to the
        Alerts page; the rest of that column (count, sub text) opens the
        active-alerts popover. Events (right) is entirely a real link to the
@@ -2207,6 +2217,8 @@
          Shared by SaaS/Alerts/ISP-agent popovers, all this one class. */
       scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
     }
+    /* Network Health's own list — 10% wider than the shared 220-320px range. */
+    .tep-saas-breakdown-pop--wide { min-width: 242px; max-width: 352px; }
     .tep-saas-breakdown-pop::-webkit-scrollbar { width: 6px; }
     .tep-saas-breakdown-pop::-webkit-scrollbar-track { background: transparent; }
     .tep-saas-breakdown-pop::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 3px; }
@@ -2380,6 +2392,7 @@
     }
     .tep-dash-kind--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
     .tep-dash-kind--endpoint { background: rgba(59,130,246,.18); color: #93c5fd; }
+    .tep-dash-kind--offline { background: rgba(239,68,68,.18); color: #fca5a5; }
     .tep-map-tip-agent.tep-dash-tip-noclick { cursor: default; }
     .tep-map-tip-agent.tep-dash-tip-noclick:hover { background: transparent; }
     .tep-map-tip-agent.tep-dash-tip-noclick:hover .tep-map-tip-name { color: #f8fafc; }
@@ -13433,6 +13446,10 @@
       platform: String(epAgentPickField(raw, ['platform', 'os', 'operatingSystem']) || ''),
       osVersion: String(epAgentPickField(raw, ['osVersion', 'osVer', 'systemVersion']) || ''),
       lastSeenMs: epAgentPickLastSeenMs(raw),
+      // CONFIRMED via live capture (raw agent element's own top-level
+      // "createdMs" key) — used to sort agents with no latency reading by
+      // install recency instead of leaving them in an arbitrary order.
+      createdMs: Number(epAgentPickField(raw, ['createdMs', 'createDate', 'created'])) || null,
       cpu: epAgentPickPercentMetric(raw, ['cpuUsage', 'cpuUtilization', 'cpuPercent', 'cpuUsagePercent', 'cpuLoad', 'lastCpuUsage']),
       ram: epAgentPickPercentMetric(raw, ['memoryUsage', 'memoryUtilization', 'memoryPercent', 'memoryUsagePercent', 'ramUsage', 'ramPercent', 'lastMemoryUsage']),
       disk: epAgentPickPercentMetric(raw, ['diskUsage', 'diskUtilization', 'diskPercent', 'diskUsagePercent', 'storageUsage', 'storagePercent']),
@@ -14280,6 +14297,10 @@
   // entirely (not just visually — excluded from the map's own counts too,
   // same as the existing offline/health filtering during a LIVE TEST).
   let dashMapAgentTypeFilter = null;
+  // Time window (seconds) for the Network Health widget's own data fetch —
+  // toggled via the small 1h/24h control next to its title. Independent of
+  // every other widget's window.
+  let dashNetworkHealthWindow = 86400;
   // null shows every ISP; an ISP name hides every agent not on that ISP
   // (per-tile radio on the ISP stack, same "show only" pattern as above).
   let dashMapIspFilter = null;
@@ -15813,18 +15834,26 @@
   function tepIspStackHtml() {
     const aggs = ispHealthAggregates();
     if (!aggs.length) return '';
+    // Same formula as Network Health, not the old blend: tepLossSeverity()
+    // saturates to its max at 10% loss and STAYS there for anything above
+    // (11% and 90% score identically), so the previous "loss>10% overrides
+    // the blend" rule collapsed straight to 0% health for any loss over
+    // 10% — a 14% loss with otherwise-great latency read as a flat 0, not
+    // the ~65% a proportional penalty would give it. Latency drives a
+    // lenient baseline (severity dampened 20%); loss subtracts directly as
+    // its own hard, undiluted, PROPORTIONAL penalty — 10 points of loss is
+    // always a 20-point dent, no matter how far past that it goes.
     const scored = aggs.map((g) => {
-      // Blended, not worst-of-two: a Math.max here let loss alone tank the
-      // score even with otherwise-fine latency. Loss now only carries 1/3 of
-      // the weight (latency 2/3) — still penalized, just no longer able to
-      // dominate the score on its own.
-      const latSev = tepIspLatencySeverity(g.avgLatency);
-      const lossSev = tepLossSeverity(g.avgLoss);
+      const latSevRaw = tepIspLatencySeverity(g.avgLatency);
+      const latSevLenient = latSevRaw * 0.8;
+      const latencyScore = (1 - latSevLenient) * 100;
+      const lossPenalty = g.avgLoss != null ? Math.min(100, g.avgLoss * 2) : 0;
       // Excellent latency (<=15ms) earns an automatic perfect score, unless
       // loss is actually present — loss should still tank it even then.
       const excellentLatency = g.avgLatency != null && g.avgLatency <= 15 && !(g.avgLoss > 0);
-      const sev = excellentLatency ? 0 : tepBlendLatencyLossSeverity(latSev, lossSev, g.avgLoss);
-      return { g, sev, score: Math.round((1 - sev) * 100) };
+      const score = excellentLatency ? 100 : Math.max(0, Math.round(latencyScore - lossPenalty));
+      const sev = 1 - score / 100;
+      return { g, sev, score };
     });
     scored.sort((a, b) => (a.score - b.score) || (b.g.count - a.g.count));
     const tiles = scored.map(({ g, sev, score }, i) => {
@@ -15898,9 +15927,14 @@
         + `<div id="tep-w-events">${tepWidgetPending()}</div>`
         + '</a>'
         + '</div></div>';
+      const netHealthTitle = 'Network Health'
+        + '<span class="tep-nethealth-window" role="group" aria-label="Network Health time window">'
+        + `<button type="button" class="tep-nethealth-window-btn${dashNetworkHealthWindow === 3600 ? ' active' : ''}" data-window="3600">1h</button>`
+        + `<button type="button" class="tep-nethealth-window-btn${dashNetworkHealthWindow === 86400 ? ' active' : ''}" data-window="86400">24h</button>`
+        + '</span>';
       container.innerHTML = col1Html + epHtml
         + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
-        + tepWidgetCard('Network Health', '<div id="tep-w-network">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
+        + tepWidgetCard(netHealthTitle, '<div id="tep-w-network">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
         + alertsEventsHtml;
       void fillDashWidgetsAsync();
     } else {
@@ -15968,6 +16002,15 @@
         if (entEl) { toggleAgentsListPopover(entEl, 'enterprise'); return; }
         const epEl = e.target.closest('#tep-dashmap-widget-ep');
         if (epEl) toggleAgentsListPopover(epEl, 'endpoint');
+      });
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.tep-nethealth-window-btn');
+        if (!btn) return;
+        const w = Number(btn.dataset.window);
+        if (!Number.isFinite(w) || w === dashNetworkHealthWindow) return;
+        dashNetworkHealthWindow = w;
+        updateNetworkWindowButtons();
+        void fillNetworkHealthWidget();
       });
     }
   }
@@ -16095,7 +16138,7 @@
       },
     };
     const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
-    const fakeDash = { defaultTimespan: { timespanDuration: 86400 } };
+    const fakeDash = { defaultTimespan: { timespanDuration: dashNetworkHealthWindow } };
     const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
     const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
     let resp;
@@ -16127,13 +16170,17 @@
     return { byTest, names };
   }
   /** Network Health: every Network-category test's loss+latency, averaged per
-   *  test across its agents, blended into one severity via the SAME formula
-   *  as ISP Health (latency 2/3, loss 1/3 — see tepIspLatencySeverity/
-   *  tepLossSeverity), then averaged across tests. Assumes NAS-NET_LATENCY is
-   *  milliseconds and NAS-NET_LOSS is already a 0–100 percent (matching
-   *  NAS-WEB_AVAILABILITY's confirmed scale) — NOT independently confirmed.
-   *  Returns { avgSev, count, breakdown:[{title,sev,score,testId,avgLat,
-   *  avgLoss}] } (breakdown sorted worst-first) or null. */
+   *  test across its agents. Deliberately NOT the same blend as ISP Health —
+   *  latency drives a lenient baseline score (severity dampened 20%, up from
+   *  10%, so a middling latency reading doesn't read as harshly), then loss
+   *  is subtracted directly as its own hard, undiluted penalty — "loss is
+   *  king": every 10 points of loss is a flat 20-point score dent, not
+   *  softened by blending it into a fraction of the total. Assumes
+   *  NAS-NET_LATENCY is milliseconds and NAS-NET_LOSS is already a 0–100
+   *  percent (matching NAS-WEB_AVAILABILITY's confirmed scale) — NOT
+   *  independently confirmed. Returns { avgSev, count, breakdown:[{title,
+   *  sev,score,testId,avgLat,avgLoss}] } (breakdown sorted worst-first) or
+   *  null. */
   async function tepFetchAllNetworkHealth() {
     const [lat, loss] = await Promise.all([
       tepFetchNasMetricAllTests('NAS-NET_LATENCY'),
@@ -16150,11 +16197,14 @@
       const avgLat = latVals && latVals.length ? latVals.reduce((s, x) => s + x, 0) / latVals.length : null;
       const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
       if (avgLat == null && avgLoss == null) continue;
-      const latSev = avgLat != null ? tepIspLatencySeverity(avgLat) : null;
-      const lossSev = avgLoss != null ? tepLossSeverity(avgLoss) : null;
-      const sev = tepBlendLatencyLossSeverity(latSev, lossSev, avgLoss);
+      const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
+      const latSevLenient = latSevRaw * 0.65; // even more lenient — was 0.8, latency still counts, just hits softer
+      const latencyScore = (1 - latSevLenient) * 100;
+      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2) : 0; // 10% loss = 20-point dent, hard rule
+      const score = Math.max(0, Math.round(latencyScore - lossPenalty));
+      const sev = 1 - score / 100;
       breakdown.push({
-        title: names[testId] || `Test ${testId}`, sev, score: Math.round((1 - sev) * 100),
+        title: names[testId] || `Test ${testId}`, sev, score,
         testId: String(testId), avgLat, avgLoss,
       });
     }
@@ -16165,12 +16215,20 @@
     return { avgSev, count: breakdown.length, breakdown };
   }
 
-  /** Circular health ring whose arc length is the availability percent and whose
-   *  colour follows availability health (green → amber → red). */
+  // Shared "red floor" for SaaS/Network Health's smooth colour gradients —
+  // 100% (or a 100-score) is full green, this percent (and below) is full
+  // red, linear in between. Used by both widgets' rings AND their
+  // breakdown-list rows, so a row's colour always matches what the ring
+  // above it is showing.
+  const TEP_HEALTH_RED_FLOOR_PCT = 80;
+  /** Circular health ring whose arc length is the availability percent and
+   *  whose colour follows TEP_HEALTH_RED_FLOOR_PCT's gradient — the old
+   *  99%/95% 3-bucket cutoffs read a perfectly reasonable 93% as flat-out
+   *  red. */
   function tepHealthRingHtml(pct, centerLabel) {
     const p = Math.max(0, Math.min(100, Number(pct) || 0));
-    const level = p >= 99 ? 'healthy' : (p >= 95 ? 'warning' : 'unhealthy');
-    const c = tepHealthColor(level);
+    const f = Math.max(0, Math.min(1, (100 - p) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
+    const c = tepHealthColorFrac(f);
     const label = centerLabel
       ? `<span class="tep-health-ring-label" style="color:${c.fill}">${tepEscapeHtmlText(centerLabel)}</span>`
       : '';
@@ -16185,11 +16243,17 @@
    *  severity score (tepSeverityColor's scale — the one latency/loss severity
    *  already use) instead of an availability percent. tepHealthRingHtml's
    *  99%/95% cutoffs are tuned for uptime metrics and would misclassify a
-   *  perfectly fine 85/100 latency+loss score as "unhealthy". */
-  function tepSeverityRingHtml(sev, centerLabel) {
+   *  perfectly fine 85/100 latency+loss score as "unhealthy". `redAtSev`
+   *  (default 1, ISP Health's own scale, unchanged) lets a caller compress
+   *  the colour gradient — Network Health passes 0.25 so it reaches full red
+   *  at score 75 and full green at 100, matching SaaS Health's own ring
+   *  instead of the plain 0–100 linear default. */
+  function tepSeverityRingHtml(sev, centerLabel, redAtSev) {
     const s = Math.max(0, Math.min(1, Number(sev) || 0));
     const score = Math.round((1 - s) * 100);
-    const c = tepSeverityColor(s);
+    const cap = redAtSev != null ? redAtSev : 1;
+    const colorFrac = cap > 0 ? Math.max(0, Math.min(1, s / cap)) : (s > 0 ? 1 : 0);
+    const c = tepSeverityColor(colorFrac);
     const label = centerLabel
       ? `<span class="tep-health-ring-label" style="color:${c.fill}">${tepEscapeHtmlText(centerLabel)}</span>`
       : '';
@@ -16227,8 +16291,10 @@
     pop.className = 'tep-saas-breakdown-pop';
     const rowsHtml = rows.map((r) => {
       const p = Math.max(0, Math.min(100, Number(r.value) || 0));
-      const level = p >= 99 ? 'healthy' : (p >= 95 ? 'warning' : 'unhealthy');
-      const c = tepHealthColor(level);
+      // Same smooth gradient as the widget's own ring (TEP_HEALTH_RED_FLOOR_PCT)
+      // instead of the old 99%/95% buckets, so a row's colour matches the ring.
+      const f = Math.max(0, Math.min(1, (100 - p) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
+      const c = tepHealthColorFrac(f);
       const url = r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null;
       const tag = url ? 'a' : 'div';
       const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
@@ -16281,9 +16347,13 @@
     if (!tepNetworkBreakdownData || !tepNetworkBreakdownData.rows || !tepNetworkBreakdownData.rows.length || !anchorEl) return;
     const { rows } = tepNetworkBreakdownData;
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop';
+    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide';
     const rowsHtml = rows.map((r) => {
-      const c = tepSeverityColor(Math.max(0, Math.min(1, Number(r.sev) || 0)));
+      // Same compressed gradient as the widget's own ring (matches
+      // TEP_HEALTH_RED_FLOOR_PCT — full red at that score, not score 0) so a
+      // row's colour matches what the ring above it is already showing.
+      const sevRaw = Math.max(0, Math.min(1, Number(r.sev) || 0));
+      const c = tepSeverityColor(Math.min(1, sevRaw / ((100 - TEP_HEALTH_RED_FLOOR_PCT) / 100)));
       const url = r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null;
       const tag = url ? 'a' : 'div';
       const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
@@ -16481,11 +16551,18 @@
   }
   function tepIspPopoverEscHandler(e) { if (e.key === 'Escape') hideIspAgentsPopover(); }
   function tepIspAgentRowHtml(it) {
-    const badge = `<span class="tep-dash-kind tep-dash-kind--${it.kind}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
+    // Offline/unhealthy (and unknown-status) agents flip the kind badge to
+    // red — a plain green "enterprise"/"user" badge next to a blank latency
+    // cell read as if the agent just hadn't reported yet, not that it's
+    // actually down.
+    const isOffline = it.health != null && it.health !== 'healthy';
+    const badgeClass = isOffline ? 'tep-dash-kind--offline' : `tep-dash-kind--${it.kind}`;
+    const badge = `<span class="tep-dash-kind ${badgeClass}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
     const latGoalMs = it.kind === 'endpoint' ? ISP_HEALTH_LATENCY_GOAL_MS : undefined;
+    // No reading at all → leave the cell blank rather than a "—" placeholder.
     const lat = Number.isFinite(it.latencyMs)
       ? `<b style="color:${tepLiveNodeColor(it.latencyMs, it.lossPct, latGoalMs).stroke}">${it.latencyMs}ms</b>`
-      : '<span style="color:#64748b;font-weight:600;">—</span>';
+      : '';
     const loss = (Number.isFinite(it.lossPct) && it.lossPct > 0)
       ? ` <span style="color:#fca5a5;font-weight:700;">${Math.round(it.lossPct * 10) / 10}%</span>` : '';
     // Latency excluded from the ISP average — a private-subnet hop on this
@@ -16540,10 +16617,17 @@
 
   /** Every agent of one kind ('enterprise' or 'endpoint'), worst latency
    *  first — same sort convention as ispHealthAgentsFor (loss-having agents
-   *  first, then worst latency, no-reading agents last). Feeds the
-   *  Enterprise/Endpoint Agents widgets' click-through agent-list popover,
-   *  reusing the exact same row renderer (tepIspAgentRowHtml) and click-to-
-   *  focus behavior as the ISP widgets. */
+   *  first, then worst latency), EXCEPT agents with no latency reading at
+   *  all: those now sort by install recency (most recent first) instead of
+   *  being left in whatever arbitrary order the source list happened to be
+   *  in. installRank is createdMs for endpoint agents (CONFIRMED field on
+   *  the raw agent element); enterprise virtual agents have no confirmed
+   *  install-date field, so agentId (assigned sequentially by TE) is used
+   *  as a proxy — same "no real date → use the sequential id" fallback
+   *  already used elsewhere in this file for sorting tests by creation.
+   *  Feeds the Enterprise/Endpoint Agents widgets' click-through agent-list
+   *  popover, reusing the exact same row renderer (tepIspAgentRowHtml) and
+   *  click-to-focus behavior as the ISP widgets. */
   function tepAgentsListFor(kind) {
     const out = [];
     if (kind === 'enterprise') {
@@ -16552,6 +16636,7 @@
         out.push({
           kind: 'enterprise', agentId: String(a.agentId), name: a.agentName || 'Agent',
           latencyMs: liveTestLatencyFor(a.agentId), lossPct: liveTestLossFor(a.agentId), lanIssue: false,
+          health: tepEnterpriseHealth(a.status), installRank: Number(a.agentId) || 0,
         });
       }
     } else {
@@ -16559,16 +16644,26 @@
         out.push({
           kind: 'endpoint', agentId: String(a.id), name: a.name || 'Agent',
           latencyMs: liveTestLatencyFor(a.id), lossPct: liveTestLossFor(a.id), lanIssue: false,
+          health: tepEndpointHealth(a.lastSeenMs), installRank: Number(a.createdMs) || 0,
         });
       }
     }
     out.sort((a, b) => {
+      // Offline (and unknown-status) agents sink to the bottom regardless of
+      // any latency/loss reading they might still be showing from before
+      // they went down — being reachable at all outranks how bad a stale
+      // reading looks.
+      const aOffline = a.health != null && a.health !== 'healthy';
+      const bOffline = b.health != null && b.health !== 'healthy';
+      if (aOffline !== bOffline) return aOffline ? 1 : -1;
       const aLoss = Number.isFinite(a.lossPct) && a.lossPct > 0;
       const bLoss = Number.isFinite(b.lossPct) && b.lossPct > 0;
       if (aLoss !== bLoss) return aLoss ? -1 : 1;
-      const av = Number.isFinite(a.latencyMs) ? a.latencyMs : -1;
-      const bv = Number.isFinite(b.latencyMs) ? b.latencyMs : -1;
-      return bv - av;
+      const aHasLat = Number.isFinite(a.latencyMs);
+      const bHasLat = Number.isFinite(b.latencyMs);
+      if (aHasLat !== bHasLat) return aHasLat ? -1 : 1;
+      if (aHasLat && bHasLat) return b.latencyMs - a.latencyMs;
+      return b.installRank - a.installRank;
     });
     return out;
   }
@@ -16628,6 +16723,48 @@
     }, 0);
   }
 
+  /** Reflect dashNetworkHealthWindow on the 1h/24h buttons — a plain class
+   *  toggle, not a rebuild, so it doesn't disturb anything else in the
+   *  header. */
+  function updateNetworkWindowButtons() {
+    document.querySelectorAll('.tep-nethealth-window-btn').forEach((btn) => {
+      btn.classList.toggle('active', Number(btn.dataset.window) === dashNetworkHealthWindow);
+    });
+  }
+  /** Fetch + render just the Network Health tile — split out from
+   *  fillDashWidgetsAsync so the 1h/24h toggle can refresh it alone without
+   *  re-fetching Alerts/Events/SaaS too. */
+  async function fillNetworkHealthWidget() {
+    const netEl = document.getElementById('tep-w-network');
+    if (!netEl) return;
+    hideNetworkBreakdownPopover();   // stale rows would be confusing after a refresh
+    tepNetworkBreakdownData = null;
+    netEl.className = '';
+    try {
+      const fetched = await tepFetchAllNetworkHealth();
+      if (fetched && fetched.count) {
+        tepNetworkBreakdownData = { rows: fetched.breakdown };
+        const score = Math.round((1 - fetched.avgSev) * 100);
+        const windowLabel = dashNetworkHealthWindow === 3600 ? '1h' : '24h';
+        const tip = `Live average across ${fetched.count} Network test(s) (last ${windowLabel}) — click to see each one`;
+        netEl.className = 'tep-w-saas-clickable';
+        netEl.innerHTML = '<div class="tep-saas-health">'
+          + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
+          + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} Network test${fetched.count === 1 ? '' : 's'}</div></div>`
+          + tepSeverityRingHtml(fetched.avgSev, '', (100 - TEP_HEALTH_RED_FLOOR_PCT) / 100)
+          + '</div>';
+      } else {
+        const netN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'onewaynetwork').length;
+        netEl.innerHTML = netN
+          ? `<div class="tep-dash-widget-main">${netN}<small> Network tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">health fetch returned no data</div>`
+          : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">no Network tests found</div>';
+      }
+    } catch (e) {
+      log(`Network Health: fetch failed — ${e.message}`, 'tep-log-info');
+      netEl.innerHTML = tepWidgetPending();
+    }
+  }
+
   /**
    * Fill the Alerts / Events / SaaS widgets. Alerts & Events need TE's in-app
    * alert/event APIs (endpoints TBD via discovery) → they degrade to "—". SaaS
@@ -16662,34 +16799,7 @@
         saasEl.innerHTML = tepWidgetPending();
       }
     }
-    const netEl = document.getElementById('tep-w-network');
-    if (netEl) {
-      hideNetworkBreakdownPopover();   // stale rows would be confusing after a refresh
-      tepNetworkBreakdownData = null;
-      netEl.className = '';
-      try {
-        const fetched = await tepFetchAllNetworkHealth();
-        if (fetched && fetched.count) {
-          tepNetworkBreakdownData = { rows: fetched.breakdown };
-          const score = Math.round((1 - fetched.avgSev) * 100);
-          const tip = `Live average across ${fetched.count} Network test(s) — click to see each one`;
-          netEl.className = 'tep-w-saas-clickable';
-          netEl.innerHTML = '<div class="tep-saas-health">'
-            + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
-            + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} Network test${fetched.count === 1 ? '' : 's'}</div></div>`
-            + tepSeverityRingHtml(fetched.avgSev, '')
-            + '</div>';
-        } else {
-          const netN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'onewaynetwork').length;
-          netEl.innerHTML = netN
-            ? `<div class="tep-dash-widget-main">${netN}<small> Network tests</small></div><div class="tep-dash-widget-sub tep-dash-widget-pending">health fetch returned no data</div>`
-            : '<div class="tep-dash-widget-main tep-dash-widget-pending">—</div><div class="tep-dash-widget-sub tep-dash-widget-pending">no Network tests found</div>';
-        }
-      } catch (e) {
-        log(`Network Health: fetch failed — ${e.message}`, 'tep-log-info');
-        netEl.innerHTML = tepWidgetPending();
-      }
-    }
+    await fillNetworkHealthWidget();
     const alertsEl = document.getElementById('tep-w-alerts');
     const alertsColEl = document.getElementById('tep-w-alerts-col');
     if (alertsEl) {
@@ -18054,19 +18164,6 @@
     if (!Number.isFinite(loss) || loss <= 0) return 0;
     return Math.min(1, 0.5 + 0.5 * Math.min(1, loss / 10));
   }
-  /** Blend latency + loss into one severity — latency counts 2/3, loss 1/3,
-   *  same as before, UNLESS loss is over 10%: at that point packet loss is
-   *  already a severe, user-visible problem on its own, so it overrides the
-   *  blend instead of being diluted down to its usual 1/3 share (a test with
-   *  great latency but 50% loss should read as a major health drop, not a
-   *  merely "moderate" score). Shared by ISP Health and Network Health so
-   *  both widgets treat loss the same way. */
-  function tepBlendLatencyLossSeverity(latSev, lossSev, avgLoss) {
-    const blend = (latSev != null && lossSev != null) ? (latSev * (2 / 3) + lossSev * (1 / 3))
-      : (latSev != null ? latSev : lossSev) || 0;
-    if (Number.isFinite(avgLoss) && avgLoss > 10 && lossSev != null) return Math.max(blend, lossSev);
-    return blend;
-  }
   /** RFC 1918 private ranges plus 100.64.0.0/10 (carrier-grade NAT, seen in
    *  live captures e.g. T-Mobile) — none of these are "the ISP", they're the
    *  agent's own home/local network segment or CGNAT hop in front of it. */
@@ -18286,7 +18383,7 @@
     pulse.classList.remove('tep-livetest-screenpulse--play');
     void pulse.offsetWidth; // force reflow so the animation restarts if retriggered
     pulse.classList.add('tep-livetest-screenpulse--play');
-    setTimeout(() => { pulse.classList.remove('tep-livetest-screenpulse--play'); }, 1450);
+    setTimeout(() => { pulse.classList.remove('tep-livetest-screenpulse--play'); }, 2380); // matches the 2.33s animation + buffer
   }
 
   function liveTestClock(ms, showMs) {
