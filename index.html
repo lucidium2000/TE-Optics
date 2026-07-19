@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.16</span>
+        TE Optics<span class="install-version" aria-label="Build">3.17</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.16';
+  const TEP_VERSION = '3.17';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -15034,8 +15034,8 @@
     overlay.className = 'tep-agent-map-overlay';
     wrap.appendChild(overlay);
 
-    // Cluster agents (any type) within 30 miles of each other into one marker.
-    const CLUSTER_MI = 30;
+    // Cluster agents (any type) within 15 miles of each other into one marker.
+    const CLUSTER_MI = 15;
     const clusters = [];
     for (const it of list) {
       let placed = false;
@@ -18895,18 +18895,25 @@
       if (!r.ok) return 0;
       data = await r.json().catch(() => null);
     } catch (_) { return 0; }
-    if (!data) return 0;
+    if (!data) { log(`LIVE TEST DIAG: endpoint dest graph round ${roundId} — request returned no data`, 'tep-log-info'); return 0; }
     const nodes = Array.isArray(data.nodes) ? data.nodes : [];
     const links = Array.isArray(data.links) ? data.links : [];
     const routes = Array.isArray(data.routes) ? data.routes : [];
+    // TEMP DIAG (remove once the "still falls back to nearest-edge estimate"
+    // report is root-caused): dump graph shape + which wanted agents this
+    // call is even chasing, so a pasted log can show whether the graph came
+    // back empty, undersized, or just missing these specific agents.
+    log(`LIVE TEST DIAG: endpoint dest graph round ${roundId} — nodes=${nodes.length} links=${links.length} routes=${routes.length} wanted=[${wanted.join(',')}]`, 'tep-log-info');
     if (!nodes.length || !routes.length) return 0;
     const wantSet = new Set(wanted);
+    const matchedIds = new Set();
     let stored = 0;
     for (const rt of routes) {
       if (!rt || rt.source == null || !Array.isArray(rt.route) || !rt.route.length) continue;
       const srcNode = nodes[rt.source];
       const aId = srcNode && srcNode.agentId != null ? String(srcNode.agentId) : null;
       if (!aId || !wantSet.has(aId)) continue;
+      matchedIds.add(aId);
       if (liveTestDestByAgent.has(aId) && !liveTestDestByAgent.get(aId).estimated) continue;
       // The destination isn't necessarily the LAST hop — scan backward for
       // the last hop whose target node is actually flagged destination:true,
@@ -18920,20 +18927,38 @@
         const node = link ? nodes[link.target] : null;
         if (node && node.destination === true) { destNode = node; break; }
       }
-      if (!destNode || !destNode.location) continue;
-      const geo = liveTestResolveDestGeo(destNode.location);
-      if (!geo) continue;
+      if (!destNode) continue;
+      // CONFIRMED via live capture: once a graph fetch covers MULTIPLE agents,
+      // the shared 8.8.8.8 destination node stops carrying a single top-level
+      // `location` (different agents can resolve the anycast PoP to different
+      // regions, so one shared value would be ambiguous) — it only appears
+      // when exactly one agent's route touches that node in this fetch.
+      // Per-agent resolution instead lives in destNode.sourceIdToLocation[aId]
+      // — fall back to that before giving up.
+      const srcLoc = destNode.sourceIdToLocation && destNode.sourceIdToLocation[aId];
+      const location = destNode.location || (srcLoc && srcLoc.locationName) || null;
+      if (!location) {
+        log(`LIVE TEST DIAG: endpoint agent ${aId} — route found (${rt.route.length} hops) but no destination node/location (checked top-level and sourceIdToLocation). Last hop's target keys: ${(() => { const hop = rt.route[rt.route.length - 1]; const link = hop ? links[hop.link] : null; const node = link ? nodes[link.target] : null; return node ? JSON.stringify(node) : 'none'; })()}`, 'tep-log-info');
+        continue;
+      }
+      const geo = liveTestResolveDestGeo(location);
+      if (!geo) {
+        log(`LIVE TEST DIAG: endpoint agent ${aId} — location="${location}" but geo resolution FAILED (not city-precision)`, 'tep-log-info');
+        continue;
+      }
       const info = {
         ip: destNode.ipAddress || LIVE_TEST_TARGET, name: destNode.name || 'dns.google',
         asn: destNode.asn != null ? destNode.asn : 15169, asName: destNode.asName || 'Google LLC',
-        prefix: destNode.prefix || null, countryName: destNode.countryName || null,
-        location: destNode.location, cloudProvider: null, cloudRegion: null,
-        geonameId: destNode.geonameId != null ? destNode.geonameId : null,
+        prefix: destNode.prefix || null, countryName: destNode.countryName || (srcLoc && srcLoc.countryName) || null,
+        location, cloudProvider: null, cloudRegion: null,
+        geonameId: destNode.geonameId != null ? destNode.geonameId : (srcLoc ? srcLoc.geonameId : null),
       };
       liveTestDestByAgent.set(aId, { lat: geo.lat, lng: geo.lng, label: LIVE_TEST_TARGET, location: info.location, info, estimated: false });
       stored++;
-      log(`LIVE TEST: endpoint agent ${aId} → 8.8.8.8 @ ${tepEscapeHtmlText(destNode.location)}${liveTestSeenGapLabel(aId)}`, 'tep-log-ok');
+      log(`LIVE TEST: endpoint agent ${aId} → 8.8.8.8 @ ${tepEscapeHtmlText(location)}${liveTestSeenGapLabel(aId)}`, 'tep-log-ok');
     }
+    const missed = wanted.filter((id) => !matchedIds.has(id));
+    if (missed.length) log(`LIVE TEST DIAG: endpoint agents with NO matching route in this graph at all: [${missed.join(',')}]`, 'tep-log-info');
     return stored;
   }
 
