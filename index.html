@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.31</span>
+        TE Optics<span class="install-version" aria-label="Build">3.32</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.31';
+  const TEP_VERSION = '3.32';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3040,6 +3040,23 @@
       background: rgba(148,163,184,.08); font-size: 10.5px; color: #94a3b8;
     }
     .tep-map-tip-metricrow b { font-weight: 700; }
+    /* Individual endpoint HTTP test rows under the Application Health
+       metricrow — a compact, scrollable sub-list rather than capped/hidden,
+       since an agent can have many HTTP tests. */
+    .tep-map-tip-tests-head {
+      margin-top: 5px; font-size: 9.5px; font-weight: 700; letter-spacing: .03em;
+      text-transform: uppercase; color: #64748b;
+    }
+    .tep-map-tip-tests {
+      display: flex; flex-direction: column; gap: 1px; margin-top: 2px;
+      max-height: 84px; overflow-y: auto; overscroll-behavior: contain;
+    }
+    .tep-map-tip-test-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 1px 2px; font-size: 10px; color: #94a3b8;
+    }
+    .tep-map-tip-test-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-map-tip-test-row b { font-weight: 700; flex-shrink: 0; }
     .tep-map-tip-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
     .tep-map-tip-labels span { background: #334155; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #cbd5e1; }
     .tep-map-tip-more { color: #64748b; margin-top: 4px; }
@@ -15466,12 +15483,14 @@
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.id, latencyMs: liveTestLatencyFor(a.id),
         ip: a.ip || '', localIp: a.localIp || '', users: a.users || [],
-        // cpu/ram/disk/battery/connKind/vpn are only present once this agent
-        // has been enriched (segment-visualisation) — lazily, on-demand, via
-        // showTip()'s own enrichment call when its hover card first opens.
+        // cpu/ram/disk/battery/connKind/vpn/httpTests are only present once
+        // this agent has been enriched (segment-visualisation) — lazily,
+        // on-demand, via showTip()'s own enrichment call when its hover card
+        // first opens.
         cpu: a.cpu || null, ram: a.ram || null, disk: a.disk || null, battery: a.battery || null,
         batteryHealthPct: a.batteryHealthPct,
         connKind: a.connKind || null, vpn: a.vpn === true,
+        httpTests: Array.isArray(a.httpTests) ? a.httpTests : null,
       });
     }
     return { list, entTotal, entMapped, epTotal, epMapped };
@@ -15589,6 +15608,24 @@
     const metricRowHtml = '<div class="tep-map-tip-metricrow">'
       + `<span>${tepEscapeHtmlText(metricLabel)}</span><b style="color:${metricColor}">${tepEscapeHtmlText(metricText)}</b>`
       + '</div>';
+    // Individual endpoint HTTP tests — shown inline (not just behind a click
+    // into the test-list popover) once this agent's segment-visualisation
+    // enrichment resolves, same lazy fetch/cache that already populates
+    // CPU/RAM/battery above (see applySegmentMetricsToAgent). Unlike
+    // Application Health above, this always reflects the LATEST round — it
+    // does not respect the Data Window dropdown, because there's no
+    // confirmed per-test drill-down API for endpoint agents at all (see
+    // tepFetchAllEndpointAgentAppScores' comment); showing it unconditionally
+    // (any window) is the only way this data is available at all.
+    const httpTestsHtml = (it.kind === 'endpoint' && Array.isArray(it.httpTests) && it.httpTests.length)
+      ? '<div class="tep-map-tip-tests-head" title="Latest round — independent of the Data Window setting above">HTTP tests (latest)</div>'
+        + '<div class="tep-map-tip-tests">'
+        + it.httpTests.map((t) => {
+          const c = tepColorFromScore(t.value).fill;
+          return `<div class="tep-map-tip-test-row"><span>${tepEscapeHtmlText(t.title)}</span><b style="color:${c}">${t.value.toFixed(1)}%</b></div>`;
+        }).join('')
+        + '</div>'
+      : '';
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       ${userSeenHtml}
@@ -15597,6 +15634,7 @@
       ${ispHtml}
       ${metricsHtml}
       ${metricRowHtml}
+      ${httpTestsHtml}
       ${destHtml}
     </div>`;
   }
@@ -17431,29 +17469,11 @@
   // testType === 'HTTP' so this only surfaces actual HTTP Server tests, per
   // the live-captured shape confirmed via manual curl against
   // /namespace/endpoint-api/single-agent-view-service/v1/segment-visualisation.
-  const tepEpHttpTestsCache = new Map(); // agentId -> { ts, rows: [{title,value,testId}] }
-  const TEP_EP_HTTP_TESTS_CACHE_MS = 2 * 60 * 1000;
-  async function tepFetchHttpTestsForEndpointAgent(agentId) {
-    const cached = tepEpHttpTestsCache.get(agentId);
-    if (cached && (Date.now() - cached.ts) < TEP_EP_HTTP_TESTS_CACHE_MS) return cached.rows;
-    const round = Math.floor((Date.now() / 1000 - 600) / 300) * 300;
-    let resp;
-    try {
-      resp = await ajax(ENDPOINT_SEGMENT_PATH, {
-        method: 'POST',
-        body: JSON.stringify({ roundIdSeconds: round, agentId, testIds: [] })
-      });
-    } catch (e) {
-      log(`Endpoint HTTP tests: fetch error for ${agentId} — ${e.message}`, 'tep-log-info');
-      return null;
-    }
-    if (!resp || !resp.ok) {
-      log(`Endpoint HTTP tests: fetch for ${agentId} → ${resp ? resp.status : 'error'}`, 'tep-log-info');
-      return null;
-    }
-    const text = await resp.text().catch(() => '');
-    let data;
-    try { data = JSON.parse(text); } catch (_) { log('Endpoint HTTP tests: non-JSON response', 'tep-log-info'); return null; }
+  // Shared with applySegmentMetricsToAgent (further down) — that's the SAME
+  // response, already fetched for the CPU/RAM/battery/connection enrichment
+  // (hover card + sidebar list), so it parses these rows onto agent.httpTests
+  // too instead of a second, separate request duplicating this one.
+  function epParseHttpTestRowsFromSegmentData(data) {
     const apps = (data && Array.isArray(data.applications)) ? data.applications : [];
     const testsInUse = {};
     if (data && Array.isArray(data.testsInUse)) {
@@ -17474,6 +17494,40 @@
       rows.push({ title: meta.name || `Test ${t.testId}`, value: score, testId: String(t.testId), url: buildEndpointTestViewUrl(meta) });
     }
     rows.sort((a, b) => a.value - b.value); // worst application score first
+    return rows;
+  }
+  const tepEpHttpTestsCache = new Map(); // agentId -> { ts, rows: [{title,value,testId}] }
+  const TEP_EP_HTTP_TESTS_CACHE_MS = 2 * 60 * 1000;
+  async function tepFetchHttpTestsForEndpointAgent(agentId) {
+    // If this agent's segment-visualisation enrichment already ran (hover
+    // card open, or the sidebar list scrolled it into view), agent.httpTests
+    // was parsed from that SAME response already — reuse it instead of firing
+    // a second identical request.
+    const enrichedAgent = allEndpointAgents.find((x) => String(x.id) === String(agentId));
+    if (enrichedAgent && enrichedAgent._enriched && Array.isArray(enrichedAgent.httpTests)) {
+      return enrichedAgent.httpTests;
+    }
+    const cached = tepEpHttpTestsCache.get(agentId);
+    if (cached && (Date.now() - cached.ts) < TEP_EP_HTTP_TESTS_CACHE_MS) return cached.rows;
+    const round = Math.floor((Date.now() / 1000 - 600) / 300) * 300;
+    let resp;
+    try {
+      resp = await ajax(ENDPOINT_SEGMENT_PATH, {
+        method: 'POST',
+        body: JSON.stringify({ roundIdSeconds: round, agentId, testIds: [] })
+      });
+    } catch (e) {
+      log(`Endpoint HTTP tests: fetch error for ${agentId} — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Endpoint HTTP tests: fetch for ${agentId} → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    let data;
+    try { data = JSON.parse(text); } catch (_) { log('Endpoint HTTP tests: non-JSON response', 'tep-log-info'); return null; }
+    const rows = epParseHttpTestRowsFromSegmentData(data);
     tepEpHttpTestsCache.set(agentId, { ts: Date.now(), rows });
     log(`Endpoint HTTP tests: ${rows.length} HTTP test(s) for agent ${agentId}`, 'tep-log-ok');
     return rows;
@@ -19623,6 +19677,14 @@
     // VPN on the last sample: the segment response lists active tunnels under `vpns`.
     if (Array.isArray(data.vpns)) agent.vpn = data.vpns.length > 0;
     else if (Array.isArray(data.vpn)) agent.vpn = data.vpn.length > 0;
+    // Individual HTTP test scores — same response, see
+    // epParseHttpTestRowsFromSegmentData's comment (near
+    // tepFetchHttpTestsForEndpointAgent) for why this rides along here
+    // instead of a separate fetch. Always the LATEST round, same as
+    // everything else applySegmentMetricsToAgent sets — not windowed by the
+    // Data Window dropdown (no confirmed per-test API for that; see
+    // tepFetchAllEndpointAgentAppScores' comment).
+    agent.httpTests = epParseHttpTestRowsFromSegmentData(data);
   }
 
   let endpointAgentObserver = null;
