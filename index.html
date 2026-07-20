@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.26</span>
+        TE Optics<span class="install-version" aria-label="Build">3.27</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.26';
+  const TEP_VERSION = '3.27';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16704,31 +16704,23 @@
         if (m._fy < minFy) minFy = m._fy;
         if (m._fy > maxFy) maxFy = m._fy;
       }
-      // The KPI widget row overlays the top of the fullscreen map — treat
-      // its actual bottom edge as the ceiling for centering/fitting instead
-      // of y=0, so agents never end up scaled/centered as if that space
-      // were free, only to sit tucked under the widgets. Measured live via
-      // getBoundingClientRect (not a hardcoded constant): the row's height
-      // varies with content (Enterprise/Endpoint/SaaS/Network/Alerts row +
-      // Data Window row below it). Inline has no such overlay (ceilPx stays
-      // 0), so this is a no-op there — same as the old flat topShift was.
-      let ceilPx = 0;
-      if (full) {
-        const widgetsEl = document.getElementById('tep-dashmap-widgets');
-        if (widgetsEl) ceilPx = Math.max(0, widgetsEl.getBoundingClientRect().bottom - host.getBoundingClientRect().top);
-      }
-      const visVh = Math.max(1, vh - ceilPx);
       const fxSpan = Math.max(1e-4, maxFx - minFx), fySpan = Math.max(1e-4, maxFy - minFy);
       const sx = spanTarget / fxSpan;
-      const sy = (h > 0 && visVh > 0) ? (spanTarget * visVh) / (fySpan * h) : sx;
+      const sy = (h > 0 && vh > 0) ? (spanTarget * vh) / (fySpan * h) : sx;
       const s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
       const cfx = (minFx + maxFx) / 2, cfy = (minFy + maxFy) / 2;
-      // Vertical center of the space BELOW the widgets (ceilPx..vh) rather
-      // than the full 0..vh — replaces the old flat "shift down 20% of vh"
-      // topShift with a measurement-driven equivalent that adapts to
-      // whatever the widget row's real height happens to be.
-      const centerY = ceilPx + visVh / 2;
-      frameTo({ s, tx: w / 2 - cfx * w * s, ty: centerY - cfy * h * s });
+      // Flat 5%-of-vh downward shift in fullscreen (20% -> 15% -> 10% -> 5%,
+      // nudged up 5 points three times per user request — this is the final
+      // settled value), no widget-measurement involved — agents fit to 60%
+      // of the FULL height as before, then the whole thing gets pushed
+      // down. This is the SAME formula/constant the very first (synchronous)
+      // render of a fresh open uses — see openDashMapFullscreen, where this
+      // call happens before the double-rAF that fades .tep-dashmap-full in,
+      // so the shifted position is already applied while the map is still
+      // invisible (opacity:0) and is what the user sees the instant it
+      // fades in, not a jump partway through or after.
+      const topShift = full ? 0.05 * vh : 0;
+      frameTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift });
     } else if (!preserveZoom && !liveMapSession) {
       // Falls here when there are no markers to fit, OR wrap.clientWidth/
       // clientHeight isn't ready yet. If the map already has an established
