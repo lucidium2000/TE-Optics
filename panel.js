@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.36';
+  const TEP_VERSION = '3.37';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -15409,7 +15409,15 @@
           : tepNoMetricColor(items.reduce((s, it) => s + tepRecencyFreshness(it.lastSeenMs), 0) / items.length);
         m.setAttribute('aria-label', (items[0].location || 'Unknown') + ' — ' + count + ' agents'
           + (useLat ? ` — ${latAvg}ms avg` : '') + (useLoss ? ` — ${lossTxt}` : ''));
-        m.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" aria-hidden="true"><circle cx="12" cy="12" r="10" style="fill:'
+        // Bigger clusters read as bigger circles: +10% per additional 10
+        // members past the first 10 (11-20 → +10%, 21-30 → +20%, …), capped
+        // at the 91-100 band (+90%) so a 500-agent cluster doesn't balloon
+        // past a 1000-agent one — same visual ceiling, just "very large".
+        // viewBox stays fixed (0 0 24 24) so scaling width/height scales the
+        // whole marker — circle, stroke, and count text — proportionally.
+        const clusterScale = 1 + Math.min(9, Math.floor((count - 1) / 10)) * 0.1;
+        const clusterSize = Math.round(25 * clusterScale);
+        m.innerHTML = '<svg viewBox="0 0 24 24" width="' + clusterSize + '" height="' + clusterSize + '" aria-hidden="true"><circle cx="12" cy="12" r="10" style="fill:'
           + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"/><text x="12" y="12">' + count + '</text></svg>';
       } else {
         const it = items[0];
