@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.24</span>
+        TE Optics<span class="install-version" aria-label="Build">3.25</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.24';
+  const TEP_VERSION = '3.25';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -17552,9 +17552,9 @@
       const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
       if (avgLat == null && avgLoss == null) continue;
       const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-      const latSevLenient = latSevRaw * 0.65; // even more lenient — was 0.8, latency still counts, just hits softer
+      const latSevLenient = latSevRaw * 0.5; // more lenient still, per user request — was 0.65 (0.8 before that)
       const latencyScore = (1 - latSevLenient) * 100;
-      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2) : 0; // 10% loss = 20-point dent, hard rule
+      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0; // a little stricter, per user request — 10% loss is now a 25-point dent (was 20)
       const score = Math.max(0, Math.round(latencyScore - lossPenalty));
       const sev = 1 - score / 100;
       breakdown.push({
@@ -17647,9 +17647,9 @@
       const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
       if (avgLat == null && avgLoss == null) continue;
       const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-      const latSevLenient = latSevRaw * 0.65;
+      const latSevLenient = latSevRaw * 0.5; // same latency/loss balance as tepFetchAllNetworkHealth
       const latencyScore = (1 - latSevLenient) * 100;
-      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2) : 0;
+      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
       const score = Math.max(0, Math.round(latencyScore - lossPenalty));
       byAgent.set(name, score);
     }
@@ -17740,9 +17740,9 @@
         const avgLoss = loss ? loss.value : null;
         if (avgLat == null && avgLoss == null) continue;
         const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-        const latSevLenient = latSevRaw * 0.65;
+        const latSevLenient = latSevRaw * 0.5; // same latency/loss balance as tepFetchAllNetworkHealth
         const latencyScore = (1 - latSevLenient) * 100;
-        const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2) : 0;
+        const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
         const score = Math.max(0, Math.round(latencyScore - lossPenalty));
         rows.push({ title: (lat || loss).name, value: score, testId });
       }
