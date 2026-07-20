@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.35';
+  const TEP_VERSION = '3.36';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1664,23 +1664,6 @@
       color: #64748b;
       margin-left: 6px;
       letter-spacing: 0.02em;
-    }
-    .tep-title-update {
-      font-size: 10px;
-      font-weight: 700;
-      color: #bae6fd;
-      margin-left: 8px;
-      text-decoration: none;
-      padding: 3px 8px;
-      border-radius: 999px;
-      border: 1px solid rgba(56, 189, 248, 0.45);
-      background: rgba(56, 189, 248, 0.14);
-      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6) inset;
-    }
-    .tep-title-update:hover {
-      color: #e0f2fe;
-      border-color: rgba(56, 189, 248, 0.75);
-      background: rgba(56, 189, 248, 0.22);
     }
     .tep-dark-reset {
       background: none; border: 1px solid #475569; color: #94a3b8; font-size: 14px;
@@ -3511,7 +3494,6 @@
       <h2>
         <span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span>
         <span class="tep-title-version">v${TEP_VERSION}</span>
-        <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>
       </h2>
       <button class="tep-dark-toggle" id="tep-dark-toggle" style="display:none;" aria-hidden="true" tabindex="-1"></button>
       <button class="tep-dark-reset" id="tep-dark-reset" title="Reset / turn off dark mode" style="display:none;">&#9728;</button>
@@ -4362,27 +4344,27 @@
 
     if (isManageAlertsPage() && pAlerts) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
       }
       pAlerts.classList.add('active');
     } else if (isManageTagsPage() && pTags) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
       }
       pTags.classList.add('active');
     } else if (isDashboardToolsPage()) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
       }
       pDash.classList.add('active');
     } else if (isEndpointToolsPage() && pEndpoint) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
       }
       pEndpoint.classList.add('active');
     } else {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
       }
       pManage.classList.add('active');
     }
@@ -4416,7 +4398,7 @@
     const target = mode === 'endpoint' ? pEndpoint : pManage;
     if (target) target.classList.add('active');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
     }
     const enterpriseBtn = root.querySelector('#tep-mode-enterprise');
     const endpointBtn = root.querySelector('#tep-mode-endpoint');
@@ -4447,7 +4429,7 @@
     tepFromEndpointTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
     }
     void loadTests();
     updateManageUnitsTotal();
@@ -4465,7 +4447,7 @@
     tepFromDashTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
     }
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
@@ -4485,7 +4467,7 @@
     tepFromDashTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
     }
     void loadTests();
     updateManageUnitsTotal();
@@ -4503,7 +4485,7 @@
     tepFromEndpointTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span> <a class="tep-title-update" href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Update</a>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
     }
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
