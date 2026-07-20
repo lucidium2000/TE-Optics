@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.32';
+  const TEP_VERSION = '3.33';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -19795,7 +19795,7 @@
   // ===========================================================================
   const LIVE_TEST_TARGET = '8.8.8.8';
   const LIVE_TEST_DURATION_MS = 90000;
-  const LIVE_TEST_POLL_MS = 5000;
+  const LIVE_TEST_POLL_MS = 12000;
   // Confirmed via API discovery: 'run once' an existing endpoint SCHEDULED test:
   //   POST /namespace/endpoint-api/test-configs-service/v1/instant-tests/scheduled-tests/{testId}
   //   (no request body)
