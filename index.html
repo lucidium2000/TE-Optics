@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.25</span>
+        TE Optics<span class="install-version" aria-label="Build">3.26</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.25';
+  const TEP_VERSION = '3.26';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -459,10 +459,16 @@
     const fullscreenOpen = !!document.querySelector('.tep-dashmap-full');
     const isHidden = existingRoot.style.display === 'none' && !fullscreenOpen;
     if (isHidden) {
-      // Was hidden — show it again, same as always.
-      existingRoot.style.display = '';
-      if (existingHandle) existingHandle.style.display = '';
-      existingToggle.textContent = '✖';
+      // Was hidden — show it again, same as always (animated slide-in via
+      // _tepShow when this build exposes it; falls back to an instant show
+      // for an older panel build still on the page that doesn't).
+      if (typeof existingRoot._tepShow === 'function') {
+        existingRoot._tepShow();
+      } else {
+        existingRoot.style.display = '';
+        if (existingHandle) existingHandle.style.display = '';
+        existingToggle.textContent = '✖';
+      }
     } else if (typeof existingRoot._tepToggleFullscreenMap === 'function') {
       // Already visible (sidebar or full-screen) — a second click now
       // toggles between the two instead of hiding the panel (hiding is
@@ -2006,7 +2012,16 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px; box-shadow: -4px 0 20px rgba(0,0,0,.4);
       display: flex; flex-direction: column; overflow: hidden;
+      /* right:0 is fixed, so a transform-based slide never disturbs layout —
+         .tep-offscreen (initial mount, toggle-button hide/reopen) pushes the
+         whole panel off to the right. .tep-panel-extend (fullscreen map
+         open/close, see openDashMapFullscreen) instead grows/shrinks the
+         actual width, since that transition needs to read as the panel
+         itself becoming the full-width map, not sliding away from one. */
+      transition: transform .3s cubic-bezier(.22,.88,.36,1), width .3s cubic-bezier(.22,.88,.36,1);
     }
+    #te-panel-root.tep-offscreen { transform: translateX(100%); }
+    #te-panel-root.tep-panel-extend { width: 100vw; }
     #te-panel-root * { box-sizing: border-box; }
 
     /* Resize gutter */
@@ -2483,7 +2498,16 @@
        top:56px leaves TE's own title bar (fixed height, confirmed) visible/usable
        instead of covering it — the widgets row and mapbody below are both
        positioned relative to this box, so they shift down with it for free. */
-    .tep-dashmap-full { position: fixed; inset: 56px 0 0 0; z-index: 2147483647; isolation: isolate; background: #0b1220; }
+    /* Starts transparent and fades in (see openDashMapFullscreen adding
+       .tep-dashmap-full--in a frame later) while the side panel underneath
+       simultaneously widens to fill the screen (#te-panel-root.tep-panel-
+       extend) — together they read as the panel "becoming" the map instead
+       of an instant hide/show swap. Reversed by closeDashMapFullscreen. */
+    .tep-dashmap-full {
+      position: fixed; inset: 56px 0 0 0; z-index: 2147483647; isolation: isolate; background: #0b1220;
+      opacity: 0; transition: opacity .3s ease;
+    }
+    .tep-dashmap-full--in { opacity: 1; }
     .tep-dashmap-full-widgets {
       position: absolute; top: 12px; left: 12px; right: 60px; z-index: 4;
       display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; pointer-events: none;
@@ -2677,27 +2701,47 @@
       background: linear-gradient(180deg, rgba(249,115,22,.34), rgba(249,115,22,.16));
       box-shadow: 0 0 0 3px rgba(249,115,22,.24), 0 2px 8px rgba(0,0,0,.5);
     }
-    /* 15% smaller than the original 34px/18px/8px (34*.85≈29, 18*.85≈15,
-       8*.85≈7); zoom-out's top keeps the same 8px gap below the (now
-       shorter) zoom-in button. */
+    /* Search bar, zoom-out, zoom-in — one row, in that left-to-right order
+       (see openDashMapFullscreen's markup), bottom-center where the search
+       bar used to sit alone. Zoom buttons are now plain flex children (no
+       more individual absolute positioning/stacking) sized to match the
+       search bar's own ~34px rendered height (7px padding + 1px border on
+       each side around its 18px-tall input) — same 34px .tep-dashmap-full-min
+       already uses, so all three controls read as one consistent size. */
+    .tep-dashmap-searchrow {
+      position: absolute; bottom: calc(14px + 5%); left: 50%; transform: translateX(-50%); z-index: 6;
+      display: flex; align-items: center; gap: 9px;
+    }
+    /* 38px — matches .tep-dashmap-search's own new ~38px rendered height
+       (8px padding + 1px border on each side around its 20px-tall input),
+       up from 34px alongside the search bar's own ~10% size bump below. */
     .tep-dashmap-full-zoom {
-      position: absolute; top: 56px; right: 14px; z-index: 6;
-      width: 29px; height: 29px; display: flex; align-items: center; justify-content: center;
-      border-radius: 7px; cursor: pointer; color: #e2e8f0; font-size: 15px; font-weight: 700; line-height: 1;
+      flex: 0 0 auto;
+      width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+      border-radius: 9px; cursor: pointer; color: #e2e8f0; font-size: 18px; font-weight: 700; line-height: 1;
       background: rgba(15,23,42,.92); border: 1px solid #475569; box-shadow: 0 2px 8px rgba(0,0,0,.5);
     }
     .tep-dashmap-full-zoom:hover { border-color: #f97316; color: #fdba74; }
-    .tep-dashmap-full-zoom-out { top: 93px; }
+    /* ~10% bigger than before (padding/radius/gap) per user request — see
+       the matching input/icon/count sizing below and .tep-dashmap-full-zoom
+       above (sized to match this bar's new height exactly). */
     .tep-dashmap-search {
-      position: absolute; bottom: calc(14px + 5%); left: 50%; transform: translateX(-50%); z-index: 6;
-      display: flex; align-items: center; gap: 7px;
-      padding: 7px 12px; border-radius: 20px;
-      background: rgba(15,23,42,.92); border: 1px solid #475569; box-shadow: 0 2px 8px rgba(0,0,0,.5);
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 13px; border-radius: 22px;
+      background: rgba(15,23,42,.92);
+      /* Orange border/glow visible by default (not just on focus, below) —
+         matches .tep-dashmap-full-min's always-orange treatment, so the
+         search bar reads as the row's primary/inviting action next to the
+         plainer slate-gray zoom buttons beside it. */
+      border: 1px solid rgba(249,115,22,.55); box-shadow: 0 0 0 1px rgba(249,115,22,.12), 0 2px 8px rgba(0,0,0,.5);
       backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     }
     /* Inline (sidebar dashboard) map's search bar — same chrome/behavior as
        the fullscreen one above, but sits in normal flow below the map
-       instead of overlaid bottom-middle (no absolute positioning needed). */
+       instead of overlaid bottom-middle (no absolute positioning needed).
+       Deliberately NOT resized alongside the fullscreen one above — stays
+       its original size, since it sits inline in the (much narrower)
+       sidebar rather than overlaid on the full map. */
     .tep-dash-map-search {
       display: flex; align-items: center; gap: 7px;
       margin-top: 8px; padding: 7px 12px; border-radius: 20px;
@@ -2716,20 +2760,38 @@
       background: transparent !important; border: none !important; outline: none !important;
       box-shadow: none !important; background-image: none !important;
       -webkit-appearance: none; appearance: none;
-      padding: 0 !important; margin: 0 !important; height: 18px !important; line-height: 18px !important;
+      padding: 0 !important; margin: 0 !important;
       box-sizing: content-box !important;
-      color: #e2e8f0; font-size: 13px; font-family: inherit;
+      color: #e2e8f0; font-family: inherit;
     }
-    .tep-dashmap-search input { width: 240px; max-width: 38vw; }
-    .tep-dash-map-search input { flex: 1 1 auto; min-width: 0; width: 100%; }
+    /* Width +10% (240→264px) and font-size +2pt (13→15px), per user
+       request — height/line-height follow the font up to keep the text
+       vertically centered (18→20px, matching the .tep-dashmap-full-zoom
+       comment above's height math). */
+    .tep-dashmap-search input {
+      width: 264px; max-width: 38vw;
+      height: 20px !important; line-height: 20px !important; font-size: 15px;
+    }
+    .tep-dash-map-search input {
+      flex: 1 1 auto; min-width: 0; width: 100%;
+      height: 18px !important; line-height: 18px !important; font-size: 13px;
+    }
     .tep-dashmap-search input::placeholder, .tep-dash-map-search input::placeholder { color: #64748b; }
-    .tep-dashmap-search-count { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: #94a3b8; white-space: nowrap; }
+    /* .tep-dashmap-search-count/-clear are shared classes (same markup,
+       different ids) between the fullscreen and inline search bars — sized
+       per-context below via the parent, same split as the input rule above,
+       so only the fullscreen one picks up the +2pt/~10% bump. */
+    .tep-dashmap-search-count { flex: 0 0 auto; font-weight: 700; color: #94a3b8; white-space: nowrap; }
     .tep-dashmap-search-count--none { color: #f87171; }
+    .tep-dashmap-search .tep-dashmap-search-count { font-size: 13px; }
+    .tep-dash-map-search .tep-dashmap-search-count { font-size: 11px; }
     .tep-dashmap-search-clear {
-      flex: 0 0 auto; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
       border-radius: 50%; cursor: pointer; color: #94a3b8; background: rgba(148,163,184,.15);
-      border: none; font-size: 10px; line-height: 1; padding: 0;
+      border: none; line-height: 1; padding: 0;
     }
+    .tep-dashmap-search .tep-dashmap-search-clear { width: 20px; height: 20px; font-size: 11px; }
+    .tep-dash-map-search .tep-dashmap-search-clear { width: 18px; height: 18px; font-size: 10px; }
     .tep-dashmap-search-clear:hover { color: #fff; background: rgba(148,163,184,.3); }
     /* "Seen within" vertical slider, right side of the fullscreen map,
        vertically centered (Data Window moved down into the widget grid, so
@@ -3709,6 +3771,45 @@
   root._tepToggleFullscreenMap = () => {
     if (dashMapFullEl) closeDashMapFullscreen(); else openDashMapFullscreen();
   };
+  // Shared duration for every panel-level animation (this show/hide slide,
+  // and the fullscreen map's extend/fade in openDashMapFullscreen/
+  // closeDashMapFullscreen) so they all feel like one consistent motion
+  // language, not several independently-tuned transitions. MUST match the
+  // .3s in STYLES' #te-panel-root/.tep-dashmap-full transition durations —
+  // this is what the various setTimeout(…, TEP_TOGGLE_ANIM_MS) calls wait
+  // out before finishing a hide/close (removing from the DOM, flipping
+  // display:none); if the two drift apart, either the element vanishes
+  // before its transition visually finishes, or sits idle after finishing.
+  const TEP_TOGGLE_ANIM_MS = 300;
+  // Also exposed like _tepToggleFullscreenMap above, for the same reason —
+  // the toggle button's own click handler below uses these directly, but a
+  // fresh bookmarklet re-click (a separate script execution) can only reach
+  // this build's panel through hooks hung off the DOM element itself.
+  root._tepShow = () => {
+    root.style.display = '';
+    resizeHandle.style.display = '';
+    // .tep-offscreen is expected to already be set (from a prior _tepHide) —
+    // forcing a reflow before removing it is what makes the removal actually
+    // transition instead of the browser coalescing both style changes into
+    // one paint with no visible motion.
+    void root.offsetWidth;
+    root.classList.remove('tep-offscreen');
+    toggleBtn.textContent = '✖';
+    applyWidth(panelWidth);
+  };
+  root._tepHide = () => {
+    root.classList.add('tep-offscreen');
+    toggleBtn.textContent = '⌖';
+    setTimeout(() => {
+      // Guards against a rapid re-show landing mid-animation: if _tepShow
+      // already removed .tep-offscreen by the time this fires, leave the
+      // (now visible again) panel alone instead of yanking it to display:none.
+      if (!root.classList.contains('tep-offscreen')) return;
+      root.style.display = 'none';
+      resizeHandle.style.display = 'none';
+      constrainStyles.update('');
+    }, TEP_TOGGLE_ANIM_MS);
+  };
 
   // Toggle button — persists even when panel is hidden. Fixed bottom-right;
   // an earlier attempt to align it inline with TE's own top-right toolbar
@@ -3727,14 +3828,7 @@
   toggleBtn.addEventListener('mouseleave', () => { toggleBtn.style.transform = ''; });
   toggleBtn.addEventListener('click', () => {
     const isHidden = root.style.display === 'none';
-    root.style.display = isHidden ? '' : 'none';
-    resizeHandle.style.display = isHidden ? '' : 'none';
-    toggleBtn.textContent = isHidden ? '✖' : '⌖';
-    if (isHidden) {
-      applyWidth(panelWidth);
-    } else {
-      constrainStyles.update('');
-    }
+    if (isHidden) root._tepShow(); else root._tepHide();
   });
   document.documentElement.appendChild(toggleBtn);
 
@@ -4641,7 +4735,18 @@
     </div>
   `);
 
+  // Mount off-screen, then release it into its slide-in transition next
+  // frame — appending it already in its final position would show it there
+  // immediately, with nothing to animate from. Double rAF (not single):
+  // one frame just to guarantee the browser has actually painted the
+  // off-screen state before the second frame removes the class, which some
+  // browsers need to reliably fire the transition instead of coalescing
+  // both style changes into one paint with no visible motion.
+  root.classList.add('tep-offscreen');
   document.documentElement.appendChild(root);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => { root.classList.remove('tep-offscreen'); });
+  });
 
   // ---------------------------------------------------------------------------
   // View tabs + panels (tests vs /dashboard)
@@ -14780,7 +14885,19 @@
       if (e.target.closest('.tep-agent-map-tip')) return; // let the hover card scroll
       e.preventDefault();
       hideTip();
-      zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX, e.clientY);
+      // Scale the zoom step by this event's own deltaY magnitude instead of
+      // a flat per-tick factor — a real mouse wheel fires large, roughly-
+      // uniform deltaY per physical notch (~100), so a flat factor read fine
+      // there, but trackpad pinch/scroll fires deltaY of very different
+      // (often much larger, gesture-speed-dependent) magnitudes through this
+      // SAME handler, and a flat factor applied to those felt wildly
+      // oversensitive — CONFIRMED via user report ("pinch zoom on trackpad
+      // is still way too sensitive"). .0016 tuned so a ~100-delta mouse
+      // notch lands at roughly the prior flat .16 step; capped at that same
+      // .16 so even an aggressive fast pinch can't zoom faster than the old
+      // worst case.
+      const step = Math.min(0.16, Math.abs(e.deltaY) * 0.0016);
+      zoomAt(e.deltaY < 0 ? 1 + step : 1 / (1 + step), e.clientX, e.clientY);
     }, { passive: false });
 
     // Drag to pan; a click without movement selects a geographic point.
@@ -16335,6 +16452,18 @@
       };
       dashMapZoomAnimFrame = requestAnimationFrame(step);
     }
+    /** Click on blank map space (see pointerup below) — unlike zoomAt (which
+     *  keeps the clicked point fixed at its own screen position, for wheel
+     *  zoom), this instead pans so the clicked point ends up at the
+     *  viewport's CENTER once zoomed, animated the same as a search-hit/
+     *  ISP-popover focus jump rather than snapping instantly. */
+    function centerZoomAt(clientX, clientY, factor) {
+      const rect = wrap.getBoundingClientRect();
+      const px = clientX - rect.left, py = clientY - rect.top;
+      const ns = Math.min(MAX, Math.max(MIN, epDashMapZoom.s * factor));
+      const wx = (px - epDashMapZoom.tx) / epDashMapZoom.s, wy = (py - epDashMapZoom.ty) / epDashMapZoom.s;
+      animateZoomTo({ s: ns, tx: rect.width / 2 - wx * ns, ty: rect.height / 2 - wy * ns });
+    }
     function zoomAt(factor, clientX, clientY) {
       cancelZoomAnim();
       const rect = wrap.getBoundingClientRect();
@@ -16351,7 +16480,20 @@
       if (e.target.closest('.tep-agent-map-tip')) return; // let the hover card scroll
       e.preventDefault();
       hideTip();
-      zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX, e.clientY);
+      // Scale the zoom step by this event's own deltaY magnitude instead of
+      // a flat per-tick factor — a real mouse wheel fires large, roughly-
+      // uniform deltaY per physical notch (~100), so a flat factor read fine
+      // there, but trackpad pinch/scroll fires deltaY of very different
+      // (often much larger, gesture-speed-dependent) magnitudes through this
+      // SAME handler, and a flat factor applied to those felt wildly
+      // oversensitive — CONFIRMED via user report ("pinch zoom on trackpad
+      // is still way too sensitive"). .0016 tuned so a ~100-delta mouse
+      // notch lands at roughly the prior flat .16 step; capped at that same
+      // .16 so even an aggressive fast pinch can't zoom faster than the old
+      // worst case. The +/- buttons and keyboard shortcut (see
+      // dashFullZoomKeyHandler) keep their own separate, unchanged 1.4 step.
+      const step = Math.min(0.16, Math.abs(e.deltaY) * 0.0016);
+      zoomAt(e.deltaY < 0 ? 1 + step : 1 / (1 + step), e.clientX, e.clientY);
     }, { passive: false });
 
     let down = null, moved = false;
@@ -16378,12 +16520,16 @@
       down = null;
       try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
       if (moved) return;
-      // A lone endpoint marker opens that agent directly; everything else no-ops
-      // (there is no list to distance-sort on the dashboard).
+      // A lone endpoint marker opens that agent directly; a click on truly
+      // blank space instead centers the map there and zooms in 10% (see
+      // centerZoomAt) — a multi-agent cluster marker click does neither
+      // (unchanged no-op; that cluster's already explorable via hover).
       const marker = e.target.closest('.tep-agent-map-marker');
       if (marker && marker._cluster && marker._cluster.items.length === 1) {
         const it = marker._cluster.items[0];
         if (it.url && it.url !== '#') window.open(it.url, '_blank', 'noopener');
+      } else if (!marker) {
+        centerZoomAt(e.clientX, e.clientY, 1.1);
       }
     });
 
@@ -16558,14 +16704,31 @@
         if (m._fy < minFy) minFy = m._fy;
         if (m._fy > maxFy) maxFy = m._fy;
       }
+      // The KPI widget row overlays the top of the fullscreen map — treat
+      // its actual bottom edge as the ceiling for centering/fitting instead
+      // of y=0, so agents never end up scaled/centered as if that space
+      // were free, only to sit tucked under the widgets. Measured live via
+      // getBoundingClientRect (not a hardcoded constant): the row's height
+      // varies with content (Enterprise/Endpoint/SaaS/Network/Alerts row +
+      // Data Window row below it). Inline has no such overlay (ceilPx stays
+      // 0), so this is a no-op there — same as the old flat topShift was.
+      let ceilPx = 0;
+      if (full) {
+        const widgetsEl = document.getElementById('tep-dashmap-widgets');
+        if (widgetsEl) ceilPx = Math.max(0, widgetsEl.getBoundingClientRect().bottom - host.getBoundingClientRect().top);
+      }
+      const visVh = Math.max(1, vh - ceilPx);
       const fxSpan = Math.max(1e-4, maxFx - minFx), fySpan = Math.max(1e-4, maxFy - minFy);
       const sx = spanTarget / fxSpan;
-      const sy = (h > 0 && vh > 0) ? (spanTarget * vh) / (fySpan * h) : sx;
+      const sy = (h > 0 && visVh > 0) ? (spanTarget * visVh) / (fySpan * h) : sx;
       const s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
       const cfx = (minFx + maxFx) / 2, cfy = (minFy + maxFy) / 2;
-      // Fullscreen shifts the centre down 5% to clear the top widget overlay.
-      const topShift = full ? 0.05 * vh : 0;
-      frameTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift });
+      // Vertical center of the space BELOW the widgets (ceilPx..vh) rather
+      // than the full 0..vh — replaces the old flat "shift down 20% of vh"
+      // topShift with a measurement-driven equivalent that adapts to
+      // whatever the widget row's real height happens to be.
+      const centerY = ceilPx + visVh / 2;
+      frameTo({ s, tx: w / 2 - cfx * w * s, ty: centerY - cfy * h * s });
     } else if (!preserveZoom && !liveMapSession) {
       // Falls here when there are no markers to fit, OR wrap.clientWidth/
       // clientHeight isn't ready yet. If the map already has an established
@@ -18689,6 +18852,24 @@
     e.preventDefault();
     closeDashMapFullscreen();
   }
+  /** Keyboard +/- mirrors the on-screen zoom buttons (same dashMapZoomHook,
+   *  same 1.4 step — only the mouse wheel got the 20% sensitivity cut, see
+   *  its own zoomAt() call). '=' is included alongside '+' since that's what
+   *  e.key reports for the unshifted key most keyboards use for zoom-in;
+   *  '_' alongside '-' for the same reason on zoom-out. Skipped while
+   *  focus is in any text field (the search box, the seen-filter range
+   *  input) so typing a literal +/-/=/_ there isn't hijacked into a zoom. */
+  function dashFullZoomKeyHandler(e) {
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      if (dashMapZoomHook) dashMapZoomHook.in();
+    } else if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      if (dashMapZoomHook) dashMapZoomHook.out();
+    }
+  }
   // TE's own title bar (56px, see .tep-dashmap-full's top offset) is left
   // clickable above the overlay, but anything it opens — a menu, a dropdown —
   // expands DOWN into the region the map still covers at max z-index. Rather
@@ -18712,6 +18893,15 @@
   }
   function openDashMapFullscreen() {
     if (dashMapFullEl) return;
+    // A just-closed overlay can still be fading out (closeDashMapFullscreen's
+    // own setTimeout hasn't removed it yet) even though dashMapFullEl is
+    // already null — a rapid re-open (fast double-toggle) would otherwise
+    // land a fresh overlay on top of the still-lingering old one. Since
+    // dashMapFullEl is confirmed null here, any .tep-dashmap-full still in
+    // the DOM is definitely stale — clear it immediately, no animation
+    // needed for something already on its way out.
+    const staleOv = document.querySelector('.tep-dashmap-full');
+    if (staleOv) { try { staleOv.remove(); } catch (_) { /* */ } }
     // Clear any search left over from the sidebar map — dashMapSearchQuery
     // is shared module state, so without this the fullscreen map would open
     // with markers still highlighted/dimmed from a query its own (empty)
@@ -18721,12 +18911,13 @@
     // First framing this open should snap straight to the fitted view, not
     // animate into it from scratch — see dashMapFramedOnce's declaration.
     dashMapFramedOnce = false;
-    // Hide the side panel (and its chrome) while the map owns the whole screen.
+    // The side panel (and its chrome) is hidden once the extend/fade-in
+    // below has had time to play (see the deferred loop after dashMapFullEl
+    // is set) — hiding it immediately, before the map is opaque, would skip
+    // the animation straight to its end state.
     dashFullHidden = [];
-    for (const id of TEP_HIDE_WHILE_FULL) {
-      const el = document.getElementById(id);
-      if (el) { dashFullHidden.push([el, el.style.display]); el.style.display = 'none'; }
-    }
+    const panelEl = document.getElementById('te-panel-root');
+    if (panelEl) panelEl.classList.add('tep-panel-extend');
     const ov = document.createElement('div');
     ov.className = 'tep-dashmap-full';
     ov.innerHTML =
@@ -18735,13 +18926,15 @@
       + '<button type="button" class="tep-dashmap-full-min" id="tep-dashmap-min" title="Minimize (Esc)" aria-label="Minimize map">'
       + '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>'
       + '</button>'
-      + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>'
-      + '<button type="button" class="tep-dashmap-full-zoom tep-dashmap-full-zoom-out" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>'
+      + '<div class="tep-dashmap-searchrow">'
       + '<div class="tep-dashmap-search" id="tep-dashmap-search">'
-      + '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
-      + '<input type="text" id="tep-dashmap-search-input" placeholder="Search name, IP, or username…" autocomplete="off" spellcheck="false" aria-label="Search agents by name, IP, or username" />'
+      + '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+      + '<input type="text" id="tep-dashmap-search-input" placeholder="Search host, IP, user, location…" autocomplete="off" spellcheck="false" aria-label="Search agents by host, IP, user, or location" />'
       + '<span class="tep-dashmap-search-count" id="tep-dashmap-search-count"></span>'
       + '<button type="button" class="tep-dashmap-search-clear" id="tep-dashmap-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">✕</button>'
+      + '</div>'
+      + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>'
+      + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>'
       + '</div>'
       + '<div class="tep-dashmap-seenfilter" id="tep-dashmap-seenfilter">'
       + '<div class="tep-dashmap-seenfilter-title">Last<br>Seen</div>'
@@ -18760,6 +18953,42 @@
     document.documentElement.appendChild(ov);
     dashMapFullEl = ov;
     document.documentElement.style.overflow = 'hidden';
+    // Double rAF for the same reason as the panel's own mount-time slide-in
+    // above — guarantees the opacity:0 starting state actually paints before
+    // the transition to opacity:1 begins.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { ov.classList.add('tep-dashmap-full--in'); });
+    });
+    setTimeout(() => {
+      // dashMapFullEl !== ov guards against an instant re-close (Esc mashed
+      // before the extend/fade even finished) landing here after
+      // closeDashMapFullscreen() already tore this same overlay back down.
+      if (dashMapFullEl !== ov) return;
+      for (const id of TEP_HIDE_WHILE_FULL) {
+        const el = document.getElementById(id);
+        if (el) { dashFullHidden.push([el, el.style.display]); el.style.display = 'none'; }
+      }
+    }, TEP_TOGGLE_ANIM_MS);
+    // One-time settle: 1s after open, smoothly pan/zoom to fit every agent
+    // on screen, centered on their middle — per user request, a deliberate
+    // visible "glide into place" beat, not an instant snap. Also doubles as
+    // the fix for a load-timing miss: the very first render (below,
+    // synchronous with this whole function) ran against whatever
+    // agents/allEndpointAgents held at that instant, which on a fresh load
+    // can be before that data has actually resolved (markerEls comes back
+    // empty, falling back to a flat, uncentered default view) — 1s gives it
+    // far more time to arrive than the old 300ms fix this replaces did.
+    // dashMapFramedOnce is deliberately NOT reset here (unlike a fresh
+    // open): frameTo() already animates instead of snapping whenever it's
+    // still true, which it will be from the synchronous render below having
+    // already framed once. Scoped entirely to this open call — never fires
+    // from a data refresh (dashFullPeriodicRefresh/refreshDashMapColorScores'
+    // own re-renders all pass preserveZoom, which skips re-centering
+    // entirely).
+    setTimeout(() => {
+      if (dashMapFullEl !== ov) return;
+      renderDashboardAgentMap(ov.querySelector('#tep-dashmap-mapbody'), { full: true });
+    }, 1000);
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
     ov.querySelector('#tep-dashmap-zoom-in').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.in(); });
     ov.querySelector('#tep-dashmap-zoom-out').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.out(); });
@@ -18816,6 +19045,7 @@
     // here — see the .tep-dashmap-hwindow wiring in that function's
     // _tepFilterWired block.
     document.addEventListener('keydown', dashFullEscHandler, true);
+    document.addEventListener('keydown', dashFullZoomKeyHandler, true);
     document.addEventListener('click', dashFullTopBarHandler, true);
     // The LIVE TEST button + badge live inside the fullscreen map. Re-parent them
     // into the overlay so they sit above the map (the overlay isolates stacking).
@@ -18847,7 +19077,7 @@
     if (ltBtn) { document.documentElement.appendChild(ltBtn); ltBtn.style.display = 'none'; }
     if (ltBadge) { document.documentElement.appendChild(ltBadge); ltBadge.style.display = 'none'; }
     if (ltClear) { document.documentElement.appendChild(ltClear); ltClear.style.display = 'none'; }
-    dashMapFullEl.remove();
+    const ov = dashMapFullEl;
     dashMapFullEl = null;
     dashMapLivePaint = null;
     dashMapZoomHook = null;
@@ -18857,16 +19087,42 @@
     dashMapFocusAgentKey = null;
     document.documentElement.style.overflow = '';
     document.removeEventListener('keydown', dashFullEscHandler, true);
+    document.removeEventListener('keydown', dashFullZoomKeyHandler, true);
     document.removeEventListener('click', dashFullTopBarHandler, true);
+    // Restore the panel's chrome FIRST, while it's still at full width (via
+    // tep-panel-extend) and so still fully covered by the still-opaque map —
+    // completely invisible to the user. THEN fade the map out and shrink the
+    // panel back down together: the reverse of openDashMapFullscreen's
+    // extend+fade-in, ending with the map actually removed once both
+    // transitions have had time to finish.
     for (const [el, prev] of dashFullHidden) el.style.display = prev;
     dashFullHidden = [];
-    // The inline map's host was hidden (0×0) the entire time fullscreen was
-    // open, so it never got a chance to lay itself out, and the shared
-    // epDashMapZoom (tx/ty/s) was last set by the much larger fullscreen
-    // view — applied to the small sidebar map that reads as "jumbled" until
-    // manually refreshed. Force a fresh auto-fit render now that the host
-    // is visible again with real dimensions, instead of leaving it stale.
-    if ($('#tep-dash-map-host')) renderDashboardAgentMap();
+    const panelEl = document.getElementById('te-panel-root');
+    ov.classList.remove('tep-dashmap-full--in');
+    if (panelEl) {
+      void panelEl.offsetWidth; // force reflow so removing tep-panel-extend actually transitions
+      panelEl.classList.remove('tep-panel-extend');
+    }
+    setTimeout(() => {
+      try { ov.remove(); } catch (_) { /* */ }
+      // The inline map's host was hidden (0×0) the entire time fullscreen
+      // was open, so it never got a chance to lay itself out, and the
+      // shared epDashMapZoom (tx/ty/s) was last set by the much larger
+      // fullscreen view — applied to the small sidebar map that reads as
+      // "jumbled" until manually refreshed. Force a fresh auto-fit render
+      // now that the host is visible again with real dimensions, instead
+      // of leaving it stale. Deferred here (not run synchronously above,
+      // right after removing tep-panel-extend) because the panel's own
+      // width-shrink transition hasn't actually finished at that point —
+      // measuring #tep-dash-map-host's size mid-shrink (or at t=0, before
+      // the animation has progressed at all) reads its still-full-viewport
+      // width instead of its real sidebar width, producing exactly the
+      // "small map looks wrong after collapsing from fullscreen" bug this
+      // guards against. TEP_TOGGLE_ANIM_MS matches that transition's own
+      // duration, so by the time this fires the panel has settled at its
+      // real width and this measures correctly.
+      if ($('#tep-dash-map-host')) renderDashboardAgentMap();
+    }, TEP_TOGGLE_ANIM_MS);
   }
 
   /** Show/update the "sorted by distance from map point" chip (list view only). */
