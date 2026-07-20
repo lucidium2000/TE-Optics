@@ -38,10 +38,7 @@ The panel **figures out your session** from the page (cookies, storage, or heade
 
 ## Updating
 
-Bookmarklets **save a copy of the code when you create the bookmark**. To get a new version:
-
-1. Delete the old **TE Optics** bookmark.  
-2. Open the **[installer page](https://lucidium2000.github.io/TE-Optics/)** again and drag a **new** bookmark to the bar.
+Nothing to do — the bookmark streams the latest `panel.js` straight from GitHub (via jsDelivr) every time you click it, so it's always current. No need to delete or redrag it. (Version 3.35 and newer; if yours is older, delete it and drag a new one once.)
 
 The installer page shows a **small build number** next to the title; the same number appears in the panel footer so you can confirm you’re on the latest build.
 
@@ -50,7 +47,7 @@ The installer page shows a **small build number** next to the title; the same nu
 ## Source code
 
 - **Repository:** [github.com/lucidium2000/TE-Optics](https://github.com/lucidium2000/TE-Optics)  
-- **Main script:** `panel.js` (also embedded in `index.html` so the installer works from a simple static site)
+- **Main script:** `panel.js` — the installer bookmarklet loads it live from GitHub via jsDelivr's CDN
 - **Author:** Christopher G. Hunt
 
 ---

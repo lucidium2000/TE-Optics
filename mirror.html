@@ -2,9 +2,10 @@
 <!-- Author: Christopher Hunt -->
 <!--
   Mirror of the TE Optics install page.
-  Unlike index.html, this page does NOT embed panel.js. Instead it pulls the
-  bookmarklet source + version live from https://lucidium2000.github.io/TE-Optics/
-  so you can always drag an up-to-date button from here.
+  Unlike index.html, this page does NOT embed panel.js. The bookmarklet's
+  href is static and always loads the latest panel.js straight from
+  jsDelivr's GitHub CDN (cache-busted per click) — this page only fetches
+  https://lucidium2000.github.io/TE-Optics/ live to display its build number.
 -->
 <html lang="en">
 <head>
@@ -173,11 +174,6 @@
       transform: translateY(-1px);
       box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
     }
-    .bookmarklet-link.is-loading {
-      opacity: 0.55;
-      cursor: progress;
-      pointer-events: none;
-    }
     .copy-btn {
       display: inline-block;
       margin-top: 1rem;
@@ -198,7 +194,6 @@
       font-size: 0.82rem;
       color: #64748b;
     }
-    .hint.hint--error { color: #f87171; }
     code {
       background: #0f172a;
       padding: 0.15em 0.4em;
@@ -335,10 +330,10 @@
             alt=""
             decoding="async"
             loading="lazy" />
-          <a class="bookmarklet-link is-loading" id="bookmarklet-inline" href="javascript:void(0);">TE Optics</a>
+          <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(document.body.appendChild(document.createElement('script')).src='https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js?'+Date.now())">TE Optics</a>
         </div>
         <span class="hint" id="bm-hint">
-          Loading the latest build&hellip; the button will be ready in a moment.
+          Drag &amp; drop onto your bookmarks toolbar. If hidden, press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.
         </span>
       </div>
 
@@ -351,7 +346,8 @@
         </p>
         <p style="margin-top:2.4rem;">
           <strong style="color:#e2e8f0;">Updating?</strong>
-          Just delete your old one and drag a new one!
+          Nothing to do — the bookmark always loads the latest build automatically.
+          (Version 3.35 and newer; replace it once if yours is older.)
         </p>
       </div>
     </div>
@@ -428,23 +424,14 @@
 
   <script>
     // ---------------------------------------------------------------------------
-    // This mirror does not embed panel.js. It fetches the live install page and
-    // pulls two things from it:
-    //   1) the panel source (from #panel-source) -> builds the draggable button
-    //   2) the version (from .install-version)   -> shows the live build number
+    // The TE Optics button's href is static (see the <a> above) — it always
+    // loads the latest panel.js straight from jsDelivr's GitHub CDN, cache-busted
+    // with a timestamp, so it never needs rebuilding here. This script only
+    // fetches the live install page to read its displayed build number.
     // ---------------------------------------------------------------------------
     (function () {
       var SOURCE = "https://lucidium2000.github.io/TE-Optics/";
-      var linkEl = document.getElementById("bookmarklet-inline");
-      var hintEl = document.getElementById("bm-hint");
       var versionEl = document.getElementById("version");
-
-      function fail(msg) {
-        linkEl.classList.remove("is-loading");
-        hintEl.classList.add("hint--error");
-        hintEl.innerHTML = msg + " Meanwhile you can " +
-          '<a href="' + SOURCE + '" style="color:#93c5fd;">open the install page directly</a>.';
-      }
 
       fetch(SOURCE, { mode: "cors" })
         .then(function (res) {
@@ -453,32 +440,11 @@
         })
         .then(function (html) {
           var doc = new DOMParser().parseFromString(html, "text/html");
-
-          // Version
           var vEl = doc.querySelector(".install-version");
           var v = vEl && vEl.textContent ? vEl.textContent.trim() : "";
           if (v) versionEl.textContent = v;
-
-          // Button: rebuild the bookmarklet from the live embedded panel source,
-          // using the same assembly logic as the install page.
-          var srcEl = doc.getElementById("panel-source");
-          var panelSource = srcEl ? srcEl.textContent : "";
-          if (!panelSource) throw new Error("panel source not found");
-
-          var bmInline = 'javascript:void(' + encodeURIComponent(
-            '(function(){var s=document.createElement("script");s.textContent=' +
-            JSON.stringify(panelSource) + ';document.body.appendChild(s)})()'
-          ) + ')';
-          linkEl.href = bmInline;
-          linkEl.classList.remove("is-loading");
-          hintEl.classList.remove("hint--error");
-          hintEl.innerHTML =
-            'Drag &amp; drop onto your bookmarks toolbar. If hidden, ' +
-            'press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.';
         })
-        .catch(function () {
-          fail("Couldn&rsquo;t load the latest button (offline or blocked when opened as a local file).");
-        });
+        .catch(function () { /* version number just stays blank */ });
     })();
   </script>
 </body>
