@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.29';
+  const TEP_VERSION = '3.30';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16881,81 +16881,18 @@
    *  from the response's data.names.aggregatesMap['NAS-TEST'] — no separate
    *  allTests lookup needed. Returns { avg, count, breakdown:[{title,value,
    *  testId}] } (breakdown sorted worst-first) or null. */
-  async function tepFetchAllHttpAvailability() {
-    const fakeNode = {
-      widgetId: 'tep-saas-all-http', id: 'tep-saas-all-http', type: 'table',
-      config: {
-        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
-        metric: 'NAS-WEB_AVAILABILITY', filters: {}, generalFilters: {},
-        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
-      },
-    };
-    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric: 'NAS-WEB_AVAILABILITY' };
-    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
-    const body = tepBuildWidgetDataBody(entry, fakeDash, null, ['NAS-WEB_AVAILABILITY']);
-    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=NAS-WEB_AVAILABILITY&__bg=1`;
-    let resp;
-    try {
-      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
-    } catch (e) {
-      log(`SaaS widget: all-HTTP-tests fetch error — ${e.message}`, 'tep-log-info');
-      return null;
-    }
-    if (!resp || !resp.ok) {
-      log(`SaaS widget: all-HTTP-tests fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
-      return null;
-    }
-    const text = await resp.text().catch(() => '');
-    let json;
-    try { json = JSON.parse(text); } catch (_) { log('SaaS widget: non-JSON all-HTTP-tests response', 'tep-log-info'); return null; }
-    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
-    if (!points || !points.length) {
-      log(`SaaS widget: all-HTTP-tests response had no points (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
-      return null;
-    }
-    const names = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
-    const byTest = new Map(); // testId → [v, v, ...]
-    for (const p of points) {
-      if (!p || !p.aggIds) continue;
-      const testId = p.aggIds['NAS-TEST'];
-      const v = Number(p.v);
-      if (testId == null || !Number.isFinite(v)) continue;
-      if (!byTest.has(testId)) byTest.set(testId, []);
-      byTest.get(testId).push(v);
-    }
-    if (!byTest.size) return null;
-    const breakdown = [];
-    for (const [testId, vals] of byTest) {
-      const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
-      breakdown.push({ title: names[testId] || `Test ${testId}`, value: avg, testId: String(testId) });
-    }
-    breakdown.sort((a, b) => a.value - b.value); // worst first, matches other breakdown popovers
-    const avg = breakdown.reduce((s, r) => s + r.value, 0) / breakdown.length;
-    log(`SaaS widget: averaged ${breakdown.length} HTTP test(s) directly (no dashboard) → ${avg.toFixed(2)}%`, 'tep-log-ok');
-    return { avg, count: breakdown.length, breakdown };
-  }
-
-  // Same request as tepFetchAllHttpAvailability (it's already grouped by BOTH
-  // NAS-TEST and NAS-AGENT — columnGroupBy: 'NAS-AGENT' — that function just
-  // discards the agent dimension when averaging per test). This reuses the
-  // identical fetch and keeps the agent breakdown instead, to drive the map's
-  // per-agent "HTTP tests by SaaS health" submenu. ENTERPRISE AGENTS ONLY —
-  // CONFIRMED via live capture that endpoint agents never show up in the
-  // NAS-AGENT dimension for this metric (their HTTP-test results don't flow
-  // through the dashboard-widget aggregation system at all), so this always
-  // returned an empty list for them. Endpoint agents use
-  // tepFetchHttpTestsForEndpointAgent below instead — a totally different,
-  // per-agent API. Keyed by UPPER-CASED agent display name
-  // (names.aggregatesMap['NAS-AGENT']), not the raw NAS-AGENT id — that id's
-  // scheme isn't independently confirmed to match the portal's agentId, and
-  // name-matching is the same proven fallback the eyebrow CPU/RAM/battery
-  // fetch already relies on for exactly this situation (a different data
-  // source, same display name).
-  let tepHttpAvailByAgentCache = null; // { ts, byAgent: Map<UPPER(name), [{title,value,testId}]> }
-  const TEP_HTTP_AVAIL_BY_AGENT_CACHE_MS = 2 * 60 * 1000;
-  async function tepFetchHttpAvailabilityByAgent(force) {
-    if (!force && tepHttpAvailByAgentCache && (Date.now() - tepHttpAvailByAgentCache.ts) < TEP_HTTP_AVAIL_BY_AGENT_CACHE_MS) {
-      return tepHttpAvailByAgentCache.byAgent;
+  // Shared fetch behind tepFetchAllHttpAvailability (per-test average, for
+  // the SaaS Health tile) and tepFetchHttpAvailabilityByAgent (per-agent
+  // breakdown, for map marker coloring + the per-agent submenu) — these used
+  // to each fire their own POST even though it's the exact same request
+  // (rowGroupBy NAS-TEST, columnGroupBy NAS-AGENT already carries both
+  // dimensions in one response); one cached fetch now feeds both instead of
+  // two nearly-identical round trips every refresh.
+  let tepHttpAvailRawCache = null; // { ts, points, testNames, agentNames }
+  const TEP_HTTP_AVAIL_RAW_CACHE_MS = 2 * 60 * 1000;
+  async function tepFetchHttpAvailabilityRaw(force) {
+    if (!force && tepHttpAvailRawCache && (Date.now() - tepHttpAvailRawCache.ts) < TEP_HTTP_AVAIL_RAW_CACHE_MS) {
+      return tepHttpAvailRawCache;
     }
     const fakeNode = {
       widgetId: 'tep-saas-by-agent', id: 'tep-saas-by-agent', type: 'table',
@@ -16973,32 +16910,82 @@
     try {
       resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
     } catch (e) {
-      log(`SaaS by-agent: fetch error — ${e.message}`, 'tep-log-info');
+      log(`SaaS availability: fetch error — ${e.message}`, 'tep-log-info');
       return null;
     }
     if (!resp || !resp.ok) {
-      log(`SaaS by-agent: fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      log(`SaaS availability: fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
       return null;
     }
     const text = await resp.text().catch(() => '');
     let json;
-    try { json = JSON.parse(text); } catch (_) { log('SaaS by-agent: non-JSON response', 'tep-log-info'); return null; }
+    try { json = JSON.parse(text); } catch (_) { log('SaaS availability: non-JSON response', 'tep-log-info'); return null; }
     const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
-    if (!points || !points.length) { log('SaaS by-agent: no points', 'tep-log-info'); return null; }
+    if (!points || !points.length) {
+      log(`SaaS availability: response had no points (keys: ${topLevelKeysLabel(json)})`, 'tep-log-info');
+      return null;
+    }
     const testNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
     const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
+    tepHttpAvailRawCache = { ts: Date.now(), points, testNames, agentNames };
+    return tepHttpAvailRawCache;
+  }
+
+  async function tepFetchAllHttpAvailability() {
+    const raw = await tepFetchHttpAvailabilityRaw().catch(() => null);
+    if (!raw) return null;
+    const byTest = new Map(); // testId → [v, v, ...]
+    for (const p of raw.points) {
+      if (!p || !p.aggIds) continue;
+      const testId = p.aggIds['NAS-TEST'];
+      const v = Number(p.v);
+      if (testId == null || !Number.isFinite(v)) continue;
+      if (!byTest.has(testId)) byTest.set(testId, []);
+      byTest.get(testId).push(v);
+    }
+    if (!byTest.size) return null;
+    const breakdown = [];
+    for (const [testId, vals] of byTest) {
+      const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
+      breakdown.push({ title: raw.testNames[testId] || `Test ${testId}`, value: avg, testId: String(testId) });
+    }
+    breakdown.sort((a, b) => a.value - b.value); // worst first, matches other breakdown popovers
+    const avg = breakdown.reduce((s, r) => s + r.value, 0) / breakdown.length;
+    log(`SaaS widget: averaged ${breakdown.length} HTTP test(s) directly (no dashboard) → ${avg.toFixed(2)}%`, 'tep-log-ok');
+    return { avg, count: breakdown.length, breakdown };
+  }
+
+  // ENTERPRISE AGENTS ONLY — CONFIRMED via live capture that endpoint agents
+  // never show up in the NAS-AGENT dimension for this metric (their
+  // HTTP-test results don't flow through the dashboard-widget aggregation
+  // system at all), so this always returned an empty list for them. Endpoint
+  // agents use tepFetchHttpTestsForEndpointAgent below instead — a totally
+  // different, per-agent API. Keyed by UPPER-CASED agent display name
+  // (names.aggregatesMap['NAS-AGENT']), not the raw NAS-AGENT id — that id's
+  // scheme isn't independently confirmed to match the portal's agentId, and
+  // name-matching is the same proven fallback the eyebrow CPU/RAM/battery
+  // fetch already relies on for exactly this situation (a different data
+  // source, same display name).
+  let tepHttpAvailByAgentCache = null; // { ts, byAgent: Map<UPPER(name), [{title,value,testId}]> }
+  const TEP_HTTP_AVAIL_BY_AGENT_CACHE_MS = 2 * 60 * 1000;
+  async function tepFetchHttpAvailabilityByAgent(force) {
+    if (!force && tepHttpAvailByAgentCache && (Date.now() - tepHttpAvailByAgentCache.ts) < TEP_HTTP_AVAIL_BY_AGENT_CACHE_MS) {
+      return tepHttpAvailByAgentCache.byAgent;
+    }
+    const raw = await tepFetchHttpAvailabilityRaw(force).catch(() => null);
+    if (!raw) return null;
     const byAgent = new Map();
-    for (const p of points) {
+    for (const p of raw.points) {
       if (!p || !p.aggIds) continue;
       const testId = p.aggIds['NAS-TEST'];
       const agentId = p.aggIds['NAS-AGENT'];
       const v = Number(p.v);
       if (testId == null || agentId == null || !Number.isFinite(v)) continue;
-      const agentName = agentNames[agentId];
+      const agentName = raw.agentNames[agentId];
       if (!agentName) continue;
       const key = String(agentName).toUpperCase();
       if (!byAgent.has(key)) byAgent.set(key, []);
-      byAgent.get(key).push({ title: testNames[testId] || `Test ${testId}`, value: v, testId: String(testId) });
+      byAgent.get(key).push({ title: raw.testNames[testId] || `Test ${testId}`, value: v, testId: String(testId) });
     }
     for (const rows of byAgent.values()) rows.sort((a, b) => a.value - b.value); // worst SaaS health first
     tepHttpAvailByAgentCache = { ts: Date.now(), byAgent };
@@ -17247,16 +17234,25 @@
     return byAgent.has(agentId) ? byAgent.get(agentId) : null;
   }
 
-  /** Same dashboard-independent mechanism as tepFetchAllHttpAvailability
-   *  (synthetic table widget, empty generalFilters = every test on that
-   *  metric), generalized to any NAS-* metric id. Returns
-   *  { byTest: Map<testId, number[]>, names: {testId: name} } or null. NOT
-   *  independently confirmed for NAS-NET_LATENCY/NAS-NET_LOSS specifically
-   *  (only NAS-WEB_AVAILABILITY has a live-captured confirmation) — reasoned
-   *  extension of the same "NAS" dataSourceId family, same endpoint. */
-  async function tepFetchNasMetricAllTests(metric) {
+  // Shared fetch behind tepFetchNasMetricAllTests (per-test average),
+  // tepFetchNasMetricByAgent (per-agent score), and
+  // tepFetchNasMetricPointsByAgent (per-agent per-test breakdown) — all
+  // three used to independently POST the exact same request (synthetic
+  // table widget, rowGroupBy NAS-TEST + columnGroupBy NAS-AGENT, empty
+  // generalFilters = every test on that metric) and just kept a different
+  // dimension of the identical response; one cached fetch per metric now
+  // feeds all three. Same dashboard-independent mechanism as
+  // tepFetchHttpAvailabilityRaw, generalized to any NAS-* metric id. NOT
+  // independently confirmed for NAS-NET_LATENCY/NAS-NET_LOSS specifically
+  // (only NAS-WEB_AVAILABILITY has a live-captured confirmation) — reasoned
+  // extension of the same "NAS" dataSourceId family, same endpoint.
+  const tepNasMetricRawCache = new Map(); // metric → { ts, points, testNames, agentNames }
+  const TEP_NAS_METRIC_RAW_CACHE_MS = 2 * 60 * 1000;
+  async function tepFetchNasMetricRaw(metric, force) {
+    const cached = tepNasMetricRawCache.get(metric);
+    if (!force && cached && (Date.now() - cached.ts) < TEP_NAS_METRIC_RAW_CACHE_MS) return cached;
     const fakeNode = {
-      widgetId: 'tep-nethealth-' + metric, id: 'tep-nethealth-' + metric, type: 'table',
+      widgetId: 'tep-nethealth-raw-' + metric, id: 'tep-nethealth-raw-' + metric, type: 'table',
       config: {
         aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
         metric, filters: {}, generalFilters: {},
@@ -17281,11 +17277,21 @@
     const text = await resp.text().catch(() => '');
     let json;
     try { json = JSON.parse(text); } catch (_) { log(`Network Health: non-JSON ${metric} response`, 'tep-log-info'); return null; }
-    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
-    if (!points || !points.length) return { byTest: new Map(), names: {} };
-    const names = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
+    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : [];
+    const testNames = (json && json.data && json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
+    const agentNames = (json && json.data && json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
+    const raw = { ts: Date.now(), points, testNames, agentNames };
+    tepNasMetricRawCache.set(metric, raw);
+    return raw;
+  }
+
+  /** Returns { byTest: Map<testId, number[]>, names: {testId: name} } or null. */
+  async function tepFetchNasMetricAllTests(metric) {
+    const raw = await tepFetchNasMetricRaw(metric).catch(() => null);
+    if (!raw) return null;
+    if (!raw.points.length) return { byTest: new Map(), names: {} };
     const byTest = new Map();
-    for (const p of points) {
+    for (const p of raw.points) {
       if (!p || !p.aggIds) continue;
       const testId = p.aggIds['NAS-TEST'];
       const v = Number(p.v);
@@ -17293,7 +17299,7 @@
       if (!byTest.has(testId)) byTest.set(testId, []);
       byTest.get(testId).push(v);
     }
-    return { byTest, names };
+    return { byTest, names: raw.testNames };
   }
   /** Network Health: every Network-category test's loss+latency, averaged per
    *  test across its agents. Deliberately NOT the same blend as ISP Health —
@@ -17341,53 +17347,21 @@
     return { avgSev, count: breakdown.length, breakdown };
   }
 
-  // Same request shape as tepFetchNasMetricAllTests (already grouped by BOTH
-  // NAS-TEST and NAS-AGENT — columnGroupBy: 'NAS-AGENT' — that function just
-  // never reads the agent dimension out of its points). This reuses the
-  // identical fetch and keeps the agent breakdown instead, collapsing across
-  // tests, to drive per-agent map marker coloring under Network Health.
   // ENTERPRISE AGENTS ONLY — same NAS-AGENT-never-carries-endpoint-agents
   // limitation as tepFetchHttpAvailabilityByAgent; there is no confirmed
   // per-agent Network Health metric for endpoint agents (see
   // dashMapEntNetScoreByName's declaration comment). Keyed by UPPER-CASED
   // agent display name, same convention as tepFetchHttpAvailabilityByAgent.
-  async function tepFetchNasMetricByAgent(metric) {
-    const fakeNode = {
-      widgetId: 'tep-nethealth-byagent-' + metric, id: 'tep-nethealth-byagent-' + metric, type: 'table',
-      config: {
-        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
-        metric, filters: {}, generalFilters: {},
-        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
-      },
-    };
-    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
-    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
-    const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
-    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
-    let resp;
-    try {
-      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
-    } catch (e) {
-      log(`Network Health by-agent: ${metric} fetch error — ${e.message}`, 'tep-log-info');
-      return null;
-    }
-    if (!resp || !resp.ok) {
-      log(`Network Health by-agent: ${metric} fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
-      return null;
-    }
-    const text = await resp.text().catch(() => '');
-    let json;
-    try { json = JSON.parse(text); } catch (_) { log(`Network Health by-agent: non-JSON ${metric} response`, 'tep-log-info'); return null; }
-    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
-    if (!points || !points.length) return new Map();
-    const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
+  async function tepFetchNasMetricByAgent(metric, force) {
+    const raw = await tepFetchNasMetricRaw(metric, force).catch(() => null);
+    if (!raw || !raw.points.length) return new Map();
     const byAgent = new Map();
-    for (const p of points) {
+    for (const p of raw.points) {
       if (!p || !p.aggIds) continue;
       const agentId = p.aggIds['NAS-AGENT'];
       const v = Number(p.v);
       if (agentId == null || !Number.isFinite(v)) continue;
-      const agentName = agentNames[agentId];
+      const agentName = raw.agentNames[agentId];
       if (!agentName) continue;
       const key = String(agentName).toUpperCase();
       if (!byAgent.has(key)) byAgent.set(key, []);
@@ -17406,8 +17380,8 @@
       return tepNetHealthByAgentCache.byAgent;
     }
     const [latByAgent, lossByAgent] = await Promise.all([
-      tepFetchNasMetricByAgent('NAS-NET_LATENCY'),
-      tepFetchNasMetricByAgent('NAS-NET_LOSS'),
+      tepFetchNasMetricByAgent('NAS-NET_LATENCY', force),
+      tepFetchNasMetricByAgent('NAS-NET_LOSS', force),
     ]);
     if (!latByAgent && !lossByAgent) return null;
     const names = new Set([...(latByAgent ? latByAgent.keys() : []), ...(lossByAgent ? lossByAgent.keys() : [])]);
@@ -17430,54 +17404,26 @@
     return byAgent;
   }
 
-  /** Same request shape as tepFetchNasMetricByAgent, but keeps the NAS-TEST
-   *  dimension instead of collapsing across tests — that one is enough for
-   *  marker coloring (one number per agent), but the map popover's per-agent
-   *  TEST LIST (dashMapColorSource === 'network') needs the individual tests.
-   *  Returns Map<UPPER agent name, Map<testId, {name, value}>>. */
-  async function tepFetchNasMetricPointsByAgent(metric) {
-    const fakeNode = {
-      widgetId: 'tep-nettests-byagent-' + metric, id: 'tep-nettests-byagent-' + metric, type: 'table',
-      config: {
-        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
-        metric, filters: {}, generalFilters: {},
-        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
-      },
-    };
-    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
-    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
-    const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
-    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
-    let resp;
-    try {
-      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
-    } catch (e) {
-      log(`Network tests by-agent: ${metric} fetch error — ${e.message}`, 'tep-log-info');
-      return null;
-    }
-    if (!resp || !resp.ok) {
-      log(`Network tests by-agent: ${metric} fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
-      return null;
-    }
-    const text = await resp.text().catch(() => '');
-    let json;
-    try { json = JSON.parse(text); } catch (_) { log(`Network tests by-agent: non-JSON ${metric} response`, 'tep-log-info'); return null; }
-    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
-    if (!points || !points.length) return new Map();
-    const testNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
-    const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
+  /** Keeps the NAS-TEST dimension instead of collapsing across tests like
+   *  tepFetchNasMetricByAgent — that one is enough for marker coloring (one
+   *  number per agent), but the map popover's per-agent TEST LIST
+   *  (dashMapColorSource === 'network') needs the individual tests. Returns
+   *  Map<UPPER agent name, Map<testId, {name, value}>>. */
+  async function tepFetchNasMetricPointsByAgent(metric, force) {
+    const raw = await tepFetchNasMetricRaw(metric, force).catch(() => null);
+    if (!raw || !raw.points.length) return new Map();
     const byAgent = new Map();
-    for (const p of points) {
+    for (const p of raw.points) {
       if (!p || !p.aggIds) continue;
       const testId = p.aggIds['NAS-TEST'];
       const agentId = p.aggIds['NAS-AGENT'];
       const v = Number(p.v);
       if (testId == null || agentId == null || !Number.isFinite(v)) continue;
-      const agentName = agentNames[agentId];
+      const agentName = raw.agentNames[agentId];
       if (!agentName) continue;
       const key = String(agentName).toUpperCase();
       if (!byAgent.has(key)) byAgent.set(key, new Map());
-      byAgent.get(key).set(String(testId), { name: testNames[testId] || `Test ${testId}`, value: v });
+      byAgent.get(key).set(String(testId), { name: raw.testNames[testId] || `Test ${testId}`, value: v });
     }
     return byAgent;
   }
@@ -17494,8 +17440,8 @@
       return tepNetTestsByAgentCache.byAgent;
     }
     const [latByAgent, lossByAgent] = await Promise.all([
-      tepFetchNasMetricPointsByAgent('NAS-NET_LATENCY'),
-      tepFetchNasMetricPointsByAgent('NAS-NET_LOSS'),
+      tepFetchNasMetricPointsByAgent('NAS-NET_LATENCY', force),
+      tepFetchNasMetricPointsByAgent('NAS-NET_LOSS', force),
     ]);
     if (!latByAgent && !lossByAgent) return null;
     const agentNames = new Set([...(latByAgent ? latByAgent.keys() : []), ...(lossByAgent ? lossByAgent.keys() : [])]);
@@ -20718,6 +20664,16 @@
 
   let liveTestLatencyLoggedShape = false;   // reset per run; logs the raw body once
   const liveTestPathVisLoggedShapeKinds = new Set();   // reset per run; logs the raw path-vis graph shape once PER kind (enterprise/endpoint)
+  // { startBin, binSize } lifted off whichever per-agent latency response
+  // (below) resolves first, and consumed by the very next
+  // liveTestFetchPathVisDest call — both are only ever called back-to-back
+  // for the SAME (testId, agentIds) from liveTestPoll/liveTestSyncNodes, and
+  // the per-agent latency response already carries the same `chunks` data
+  // path-vis's own startBin/binSize lookup call was re-deriving from
+  // scratch, so this skips that extra round trip. One-shot: cleared the
+  // moment path-vis reads it, so a stale hint never leaks into an unrelated
+  // later call.
+  let liveTestLastChunkHint = null;
 
   /**
    * Fetch per-agent latency for the enterprise instant test, keyed by agent id
@@ -20725,15 +20681,16 @@
    *   GET /ajax/agent/view/timeline/net/latency?testId=&binSize=300&metricId=netLatency&agentId=
    *   → { chunks:[…], values:[<ms>…], defaultTimeRange:{…} }
    * The per-agent call (with agentId) yields that agent's series; the last finite
-   * value in `values` is its latency.
+   * value in `values` is its latency. Every agent's pair of requests (latency +
+   * loss) fires concurrently rather than one agent at a time — a large fleet
+   * used to serialize 2×N sequential round trips per poll tick.
    */
   async function liveTestFetchEnterpriseLatency(testId, agentIds) {
     if (testId == null || testId === '' || !Array.isArray(agentIds) || !agentIds.length) return 0;
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const enc = encodeURIComponent;
-    let n = 0;
-    for (const agentId of agentIds) {
+    const results = await Promise.all(agentIds.map(async (agentId) => {
       const latUrl = `/ajax/agent/view/timeline/net/latency?testId=${enc(testId)}&binSize=300&metricId=netLatency&agentId=${enc(agentId)}`;
       const lossUrl = `/ajax/agent/view/timeline/net/loss?testId=${enc(testId)}&binSize=300&metricId=netLoss&agentId=${enc(agentId)}`;
       let ms = NaN, loss = NaN;
@@ -20746,7 +20703,16 @@
             log(`LIVE TEST latency body (agent ${agentId}): ${text.slice(0, 300)}`, 'tep-log-info');
           }
           let data = null; try { data = JSON.parse(text); } catch (_) { data = null; }
-          if (data) ms = liveTestParseTimelineLatency(data);  // data.values → last finite
+          if (data) {
+            ms = liveTestParseTimelineLatency(data);  // data.values → last finite
+            if (!liveTestLastChunkHint) {
+              const chunks = Array.isArray(data.chunks) ? data.chunks : null;
+              const last = chunks && chunks.length ? chunks[chunks.length - 1] : null;
+              if (last && last.startRoundId != null && last.intervalLength != null) {
+                liveTestLastChunkHint = { startBin: last.startRoundId, binSize: last.intervalLength };
+              }
+            }
+          }
         } else {
           log(`LIVE TEST: latency agent ${agentId} → ${resp.status}`, 'tep-log-info');
         }
@@ -20763,6 +20729,10 @@
           if (ld) loss = liveTestParseTimelineLatency(ld);
         }
       } catch (_) { /* loss is best-effort */ }
+      return { agentId, ms, loss };
+    }));
+    let n = 0;
+    for (const { agentId, ms, loss } of results) {
       if (Number.isFinite(ms) || Number.isFinite(loss)) {
         const key = String(agentId);
         const e = liveTestLatency.get(key) || { kind: 'enterprise' };
@@ -20997,16 +20967,25 @@
     // the likely reason a flow's path historically resolved a poll or two
     // after its latency already showed on the map — the destination lookup
     // below was being aimed at a round the per-agent series had already
-    // moved past.
+    // moved past. liveTestFetchEnterpriseLatency (called immediately before
+    // this, every poll tick, for this same testId/agentIds) already parsed
+    // this exact chunk data out of one of its own per-agent responses — reuse
+    // that instead of re-fetching it here fresh every time.
     let startBin = null, binSize = null;
-    try {
-      const tr = await ajax(`/ajax/agent/view/timeline/net/latency?testId=${enc(testId)}&binSize=300&metricId=netLatency`, { method: 'GET', headers });
-      if (tr.ok) {
-        const tj = await tr.json().catch(() => null);
-        const ch = tj && Array.isArray(tj.chunks) ? tj.chunks : [];
-        if (ch.length) { const last = ch[ch.length - 1]; startBin = last.startRoundId; binSize = last.intervalLength; }
-      }
-    } catch (_) { /* */ }
+    if (liveTestLastChunkHint) {
+      startBin = liveTestLastChunkHint.startBin;
+      binSize = liveTestLastChunkHint.binSize;
+      liveTestLastChunkHint = null;
+    } else {
+      try {
+        const tr = await ajax(`/ajax/agent/view/timeline/net/latency?testId=${enc(testId)}&binSize=300&metricId=netLatency`, { method: 'GET', headers });
+        if (tr.ok) {
+          const tj = await tr.json().catch(() => null);
+          const ch = tj && Array.isArray(tj.chunks) ? tj.chunks : [];
+          if (ch.length) { const last = ch[ch.length - 1]; startBin = last.startRoundId; binSize = last.intervalLength; }
+        }
+      } catch (_) { /* */ }
+    }
     if (startBin == null || binSize == null) return 0;
 
     // 2) Pull the topology graph and locate the 8.8.8.8 destination node.
@@ -21249,6 +21228,7 @@
     liveTestLatencyLoggedShape = false;
     liveTestPathVisLoggedShapeKinds.clear();
     liveTestEndpointLoggedShape = false;
+    liveTestLastChunkHint = null;
     liveTestRunning = true;
     // Punch up node/flow animations for the first 20s of the run, then let
     // liveTestClearTimers() strip the class off (naturally, on stop, or on finish).
