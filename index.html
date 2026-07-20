@@ -2956,11 +2956,12 @@
     }
     .tep-map-tip-geo--labeled:hover { background: rgba(253,186,116,.18); }
     .tep-agent-map-tip {
-      /* Box is 25% bigger than the original (was 150-250px / 8x10 padding) —
-         extra room for the endpoint CPU/RAM/disk/battery/IP lines — but the
-         text itself stays at the original 11px; only the bubble grew. */
+      /* Box is 25% bigger than the original (was 150-250px / 8x10 padding),
+         then widened another 10% on top of that — extra room for the
+         endpoint CPU/RAM/disk/battery/IP lines — but the text itself stays
+         at the original 11px; only the bubble grew. */
       position: absolute; z-index: 5; pointer-events: auto;
-      min-width: 187.5px; max-width: 312.5px;
+      min-width: 206.25px; max-width: 343.75px;
       background: rgba(15,23,42,.97); border: 1px solid #475569; border-radius: 8px;
       box-shadow: 0 8px 22px rgba(0,0,0,.55); padding: 10px 12.5px;
       font-size: 11px; line-height: 1.35; color: #cbd5e1;
@@ -15545,7 +15546,7 @@
     // ISP Health mode: agent's reported ISP (+ public IP for endpoint agents), when loaded.
     const isp = (it.agentId != null) ? ispHealthByAgent.get(String(it.agentId)) : null;
     const ispHtml = isp
-      ? `<div class="tep-map-tip-isp">${tepEscapeHtmlText(isp.isp)}${isp.publicIp ? ' · ' + tepEscapeHtmlText(isp.publicIp) : ''}</div>`
+      ? `<div class="tep-map-tip-isp">${tepEscapeHtmlText(isp.isp)}${isp.publicIp ? ' · ' + tepEscapeHtmlText(isp.publicIp) : ''}${(isp.publicIp && lat) ? ' ' + lat : ''}</div>`
       : '';
     // Endpoint-only local IP — hidden by default (rarely useful at a glance),
     // but still searchable: dashMapItemMatchesQuery already matches it
@@ -15591,7 +15592,7 @@
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       ${userSeenHtml}
-      <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${geoMapLink}${lat}${loss}${it.kind === 'enterprise' ? health : ''}</div>
+      <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${geoMapLink}${loss}${it.kind === 'enterprise' ? health : ''}</div>
       ${ipHtml}
       ${ispHtml}
       ${metricsHtml}
@@ -16541,17 +16542,25 @@
       down = null;
       try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
       if (moved) return;
-      // A lone endpoint marker opens that agent directly; a click on truly
-      // blank space instead centers the map there and zooms in 10% (see
-      // centerZoomAt) — a multi-agent cluster marker click does neither
-      // (unchanged no-op; that cluster's already explorable via hover).
+      // A lone endpoint marker opens that agent directly on a single click; a
+      // multi-agent cluster marker click does nothing (unchanged no-op;
+      // that cluster's already explorable via hover). Blank-space
+      // center+zoom (centerZoomAt) needs a DOUBLE click — see the dblclick
+      // listener below — a single click there used to trigger it, which
+      // made stray clicks while exploring the map jump/zoom unexpectedly.
       const marker = e.target.closest('.tep-agent-map-marker');
       if (marker && marker._cluster && marker._cluster.items.length === 1) {
         const it = marker._cluster.items[0];
         if (it.url && it.url !== '#') window.open(it.url, '_blank', 'noopener');
-      } else if (!marker) {
-        centerZoomAt(e.clientX, e.clientY, 1.1);
       }
+    });
+    wrap.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.tep-agent-map-zoom') || e.target.closest('.tep-agent-map-tip')) return;
+      if (e.target.closest('.tep-agent-map-marker')) return;
+      // Double-click zooms in 40% — doubled twice over from the 10% the
+      // single-click amount this replaced, since a double-click is now the
+      // more deliberate action.
+      centerZoomAt(e.clientX, e.clientY, 1.4);
     });
 
     // Swap the whole map in as one atomic operation — everything above this
