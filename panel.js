@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.30';
+  const TEP_VERSION = '3.31';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16816,7 +16816,10 @@
         // The by-agent SaaS/Network caches were fetched under the OLD window
         // — must not be served stale on the next map popover open or marker
         // repaint. (Endpoint HTTP tests' own cache isn't cleared: that source
-        // ignores this dropdown entirely.)
+        // ignores this dropdown entirely. The shared raw fetch underneath
+        // these — tepFetchHttpAvailabilityRaw/tepFetchNasMetricRaw — is keyed
+        // on windowSec itself, so it self-invalidates without needing to be
+        // cleared here too.)
         tepHttpAvailByAgentCache = null;
         tepNetHealthByAgentCache = null;
         tepNetTestsByAgentCache = null;
@@ -16888,10 +16891,17 @@
   // (rowGroupBy NAS-TEST, columnGroupBy NAS-AGENT already carries both
   // dimensions in one response); one cached fetch now feeds both instead of
   // two nearly-identical round trips every refresh.
-  let tepHttpAvailRawCache = null; // { ts, points, testNames, agentNames }
+  let tepHttpAvailRawCache = null; // { ts, windowSec, points, testNames, agentNames }
   const TEP_HTTP_AVAIL_RAW_CACHE_MS = 2 * 60 * 1000;
   async function tepFetchHttpAvailabilityRaw(force) {
-    if (!force && tepHttpAvailRawCache && (Date.now() - tepHttpAvailRawCache.ts) < TEP_HTTP_AVAIL_RAW_CACHE_MS) {
+    // Keyed on the Data Window's current setting, not just age — otherwise a
+    // window change within the cache's 2-minute lifetime keeps serving the
+    // PREVIOUS window's numbers (the SaaS/Network tiles + marker colors
+    // silently stop responding to the dropdown until the cache happens to
+    // expire on its own).
+    const windowSec = tepMetricsWindowSec();
+    if (!force && tepHttpAvailRawCache && tepHttpAvailRawCache.windowSec === windowSec
+        && (Date.now() - tepHttpAvailRawCache.ts) < TEP_HTTP_AVAIL_RAW_CACHE_MS) {
       return tepHttpAvailRawCache;
     }
     const fakeNode = {
@@ -16903,7 +16913,7 @@
       },
     };
     const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric: 'NAS-WEB_AVAILABILITY' };
-    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
+    const fakeDash = { defaultTimespan: { timespanDuration: windowSec } };
     const body = tepBuildWidgetDataBody(entry, fakeDash, null, ['NAS-WEB_AVAILABILITY']);
     const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=NAS-WEB_AVAILABILITY&__bg=1`;
     let resp;
@@ -16927,7 +16937,7 @@
     }
     const testNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
     const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
-    tepHttpAvailRawCache = { ts: Date.now(), points, testNames, agentNames };
+    tepHttpAvailRawCache = { ts: Date.now(), windowSec, points, testNames, agentNames };
     return tepHttpAvailRawCache;
   }
 
@@ -17246,11 +17256,18 @@
   // independently confirmed for NAS-NET_LATENCY/NAS-NET_LOSS specifically
   // (only NAS-WEB_AVAILABILITY has a live-captured confirmation) — reasoned
   // extension of the same "NAS" dataSourceId family, same endpoint.
-  const tepNasMetricRawCache = new Map(); // metric → { ts, points, testNames, agentNames }
+  const tepNasMetricRawCache = new Map(); // metric → { ts, windowSec, points, testNames, agentNames }
   const TEP_NAS_METRIC_RAW_CACHE_MS = 2 * 60 * 1000;
   async function tepFetchNasMetricRaw(metric, force) {
+    // Keyed on the Data Window's current setting, not just age — see the
+    // same note on tepFetchHttpAvailabilityRaw; without this a window change
+    // within the cache's 2-minute lifetime keeps serving the PREVIOUS
+    // window's numbers.
+    const windowSec = tepMetricsWindowSec();
     const cached = tepNasMetricRawCache.get(metric);
-    if (!force && cached && (Date.now() - cached.ts) < TEP_NAS_METRIC_RAW_CACHE_MS) return cached;
+    if (!force && cached && cached.windowSec === windowSec && (Date.now() - cached.ts) < TEP_NAS_METRIC_RAW_CACHE_MS) {
+      return cached;
+    }
     const fakeNode = {
       widgetId: 'tep-nethealth-raw-' + metric, id: 'tep-nethealth-raw-' + metric, type: 'table',
       config: {
@@ -17260,7 +17277,7 @@
       },
     };
     const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
-    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
+    const fakeDash = { defaultTimespan: { timespanDuration: windowSec } };
     const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
     const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
     let resp;
@@ -17280,7 +17297,7 @@
     const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : [];
     const testNames = (json && json.data && json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
     const agentNames = (json && json.data && json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
-    const raw = { ts: Date.now(), points, testNames, agentNames };
+    const raw = { ts: Date.now(), windowSec, points, testNames, agentNames };
     tepNasMetricRawCache.set(metric, raw);
     return raw;
   }
