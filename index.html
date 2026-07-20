@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.23</span>
+        TE Optics<span class="install-version" aria-label="Build">3.24</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.23';
+  const TEP_VERSION = '3.24';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2487,9 +2487,12 @@
     .tep-dashmap-full-widgets {
       position: absolute; top: 12px; left: 12px; right: 60px; z-index: 4;
       display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; pointer-events: none;
-      /* Column 1 grows taller than its siblings once the ISP stack appears
-         below Enterprise Agents — align-items:start keeps the other 4 tiles
-         their natural short height instead of stretching to match it. */
+      /* Grid's default stretch would otherwise pull every row-1 tile to
+         match whichever is tallest — align-items:start keeps them all their
+         own natural short height. (The ISP stack under Enterprise Agents is
+         position:absolute — see .tep-dashmap-col1 — so it no longer affects
+         row height at all, but this still matters for ordinary content-
+         length differences between tiles.) */
       align-items: start;
     }
     @media (max-width: 1000px) { .tep-dashmap-full-widgets { grid-template-columns: repeat(2, 1fr); } }
@@ -2574,20 +2577,29 @@
     .tep-combo-col--events .tep-dash-widget-title { justify-content: flex-end; }
     .tep-combo-col--events:hover { color: #93c5fd; }
     .tep-combo-col--events:hover .tep-dash-widget-main { color: #93c5fd; }
-    /* ISP Health stack: sits in the widget grid's first column, directly under
-       the Enterprise Agents tile, growing downward as each ISP qualifies.
-       col1 is capped a few px short of the viewport bottom (68px = the 56px
-       map inset + the widgets row's own 12px top offset, both measured from
-       the viewport top; 5vh reserved below) so the stack can flex to fill
-       essentially all of the remaining height instead of cutting off at an
-       arbitrary fraction partway down. */
-    .tep-dashmap-col1 {
-      min-width: 0; display: flex; flex-direction: column;
-      max-height: calc(100vh - 68px - 5vh);
-    }
+    /* ISP Health stack: sits directly under the Enterprise Agents tile in the
+       widget grid's first column, growing downward as each ISP qualifies.
+       Deliberately position:absolute (anchored to col1 via top:100%) instead
+       of a normal flex/document-flow sibling — col1 is a grid item in
+       .tep-dashmap-full-widgets' row 1, and an in-flow ISP stack that can
+       grow to several hundred px tall would drag that WHOLE grid row's
+       auto-sized track height up with it, shoving every later row (Alerts/
+       Events, and the Data Window dropdown below that) down the page — which
+       is exactly what "Data Window becomes unreachable once ISP tiles start
+       appearing" turned out to be. Taking the stack out of flow means col1's
+       own intrinsic height stays just the Enterprise tile's (matchheight,
+       ~108px), so row 1 never grows past its shortest siblings no matter how
+       many ISPs qualify. top:100% then anchors it right below that tile.
+       max-height's 68px/5vh terms are the same viewport-bottom margin the
+       stack used to share with col1 as a whole; 118px approximates the
+       Enterprise tile's own height (108px matchheight + 10px gap) now that
+       the stack needs to size itself independently of it. */
+    .tep-dashmap-col1 { position: relative; min-width: 0; }
     .tep-isp-stack {
-      margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
-      flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+      position: absolute; left: 0; right: 0; top: 100%; margin-top: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+      max-height: calc(100vh - 68px - 5vh - 118px);
+      overflow-y: auto; overflow-x: hidden;
       width: 55%; min-width: 150px;
       /* The scroll container itself must match the (half-width) tiles' width
          so the scrollbar hugs them directly, instead of sitting way out at
@@ -2813,17 +2825,11 @@
       background: #94a3b8;
     }
     .tep-dashmap-seenfilter-tickdot--active { background: #4ade80; }
-    /* Tick TEXT labels only appear on hover/drag — otherwise it's just a
-       clean track (the always-on dots above already mark the increments).
-       Positioned to the LEFT of the (now correctly right-anchored, and 20%
-       wider) track. */
+    /* Tick TEXT labels — always visible now (used to fade in only on
+       hover/drag). Positioned to the LEFT of the (right-anchored, 20% wider)
+       track. */
     .tep-dashmap-seenfilter-labels {
       position: absolute; inset: 0; pointer-events: none;
-      opacity: 0; transition: opacity .15s;
-    }
-    .tep-dashmap-seenfilter:hover .tep-dashmap-seenfilter-labels,
-    .tep-dashmap-seenfilter:focus-within .tep-dashmap-seenfilter-labels {
-      opacity: 1;
     }
     .tep-dashmap-seenfilter-tick {
       position: absolute; right: 29px; transform: translateY(-50%);
@@ -2831,90 +2837,36 @@
       text-align: right; transition: color .15s, font-weight .15s;
     }
     .tep-dashmap-seenfilter-tick--active { color: #fdba74; font-weight: 800; }
-    /* "Data Window" — moved off the map overlay into its own full-width row
-       at the bottom of the widget grid (below Alerts/Events), horizontal
-       instead of the rotated vertical construction "Last Seen" still uses.
-       grid-column spans every column of .tep-dashmap-full-widgets;
-       justify-content:flex-end right-justifies the -inner title/current/
-       track group within that full-width row, which then shifts an
-       additional 10% further right via its own transform (a % transform
-       resolves against -inner's own width, not this outer row's full-grid
-       width, so it's a modest nudge, not a huge one). */
+    /* "Data Window" — a plain dropdown (the rotated-slider, then horizontal-
+       slider versions both proved fiddly) on its own full-width row at the
+       bottom of the widget grid, right below Alerts/Events. grid-column
+       spans every column of .tep-dashmap-full-widgets; justify-content:
+       flex-end right-justifies the group so its right edge lands exactly on
+       Alerts/Events' own right edge (the last column of that same grid). */
     .tep-dashmap-hwindow {
       grid-column: 1 / -1;
       display: flex; justify-content: flex-end;
       padding: 2px 4px;
-      pointer-events: none;
+      /* The parent grid (.tep-dashmap-full-widgets) sets pointer-events:none
+         and only re-enables it per .tep-dash-widget card — this row isn't
+         one of those cards, so without restoring it here the dropdown was
+         visible but completely unclickable (inherited none). */
+      pointer-events: auto;
     }
     .tep-dashmap-hwindow-inner {
-      display: flex; align-items: center; gap: 12px;
-      transform: translate(10%, 10%);
+      display: flex; align-items: center; gap: 8px;
     }
-    .tep-dashmap-hwindow-title {
+    .tep-dashmap-hwindow-label {
       font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
       color: #fff; white-space: nowrap;
     }
-    /* Persistent "what's currently selected" readout — always visible, not
-       just on hover (see .tep-dashmap-hwindow-labels below). */
-    .tep-dashmap-hwindow-current {
-      font-size: 11px; font-weight: 800; color: #93c5fd; white-space: nowrap;
+    .tep-dashmap-hwindow-select {
+      font-size: 12px; font-weight: 600; color: #e2e8f0;
+      background: rgba(15,23,42,.6); border: 1px solid #475569; border-radius: 6px;
+      padding: 3px 8px; cursor: pointer;
     }
-    .tep-dashmap-hwindow-track {
-      position: relative; width: 200px; height: 19px;
-      pointer-events: auto;
-    }
-    .tep-dashmap-hwindow-track input[type="range"] {
-      position: absolute; inset: 0; width: 100%; height: 19px; margin: 0;
-      cursor: pointer; background: transparent;
-      -webkit-appearance: none; appearance: none;
-    }
-    /* Dark blue (left, 24h) → light blue (right, Live) — same semantic
-       mapping as before (lighter = fresher/shorter window), just read
-       left-to-right now instead of top-to-bottom. */
-    .tep-dashmap-hwindow-track input[type="range"]::-webkit-slider-runnable-track {
-      height: 5px; border-radius: 2px;
-      background: linear-gradient(to right, #1d4ed8, #93c5fd);
-    }
-    .tep-dashmap-hwindow-track input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
-      background: #fff; border: 2px solid #0f172a; margin-top: -6px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.6); cursor: pointer;
-    }
-    .tep-dashmap-hwindow-track input[type="range"]::-moz-range-track {
-      height: 5px; border-radius: 2px;
-      background: linear-gradient(to right, #1d4ed8, #93c5fd);
-    }
-    .tep-dashmap-hwindow-track input[type="range"]::-moz-range-thumb {
-      width: 17px; height: 17px; border-radius: 50%;
-      background: #fff; border: 2px solid #0f172a;
-      box-shadow: 0 1px 4px rgba(0,0,0,.6); cursor: pointer;
-    }
-    /* Permanent per-stop dot on the bar — no leader line (removed per
-       request), just the dot marking each increment. */
-    .tep-dashmap-hwindow-ticks {
-      position: absolute; inset: 0; pointer-events: none;
-    }
-    .tep-dashmap-hwindow-tickdot {
-      position: absolute; top: 50%; transform: translate(-50%, -50%);
-      width: 5px; height: 5px; border-radius: 50%;
-      background: #94a3b8;
-    }
-    .tep-dashmap-hwindow-tickdot--active { background: #60a5fa; }
-    /* Tick TEXT labels only appear on hover/drag, below the track. */
-    .tep-dashmap-hwindow-labels {
-      position: absolute; left: 0; right: 0; top: 100%; margin-top: 11px;
-      pointer-events: none; opacity: 0; transition: opacity .15s;
-    }
-    .tep-dashmap-hwindow:hover .tep-dashmap-hwindow-labels,
-    .tep-dashmap-hwindow:focus-within .tep-dashmap-hwindow-labels {
-      opacity: 1;
-    }
-    .tep-dashmap-hwindow-tick {
-      position: absolute; top: 0; transform: translateX(-50%);
-      font-size: 9px; font-weight: 600; color: #64748b; white-space: nowrap;
-      transition: color .15s, font-weight .15s;
-    }
-    .tep-dashmap-hwindow-tick--active { color: #93c5fd; font-weight: 800; }
+    .tep-dashmap-hwindow-select:hover { border-color: #60a5fa; }
+    .tep-dashmap-hwindow-select:focus { outline: 2px solid #60a5fa; outline-offset: 1px; }
     .tep-dash-kind {
       font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
       padding: 1px 5px; border-radius: 4px; margin-left: 4px; vertical-align: middle;
@@ -2931,6 +2883,16 @@
       margin-left: 6px; color: #93c5fd; pointer-events: auto;
     }
     .tep-map-tip-geo:hover { color: #fdba74; }
+    /* Endpoint's labeled variant — sits in the location meta row (that flex
+       row's own gap already spaces it, hence margin-left:0) instead of the
+       bare icon enterprise keeps next to its name, so it reads as a distinct
+       "MAP" action rather than a stray icon once it's not right next to the
+       agent name anymore. */
+    .tep-map-tip-geo--labeled {
+      margin-left: 0; gap: 3px; font-size: 9.5px; font-weight: 700; letter-spacing: .03em;
+      text-transform: uppercase; background: rgba(147,197,253,.14); border-radius: 4px; padding: 1px 5px;
+    }
+    .tep-map-tip-geo--labeled:hover { background: rgba(253,186,116,.18); }
     .tep-agent-map-tip {
       /* Box is 25% bigger than the original (was 150-250px / 8x10 padding) —
          extra room for the endpoint CPU/RAM/disk/battery/IP lines — but the
@@ -2971,6 +2933,14 @@
     }
     .tep-map-tip-agent:hover { background: rgba(249,115,22,.16); }
     .tep-map-tip-agent:hover .tep-map-tip-name { color: #fdba74; }
+    /* Hovering the NAME itself (not just the row) previews its own specific
+       destination — settings for enterprise, agent view for endpoint — with
+       a distinct blue instead of the row's general orange hover, so the two
+       different click targets (name → settings/agent view, everywhere else
+       in the row → test popover) read as visually different actions before
+       you even click. Scoped to clickable rows only — .tep-dash-tip-noclick
+       names have nowhere to go, so they keep the plain row-hover color. */
+    .tep-map-tip-agent.tep-dash-tip-clickable:hover .tep-map-tip-name:hover { color: #93c5fd; }
     /* Matches the pulsing gold marker highlight from the map search box, so a
        cluster's hover list makes it obvious which row(s) matched. */
     .tep-map-tip-agent--searchhit { background: rgba(250,204,21,.16); box-shadow: inset 2px 0 0 #facc15; }
@@ -2984,7 +2954,9 @@
     .tep-map-tip-agent--focushit .tep-map-tip-name { color: #fdba74; }
     .tep-map-tip-name { font-weight: 700; color: #f8fafc; }
     .tep-map-tip-typeicon { flex-shrink: 0; vertical-align: -2px; margin-right: 4px; }
-    .tep-map-tip-user { color: #e2e8f0; margin-top: 1px; }
+    /* Endpoint only: username(s) left, "seen X ago" right — space-between
+       collapses to a single left-aligned item when there's no username. */
+    .tep-map-tip-user { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: #e2e8f0; margin-top: 1px; }
     .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: #94a3b8; }
     .tep-map-tip-meta svg { vertical-align: -2px; }
     .tep-map-tip-isp { color: #7dd3fc; font-size: 10.5px; margin-top: 3px; }
@@ -2995,6 +2967,16 @@
     }
     .tep-map-tip-dest-g { flex: 0 0 auto; display: inline-flex; }
     .tep-map-tip-metrics span { color: #e2e8f0; font-weight: 600; }
+    /* "SaaS/Network Health" (enterprise) or "Application/Network Health"
+       (endpoint) row — purely informational (matches whichever score
+       currently colors the marker); NOT its own click target — the whole row
+       opens the per-agent test popover, see openTipAgent. */
+    .tep-map-tip-metricrow {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-top: 4px; padding: 3px 6px; border-radius: 4px;
+      background: rgba(148,163,184,.08); font-size: 10.5px; color: #94a3b8;
+    }
+    .tep-map-tip-metricrow b { font-weight: 700; }
     .tep-map-tip-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
     .tep-map-tip-labels span { background: #334155; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #cbd5e1; }
     .tep-map-tip-more { color: #64748b; margin-top: 4px; }
@@ -8540,7 +8522,17 @@
   async function loadAgents() {
     try {
       agentsBox.innerHTML = '<span class="tep-log-info">Loading agents…</span>';
-      agents = [];
+      // Built locally and swapped into the shared `agents` atomically once
+      // fully loaded (see the assignment right before renderAgents() below)
+      // — never clearing the module-level array up front and repopulating it
+      // in place over three sequential awaited fetches. CONFIRMED via user
+      // report: with `agents = []` here, every reader of `agents` (the
+      // Enterprise Agents widget count, the map's markers) could observe it
+      // empty mid-refresh — the widget briefly reads "0 of 0" and every
+      // enterprise marker vanishes from the map for about a second, on every
+      // ~2min periodic refresh. Endpoint agents (a separate array, loaded by
+      // loadEndpointAgents) aren't affected by this function at all.
+      const newAgents = [];
 
       // Fetch agents from /ajax/settings/tests/virtual-agents
       // The vAgents array contains agents assigned to the current account group
@@ -8574,7 +8566,7 @@
             // Prefer a real City/State/Country string; fall back to countryId.
             let loc = tepAgentLocationText(a) || a.countryId || '';
             const ll = tepAgentLatLng(a);
-            agents.push({
+            newAgents.push({
               agentId: a.vAgentId || a.agentId || a.id,
               agentName: a.displayName || a.name || ('Agent ' + (a.vAgentId || a.agentId)),
               agentType: isEnterprise ? 'Enterprise' : 'Cloud',
@@ -8663,7 +8655,7 @@
 
           // Match physical agent status + location/coords to virtual agents
           let matched = 0, geoFilled = 0;
-          for (const a of agents) {
+          for (const a of newAgents) {
             if (a.agentType !== 'Enterprise') continue;
             const s = statusMap[a.physicalId] || statusMap['v_' + a.agentId];
             if (s) { a.status = s; matched++; }
@@ -8707,7 +8699,7 @@
             }
           }
           let seenMatched = 0;
-          for (const a of agents) {
+          for (const a of newAgents) {
             if (a.agentType !== 'Enterprise') continue;
             const ms = lastSeenMap[a.physicalId] != null ? lastSeenMap[a.physicalId] : lastSeenMap['v_' + a.agentId];
             if (ms != null) { a.lastSeenMs = ms; seenMatched++; }
@@ -8716,7 +8708,7 @@
         }
       } catch (e) { log('Enterprise last-seen fetch error: ' + e.message, 'tep-log-info'); }
 
-      agents.sort((a, b) => {
+      newAgents.sort((a, b) => {
         // Enterprise first, then by status (online first), then by name
         if (a.agentType !== b.agentType) return a.agentType === 'Enterprise' ? -1 : 1;
         if (a.status !== b.status) {
@@ -8727,6 +8719,14 @@
         }
         return (a.agentName || '').localeCompare(b.agentName || '');
       });
+      // The one and only point `agents` is ever touched by this function —
+      // everything above built newAgents in isolation, so this swap is the
+      // sole moment readers can observe a change, and it's always a change
+      // straight from one fully-populated state to another (or, on a
+      // network error caught below, `agents` simply keeps its PREVIOUS
+      // value instead of having been wiped out from under every reader for
+      // the whole duration of this fetch chain).
+      agents = newAgents;
       // Load enterprise-relevant tags after agents exist (does not block UI).
       void loadEnterpriseAgentTags();
       renderAgents();
@@ -14086,6 +14086,24 @@
     });
     return `${ENTERPRISE_TEST_VIEW_BASE}?${params.toString()}`;
   }
+  /** Same idea as buildEnterpriseHttpTestAgentUrl, for a Network-category test
+   *  instead — detailId=pathvis/metrics=netLatency,netLoss is the same param
+   *  pair liveTestAgentResultUrl's enterprise branch already uses (CONFIRMED
+   *  via live capture there), just reused here for the Network Health
+   *  per-agent popover's row links instead of a LIVE TEST result. */
+  function buildEnterpriseNetworkTestAgentUrl(testId, agentId) {
+    if (testId == null || agentId == null) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const params = new URLSearchParams({
+      testId: String(testId),
+      startTime: String(now),
+      detailId: 'pathvis',
+      metrics: 'netLatency,netLoss',
+      timelineWindow: `${now - 86400},${now}`,
+      agentId: String(agentId),
+    });
+    return `${ENTERPRISE_TEST_VIEW_BASE}?${params.toString()}`;
+  }
 
   /** Google Maps pin link for a precise coordinate. */
   function tepGoogleMapsUrl(lat, lng) {
@@ -14889,9 +14907,30 @@
   // entirely (not just visually — excluded from the map's own counts too,
   // same as the existing offline/health filtering during a LIVE TEST).
   let dashMapAgentTypeFilter = null;
-  // "Data Window" horizontal slider, a full-width row below Alerts/Events in
-  // the fullscreen map's widget grid (see renderDashWidgets) — ONE shared
-  // time window for every dashboard-independent SaaS Health / Network Health
+  // Which aggregate health score colors every map marker — 'saas' (default,
+  // radio on the SaaS Health widget) or 'network' (radio on Network Health).
+  // Replaces the old online/offline-status coloring entirely; that status
+  // (tepEnterpriseHealth/tepEndpointHealth) still exists and still drives
+  // OTHER things (LIVE TEST's online-only filter, the online-breathe pulse)
+  // but no longer the fill color. See tepColorForItem / refreshDashMapColorScores.
+  let dashMapColorSource = 'saas';
+  // Per-agent aggregate scores backing dashMapColorSource, refreshed together
+  // (regardless of which is selected, so flipping the radio is instant) by
+  // refreshDashMapColorScores() whenever the map opens, the Data Window
+  // slider changes, or the periodic refresh ticks. Enterprise agents are
+  // keyed by UPPER-CASE name (same key convention tepFetchHttpAvailabilityByAgent
+  // already uses); endpoint agents are keyed by their real agentId.
+  let dashMapEntSaasScoreByName = null;   // Map<UPPER name, 0-100>
+  let dashMapEpSaasScoreByAgentId = null; // Map<agentId, 0-100>
+  let dashMapEntNetScoreByName = null;    // Map<UPPER name, 0-100>
+  // ENDPOINT_TEST_APPLICATION_SCORE — despite the name, CONFIRMED (user
+  // cross-check against known network-path-vs-app-layer symptoms) to be a
+  // loss/latency network-path blend, not an application score. See
+  // tepFetchAllEndpointAgentNetScores.
+  let dashMapEpNetScoreByAgentId = null;  // Map<agentId, 0-100>
+  // "Data Window" dropdown, a full-width row below Alerts/Events in the
+  // fullscreen map's widget grid (see renderDashWidgets) — ONE shared time
+  // window for every dashboard-independent SaaS Health / Network Health
   // fetch (NAS-MEAN averaged over timeSpanConfig.last). Used to be a
   // Network-Health-only 1h/24h toggle next to that widget's title, with SaaS
   // Health silently hardcoded to 24h and never exposed at all — this unifies
@@ -14899,9 +14938,10 @@
   // (segment-visualisation, see tepFetchHttpTestsForEndpointAgent) is
   // deliberately NOT wired to this: that API is a single live round snapshot
   // with no confirmed windowed/averaging equivalent, so it always shows the
-  // live round regardless of this slider. Ordered 24h → Live (left to right,
-  // per request) — the reverse of "smallest first" you'd expect, so the
-  // slider's min (index 0, left) is 24h and its max (index 4, right) is Live.
+  // live round regardless of this dropdown. (A rotated vertical slider, then
+  // a horizontal one, both preceded this — both proved fiddly to use, hence
+  // the plain dropdown.) Order below is just the dropdown's top-to-bottom
+  // list order — 24h first (the default), Live last.
   const DASH_METRICS_WINDOWS = [
     { sec: 86400, label: '24h' },
     { sec: 43200, label: '12h' },
@@ -14909,10 +14949,8 @@
     { sec: 3600, label: '1h' },
     { sec: 300, label: 'Live' },
   ];
-  // Defaults to 24h (now the FIRST/leftmost stop) — matches the old
-  // hardcoded/default behavior both widgets already had before this slider
-  // existed.
-  let dashMetricsWindowIdx = 0;
+  // Defaults to 1h (index 3 of the 24h→Live left-to-right order above).
+  let dashMetricsWindowIdx = 3;
   function tepMetricsWindowSec() { return DASH_METRICS_WINDOWS[dashMetricsWindowIdx].sec; }
   function tepMetricsWindowLabel() { return DASH_METRICS_WINDOWS[dashMetricsWindowIdx].label; }
   /** "the last 5 minutes" / "the last 1h" / … for widget tooltips. */
@@ -14920,35 +14958,11 @@
     const label = tepMetricsWindowLabel();
     return label === 'Live' ? 'the last 5 minutes' : `the last ${label}`;
   }
-  /** The Data Window row's title word, next to the current-value readout —
-   *  "Past 24h" / "Past 1h" / etc. reads naturally, but "Past Live" doesn't,
-   *  so the word disappears entirely once Live is selected (just "Live"
-   *  shows on its own). */
-  function tepMetricsWindowTitleWord() {
-    return tepMetricsWindowLabel() === 'Live' ? '' : 'Past';
-  }
-  /** Tick labels for the Data Window slider, one per stop, spaced left to
-   *  right along the horizontal track — same evenly-spaced/active-bolding
-   *  pattern as tepSeenFilterLabelsHtml (that one's vertical/top%, this one's
-   *  horizontal/left%). */
-  function tepMetricsWindowLabelsHtml() {
-    const n = DASH_METRICS_WINDOWS.length;
-    return DASH_METRICS_WINDOWS.map((w, i) => {
-      const pct = (i / (n - 1)) * 100;
-      const active = i === dashMetricsWindowIdx ? ' tep-dashmap-hwindow-tick--active' : '';
-      return `<div class="tep-dashmap-hwindow-tick${active}" style="left:${pct}%">${tepEscapeHtmlText(w.label)}</div>`;
-    }).join('');
-  }
-  /** Always-visible dot + leader-line marker for each stop, one per stop —
-   *  same positions as tepMetricsWindowLabelsHtml's text, but rendered on the
-   *  bar itself instead of only appearing on hover. */
-  function tepMetricsWindowTicksHtml() {
-    const n = DASH_METRICS_WINDOWS.length;
-    return DASH_METRICS_WINDOWS.map((w, i) => {
-      const pct = (i / (n - 1)) * 100;
-      const active = i === dashMetricsWindowIdx ? ' tep-dashmap-hwindow-tickdot--active' : '';
-      return `<div class="tep-dashmap-hwindow-tickdot${active}" style="left:${pct}%"></div>`;
-    }).join('');
+  /** One <option>'s display text for the Data Window dropdown — "Past 24h" /
+   *  "Past 1h" / etc. reads naturally, but "Past Live" doesn't, so the word
+   *  disappears entirely for that one option (just "Live" on its own). */
+  function tepMetricsWindowOptionText(label) {
+    return label === 'Live' ? 'Live' : `Past ${label}`;
   }
   // null shows every ISP; an ISP name hides every agent not on that ISP
   // (per-tile radio on the ISP stack, same "show only" pattern as above).
@@ -14973,9 +14987,11 @@
     { label: '1mo', ms: 30 * 24 * 3600e3 },
     { label: 'All', ms: null },
   ];
-  // Defaults to "All time" (the last stop) so opening the map never
-  // surprise-hides agents until the user actually moves the slider.
-  let dashMapSeenFilterIdx = TEP_SEEN_FILTER_STOPS.length - 1;
+  // Defaults to "1mo" (found by label so a future reorder of the stops above
+  // can't silently point this at the wrong one) — hides agents not seen in
+  // over a month right away, rather than the old "show everything, All time"
+  // default.
+  let dashMapSeenFilterIdx = Math.max(0, TEP_SEEN_FILTER_STOPS.findIndex((s) => s.label === '1mo'));
   function tepPassesSeenFilter(lastSeenMs) {
     const stop = TEP_SEEN_FILTER_STOPS[dashMapSeenFilterIdx];
     if (!stop || stop.ms == null) return true;
@@ -15057,11 +15073,17 @@
   /** Green (healthy, f=0) → red (unhealthy, f=1) mix at an arbitrary fraction,
    *  so a cluster's AVERAGE health can be shaded, not just one of 3 buckets. */
   function tepHealthColorFrac(f) {
-    // Two-stop gradient through amber rather than a straight green→red RGB
-    // lerp — a direct mix passes through a muddy brown/olive midpoint, while
-    // green→amber→red reads as a proper traffic-light gradient at f=0.5.
-    const green = [34, 197, 94], amber = [245, 158, 11], red = [239, 68, 68];
-    const [a, b, t] = f <= 0.5 ? [green, amber, f / 0.5] : [amber, red, (f - 0.5) / 0.5];
+    // Four rich, fully-saturated stops (green→yellow→orange→red) rather than
+    // a straight green→red lerp or even a single green→amber→red midpoint —
+    // linearly blending across a big hue gap (green straight to amber/orange)
+    // still crosses a muddy brown/olive zone. Each of these four stops sits
+    // next to its neighbor on the hue wheel, so every segment blends between
+    // ADJACENT hues and stays vivid the whole way across, with no brown.
+    const green = [34, 197, 94], yellow = [250, 204, 21], orange = [249, 115, 22], red = [220, 38, 38];
+    const stops = f <= 1 / 3 ? [green, yellow, f / (1 / 3)]
+      : f <= 2 / 3 ? [yellow, orange, (f - 1 / 3) / (1 / 3)]
+      : [orange, red, (f - 2 / 3) / (1 / 3)];
+    const [a, b, t] = stops;
     const mix = a.map((c, i) => Math.round(c + (b[i] - c) * t));
     const light = mix.map((c) => Math.round(c + (255 - c) * 0.55));
     return { fill: `rgb(${mix.join(',')})`, stroke: `rgb(${light.join(',')})` };
@@ -15087,6 +15109,97 @@
     }
     if (it.health === 'unknown') return 'never seen';
     return 'seen ' + epRelativeTime(it.lastSeenMs);
+  }
+
+  /** The 0-100 score that drives one item's marker color under the current
+   *  dashMapColorSource — null when no data exists yet (fresh map open, this
+   *  agent has no tests of that kind, or — for endpoint + 'network' — no
+   *  confirmed source exists at all). Callers must treat null as "unknown",
+   *  same as the old health-bucket system's gray fallback. */
+  function tepColorScoreForItem(it) {
+    if (!it) return null;
+    if (dashMapColorSource === 'network') {
+      if (it.kind === 'enterprise') {
+        const m = dashMapEntNetScoreByName;
+        return m ? (m.has(String(it.name).toUpperCase()) ? m.get(String(it.name).toUpperCase()) : null) : null;
+      }
+      const em = dashMapEpNetScoreByAgentId;
+      return (em && it.agentId != null && em.has(String(it.agentId))) ? em.get(String(it.agentId)) : null;
+    }
+    // 'saas' (default)
+    if (it.kind === 'enterprise') {
+      const m = dashMapEntSaasScoreByName;
+      return m ? (m.has(String(it.name).toUpperCase()) ? m.get(String(it.name).toUpperCase()) : null) : null;
+    }
+    const m = dashMapEpSaasScoreByAgentId;
+    return (m && it.agentId != null && m.has(String(it.agentId))) ? m.get(String(it.agentId)) : null;
+  }
+  /** {fill,stroke} for a 0-100 score, same smooth gradient (and red floor) the
+   *  SaaS/Network Health widgets' own rings already use — a plain default
+   *  blue (same #3b82f6/#93c5fd pairing used elsewhere in this panel, e.g.
+   *  the Data Window slider's accent) when there's no score to show.
+   *  Deliberately NOT gray: gray sits inside the same low-saturation range
+   *  the new recency-opacity fade already pushes old markers toward, so a
+   *  "no data" marker and a "just old" marker could look identical. Blue sits
+   *  outside the red→amber→green health range entirely, reads as "a
+   *  different kind of state" rather than "bad health," and (unlike gray)
+   *  still has enough contrast to stay visible at low opacity. */
+  function tepColorFromScore(score) {
+    if (score == null || !Number.isFinite(score)) return { fill: '#3b82f6', stroke: '#93c5fd' };
+    const f = Math.max(0, Math.min(1, (100 - score) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
+    return tepHealthColorFrac(f);
+  }
+  // Continuous freshness from an agent's OWN last-seen recency — NOT the Last
+  // Seen slider's position (that's still a pure hide/show filter, see
+  // tepPassesSeenFilter below). 1.0 fresh, fading to a low floor by 30 days
+  // old; unknown/never-seen agents get the floor too (least informative =
+  // least "fresh"). Feeds tepNoMetricColor below — no longer applied as
+  // marker opacity (a "no metric" marker fading to fully transparent
+  // eventually looked like it had just vanished, losing the "no data" signal
+  // entirely instead of keeping it visible-but-stale).
+  const TEP_RECENCY_FRESHNESS_FLOOR = 0.12;
+  const TEP_RECENCY_MAX_AGE_MS = 30 * 24 * 3600e3;
+  function tepRecencyFreshness(lastSeenMs) {
+    if (!Number.isFinite(lastSeenMs)) return TEP_RECENCY_FRESHNESS_FLOOR;
+    const age = Math.max(0, Date.now() - lastSeenMs);
+    const frac = Math.min(1, age / TEP_RECENCY_MAX_AGE_MS);
+    return 1 - frac * (1 - TEP_RECENCY_FRESHNESS_FLOOR);
+  }
+  // For markers with NO health-score data: the same "no metric" blue
+  // (tepColorFromScore(null)'s fill) when just seen, blended toward a dark
+  // slate-grey the longer it's been since — a COLOR gradient standing in for
+  // what used to be a transparency gradient on a flat blue.
+  const TEP_NO_METRIC_BLUE = [59, 130, 246];
+  const TEP_NO_METRIC_GREY = [51, 65, 85];
+  function tepNoMetricColor(freshness) {
+    const f = Math.max(0, Math.min(1, Number.isFinite(freshness) ? freshness : TEP_RECENCY_FRESHNESS_FLOOR));
+    const mix = TEP_NO_METRIC_BLUE.map((c, i) => Math.round(c + (TEP_NO_METRIC_GREY[i] - c) * (1 - f)));
+    const light = mix.map((c) => Math.round(c + (255 - c) * 0.55));
+    return { fill: `rgb(${mix.join(',')})`, stroke: `rgb(${light.join(',')})` };
+  }
+  /** Marker/hover-icon colour for one item — replaces the old
+   *  tepHealthColor(it.health) call entirely; online/offline status
+   *  (it.health) no longer has any bearing on color, only on the unrelated
+   *  things it already drove (LIVE TEST's online-only filter, the
+   *  online-breathe pulse class). Real score data always wins (pure health
+   *  gradient, no recency tint); with no score at all, color itself carries
+   *  the recency signal via tepNoMetricColor instead of opacity. */
+  function tepColorForItem(it) {
+    const score = tepColorScoreForItem(it);
+    if (score != null) return tepColorFromScore(score);
+    return tepNoMetricColor(tepRecencyFreshness(it && it.lastSeenMs));
+  }
+  // 1 minute or fresher → bright green; 1 week or older → deep red; linear
+  // in between. Independent of the marker's own color (health score or
+  // tepNoMetricColor) — this is purely "how stale is the 'seen X ago' text
+  // itself", for the hover-card label, not for the marker/icon fill.
+  const TEP_SEEN_TEXT_FRESH_MS = 60e3;
+  const TEP_SEEN_TEXT_STALE_MS = 7 * 24 * 3600e3;
+  function tepSeenTextColor(lastSeenMs) {
+    if (!Number.isFinite(lastSeenMs)) return tepHealthColorFrac(1); // never seen = worst
+    const age = Math.max(0, Date.now() - lastSeenMs);
+    const f = Math.max(0, Math.min(1, (age - TEP_SEEN_TEXT_FRESH_MS) / (TEP_SEEN_TEXT_STALE_MS - TEP_SEEN_TEXT_FRESH_MS)));
+    return tepHealthColorFrac(f);
   }
 
   function tepTitleCase(s) { return String(s || '').replace(/\b[a-z]/g, (c) => c.toUpperCase()); }
@@ -15253,25 +15366,45 @@
     const cls = 'tep-map-tip-agent' + (clickable ? ' tep-dash-tip-clickable' : ' tep-dash-tip-noclick')
       + (isSearchMatch ? ' tep-map-tip-agent--searchhit' : '')
       + (isFocusHit ? ' tep-map-tip-agent--focushit' : '');
-    const hc = tepHealthColor(it.health);
+    const hc = tepColorForItem(it);
     const iconStyle = `style="fill:${hc.fill};stroke:${hc.stroke};stroke-width:2"`;
     // Match the map marker: rounded square = enterprise, head/shoulders = user.
     const typeIcon = it.kind === 'enterprise'
       ? `<svg class="tep-map-tip-typeicon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="0.65" y="4" width="14.7" height="8" rx="2" ${iconStyle}/><line x1="2.2" y1="9.3" x2="13.8" y2="9.3" stroke="#000" stroke-width="1"/><circle cx="3.8" cy="6.7" r="1" fill="#000"/></svg>`
       : `<svg class="tep-map-tip-typeicon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">${tepUserIconInner(iconStyle)}</svg>`;
     const badge = `<span class="tep-dash-kind tep-dash-kind--${it.kind}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
-    const health = `<span class="tep-map-tip-health" style="color:${hc.fill}">${tepEscapeHtmlText(tepHealthLabel(it))}</span>`;
-    // Any agent row (enterprise or endpoint), outside an active LIVE TEST
-    // result link, opens a submenu of that agent's HTTP tests by SaaS health
-    // instead of navigating away \u2014 role/title reflect that it's a popover
-    // trigger, not a link, in that case.
+    // "seen X ago" (endpoint, known lastSeenMs) gets its own pure-recency
+    // gradient instead of the marker's own color — see tepSeenTextColor.
+    // "online" (enterprise) is always the same green regardless of the
+    // marker's own SaaS/Network score color — the word itself is a status,
+    // not a health score, so it shouldn't read as red/orange just because
+    // this agent's aggregate score happens to be poor. Everything else
+    // ("offline"/"status unknown"/"never seen") keeps the marker's own color.
+    const healthLabelText = tepHealthLabel(it);
+    const healthTextColor = healthLabelText === 'online' ? '#22c55e'
+      : (it.kind === 'endpoint' && it.health !== 'unknown') ? tepSeenTextColor(it.lastSeenMs).fill : hc.fill;
+    const health = `<span class="tep-map-tip-health" style="color:${healthTextColor}">${tepEscapeHtmlText(healthLabelText)}</span>`;
+    // Outside an active LIVE TEST result link: both kinds open the tests
+    // popover from a click anywhere in the row except the name (settings for
+    // enterprise, agent view for endpoint) or the map/location link (see
+    // openTipAgent).
     const opensSubmenu = !it.liveResultLink;
     const title = it.liveResultLink
       ? 'Open this agent\u2019s LIVE TEST result'
-      : 'Show this agent\u2019s HTTP tests by SaaS health';
+      : it.kind === 'enterprise'
+        ? 'Click the name for settings, or anywhere else for tests'
+        : 'Click the name to open the agent, or anywhere else for tests';
     const attrs = clickable ? ` data-idx="${idx}" role="${opensSubmenu ? 'button' : 'link'}"${opensSubmenu ? ' aria-haspopup="true"' : ''} tabindex="0" title="${title}"` : '';
-    const geo = it.mapUrl
-      ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></a>`
+    // Google Maps link — enterprise keeps a bare icon next to the name (tight
+    // on space there); endpoint moves it down beside the location text
+    // instead, with a visible "MAP" label so it still reads as an action once
+    // it's no longer right next to the name.
+    const geoIconSvg = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
+    const geo = (it.mapUrl && it.kind === 'enterprise')
+      ? `<a class="tep-map-tip-geo" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps">${geoIconSvg}</a>`
+      : '';
+    const geoMapLink = (it.mapUrl && it.kind === 'endpoint')
+      ? `<a class="tep-map-tip-geo tep-map-tip-geo--labeled" href="${tepEscapeHtmlText(it.mapUrl)}" target="_blank" rel="noopener noreferrer" title="Open location in Google Maps" aria-label="Open location in Google Maps">${geoIconSvg}<span>MAP</span></a>`
       : '';
     const latGoalMs = it.kind === 'endpoint' ? ISP_HEALTH_LATENCY_GOAL_MS : undefined;
     const lat = Number.isFinite(it.latencyMs)
@@ -15285,18 +15418,24 @@
     const destHtml = (dest && dest.lat != null)
       ? `<div class="tep-map-tip-dest"><span class="tep-map-tip-dest-g">${tepGoogleGIconSvg(11)}</span>${tepEscapeHtmlText(dest.location || '8.8.8.8')}${dest.estimated ? ' <span class="tep-gcard-est-tag">est.</span>' : ''}</div>`
       : '';
-    const usersHtml = (it.kind === 'endpoint' && Array.isArray(it.users) && it.users.length)
-      ? `<div class="tep-map-tip-user">${tepEscapeHtmlText(it.users.join(', '))}</div>` : '';
+    // Endpoint only: username(s) share a row with "seen X ago" (health, above)
+    // instead of that living in the location meta row below — always
+    // rendered (even with no username) so "seen…" always has somewhere to go.
+    const usersText = (Array.isArray(it.users) && it.users.length) ? tepEscapeHtmlText(it.users.join(', ')) : '';
+    const userSeenHtml = (it.kind === 'endpoint')
+      ? `<div class="tep-map-tip-user">${usersText ? `<span>${usersText}</span>` : ''}${health}</div>`
+      : '';
     // ISP Health mode: agent's reported ISP (+ public IP for endpoint agents), when loaded.
     const isp = (it.agentId != null) ? ispHealthByAgent.get(String(it.agentId)) : null;
     const ispHtml = isp
       ? `<div class="tep-map-tip-isp">${tepEscapeHtmlText(isp.isp)}${isp.publicIp ? ' · ' + tepEscapeHtmlText(isp.publicIp) : ''}</div>`
       : '';
-    // Endpoint-only IP — the LOCAL/private address (not public — that's what
-    // the ISP line above already shows), already threaded through from the
-    // raw agent record with no extra fetch. Hidden entirely (not falling back
-    // to public) when the agent's payload didn't carry a distinct local IP.
-    const ipHtml = (it.kind === 'endpoint' && it.localIp)
+    // Endpoint-only local IP — hidden by default (rarely useful at a glance),
+    // but still searchable: dashMapItemMatchesQuery already matches it
+    // against dashMapSearchQuery, so a query that specifically hit THIS IP
+    // reveals it here instead of leaving the match unexplained.
+    const ipMatchedSearch = !!(dashMapSearchQuery && it.localIp && it.localIp.toLowerCase().includes(dashMapSearchQuery));
+    const ipHtml = (it.kind === 'endpoint' && it.localIp && ipMatchedSearch)
       ? `<div class="tep-map-tip-ip">${tepEscapeHtmlText(it.localIp)}</div>` : '';
     // CPU/RAM/disk/battery/connection/VPN — populated only after this
     // agent's segment-visualisation enrichment resolves (triggered lazily
@@ -15315,13 +15454,31 @@
       connHtml, vpnHtml,
     ].filter(Boolean) : [];
     const metricsHtml = metricParts.length ? `<div class="tep-map-tip-metrics">${metricParts.join('')}</div>` : '';
+    // Informational row showing this agent's own aggregate score under the
+    // CURRENT dashMapColorSource, labeled to match — NOT independently
+    // clickable/focusable itself; the whole row (see openTipAgent) opens the
+    // same per-agent test-list popover this score is driven by (see
+    // tepColorScoreForItem). Endpoint calls SaaS Health "Application Health"
+    // here to match the popover's own "Overall HTTP Application Score" /
+    // "Overall Network Score" row wording; enterprise keeps the widget's own
+    // "SaaS Health" name.
+    const metricLabel = dashMapColorSource === 'network'
+      ? 'Network Health'
+      : (it.kind === 'endpoint' ? 'Application Health' : 'SaaS Health');
+    const metricScore = tepColorScoreForItem(it);
+    const metricColor = tepColorFromScore(metricScore).fill;
+    const metricText = metricScore != null ? `${metricScore.toFixed(1)}%` : 'no data';
+    const metricRowHtml = '<div class="tep-map-tip-metricrow">'
+      + `<span>${tepEscapeHtmlText(metricLabel)}</span><b style="color:${metricColor}">${tepEscapeHtmlText(metricText)}</b>`
+      + '</div>';
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
-      ${usersHtml}
-      <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${lat}${loss}${health}</div>
+      ${userSeenHtml}
+      <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${geoMapLink}${lat}${loss}${it.kind === 'enterprise' ? health : ''}</div>
       ${ipHtml}
       ${ispHtml}
       ${metricsHtml}
+      ${metricRowHtml}
       ${destHtml}
     </div>`;
   }
@@ -15430,9 +15587,21 @@
     const host = hostEl || $('#tep-dash-map-host');
     const countEl = full ? null : $('#tep-dash-map-count');
     if (!host) return;
-    host.innerHTML = '';
+    // Whether host already shows a real map — a background refresh
+    // (preserveZoom) that suddenly computes zero/ungeocodable agents is far
+    // more likely a transient mid-fetch hiccup (see loadAgents(), which
+    // clears the shared `agents` array for the duration of several sequential
+    // network calls) than a genuine "every agent vanished" event. Blanking
+    // the map out to a placeholder in that case, then rebuilding it once the
+    // next good refresh lands, is exactly the multi-second "agents disappear
+    // and reappear" flicker this guards against — keep whatever's already on
+    // screen instead. Only a render with nothing to preserve (first load, or
+    // an explicit non-preserveZoom reframe) falls through to the placeholder.
+    const hadRealMap = !!host.querySelector('.tep-agent-map-wrap');
     const { list, entTotal, entMapped, epTotal, epMapped } = buildDashboardMapAgents();
     if (!entTotal && !epTotal) {
+      if (preserveZoom && hadRealMap) return;
+      host.innerHTML = '';
       if (full) {
         // Fullscreen: show the empty basemap immediately instead of a text
         // placeholder — opened from a page where agent data isn't preloaded
@@ -15451,6 +15620,7 @@
       return;
     }
     if (!list.length) {
+      if (preserveZoom && hadRealMap) return;
       host.innerHTML = '<div class="tep-dash-map-empty">' + (entTotal + epTotal) + ' agent(s) found, but none could be geolocated from their location text.</div>';
       if (countEl) countEl.textContent = (entTotal + epTotal) + ' agent(s) · none plottable';
       return;
@@ -15543,20 +15713,24 @@
       // 20ms default. A mixed cluster falls back to the tighter default.
       const latencyGoalMs = items.every((it) => it.kind === 'endpoint') ? ISP_HEALTH_LATENCY_GOAL_MS : undefined;
       if (count > 1) {
-        // Shade the cluster by its members' AVERAGE health (not just one of 3
-        // buckets) so a mostly-healthy cluster reads greener than a mixed one.
-        const healthF = { healthy: 0, warning: 0.5, unhealthy: 1 };
-        const knownHealth = items.map((it) => healthF[it.health]).filter((v) => v != null);
-        const avgHealthF = knownHealth.length ? knownHealth.reduce((s, v) => s + v, 0) / knownHealth.length : null;
+        // Shade the cluster by its members' AVERAGE score under the current
+        // dashMapColorSource (not a health bucket anymore) so a
+        // mostly-healthy cluster reads greener than a mixed one. No member
+        // has any score → fall back to the same recency-colored "no metric"
+        // blue-to-grey blend as a single marker would, averaged across the
+        // cluster the same way score is above.
+        const knownScores = items.map((it) => tepColorScoreForItem(it)).filter((v) => v != null);
+        const avgScore = knownScores.length ? knownScores.reduce((s, v) => s + v, 0) / knownScores.length : null;
         const c = (useLat || useLoss) ? tepLiveNodeColor(latAvg, lossMax, latencyGoalMs)
-          : (avgHealthF != null ? tepHealthColorFrac(avgHealthF) : { fill: '#64748b', stroke: '#cbd5e1' });
+          : avgScore != null ? tepColorFromScore(avgScore)
+          : tepNoMetricColor(items.reduce((s, it) => s + tepRecencyFreshness(it.lastSeenMs), 0) / items.length);
         m.setAttribute('aria-label', (items[0].location || 'Unknown') + ' — ' + count + ' agents'
           + (useLat ? ` — ${latAvg}ms avg` : '') + (useLoss ? ` — ${lossTxt}` : ''));
         m.innerHTML = '<svg viewBox="0 0 24 24" width="25" height="25" aria-hidden="true"><circle cx="12" cy="12" r="10" style="fill:'
           + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"/><text x="12" y="12">' + count + '</text></svg>';
       } else {
         const it = items[0];
-        const c = (useLat || useLoss) ? tepLiveNodeColor(it.latencyMs, it.lossPct, latencyGoalMs) : tepHealthColor(it.health);
+        const c = (useLat || useLoss) ? tepLiveNodeColor(it.latencyMs, it.lossPct, latencyGoalMs) : tepColorForItem(it);
         const style = 'style="fill:' + c.fill + ';stroke:' + c.stroke + ';stroke-width:2"';
         m.setAttribute('aria-label', (it.name || 'Agent') + ' — ' + (it.kind === 'enterprise' ? 'enterprise' : 'user')
           + (useLat ? ` — ${it.latencyMs}ms` : '') + (useLoss ? ` — ${lossTxt}` : ''));
@@ -15814,8 +15988,22 @@
       tip.style.setProperty('--tep-tip-tail-left', tailLeft + 'px');
     }
     let hideTimer = null;
+    let mouseOverWrap = false; // tracks true pointer presence over marker/card, independent of the popover hold below
     function cancelHide() { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } }
-    function scheduleHide() { cancelHide(); hideTimer = setTimeout(hideTip, 220); }
+    function scheduleHide() {
+      cancelHide();
+      // Keep the hover card up while its own test-list submenu is open —
+      // see armPopoverAutoClose, which re-fires this once that submenu closes.
+      if (tepAgentTestsPopoverEl) return;
+      hideTimer = setTimeout(hideTip, 220);
+    }
+    // Arm the submenu's on-close callback right before opening it, so that if
+    // the mouse has already left the marker/card by the time the submenu
+    // closes (outside-click, Escape, or navigating to a test), the hover card
+    // still gets a chance to hide instead of being stuck open.
+    function armPopoverAutoClose() {
+      tepAgentTestsPopoverOnClose = () => { if (!mouseOverWrap) scheduleHide(); };
+    }
     /** Lazily fetch connection type/VPN (and disk, best-effort) for one
      *  endpoint agent via segment-visualisation — CPU/RAM/battery are already
      *  populated fleet-wide by tepFetchAllEyebrowMetrics before this ever
@@ -15901,55 +16089,55 @@
         void enrichEndpointAgentForTip(it, marker._cluster, marker);
       }
     }
-    // NOT wired to also close the agent-tests submenu: the submenu lives
-    // outside `wrap` (appended to <html>, same as every other popover in this
-    // panel), so moving the mouse from the row onto the submenu to click or
-    // scroll it already crosses OUT of `wrap` — CONFIRMED via user report,
-    // that was firing this hover card's own mouseout→scheduleHide() and
-    // killing the submenu the instant they tried to interact with it. The
-    // submenu is self-contained (its own outside-click/Escape dismissal,
-    // same pattern as the SaaS/Network breakdown popovers) and doesn't need
-    // to track this hover card's lifecycle at all.
+    // The agent-tests submenu lives outside `wrap` (appended to <html>, same
+    // as every other popover in this panel), so moving the mouse from the row
+    // onto the submenu to click or scroll it crosses OUT of `wrap` — that
+    // used to fire this hover card's own mouseout→scheduleHide() and hide the
+    // card out from under an open submenu. scheduleHide() now checks
+    // tepAgentTestsPopoverEl and holds off while the submenu is open;
+    // armPopoverAutoClose re-evaluates the hide once the submenu closes.
     function hideTip() { cancelHide(); tip.style.display = 'none'; tip._cluster = null; dashMapFocusAgentKey = null; }
     function openTipAgent(row, isNameClick) {
       if (!row || !tip._cluster) return;
       const it = tip._cluster.items[parseInt(row.dataset.idx, 10)];
       if (!it) return;
-      // Clicking the endpoint agent's NAME specifically still jumps straight
-      // to its agent view, same as before the HTTP-tests popover existed —
-      // only the rest of the row opens that popover. Enterprise agents never
-      // had a direct per-agent view link here (they open agent settings /
-      // LIVE TEST results, which the popover already exempts below), so this
-      // restore only applies to endpoint.
-      if (isNameClick && it.kind === 'endpoint' && it.url && it.url !== '#') {
+      // Clicking EITHER agent kind's NAME jumps straight to its own agent
+      // page — settings for enterprise, agent view for endpoint — same URL
+      // (it.url, live-test result if one's active, else the base page) the
+      // marker's own click already uses.
+      if (isNameClick && it.url && it.url !== '#') {
         window.open(it.url, '_blank', 'noopener');
         return;
       }
-      // Any agent (enterprise or endpoint): a click opens the
-      // HTTP-tests-by-SaaS-health submenu instead of navigating away. A LIVE
-      // TEST result link is exempt — that's an active, time-sensitive
-      // session and should still jump straight there.
-      if (!it.liveResultLink) {
-        void toggleAgentTestsPopover(row, it);
+      // Everything else in the row (both kinds alike) opens the test-list
+      // popover — except the map/location link, which the click listener
+      // below already exempts before this function is even called. An
+      // active LIVE TEST result is still time-sensitive and wins over that:
+      // clicking anywhere jumps straight to it instead.
+      if (it.liveResultLink) {
+        if (it.url && it.url !== '#') window.open(it.url, '_blank', 'noopener');
         return;
       }
-      if (!it.url || it.url === '#') return;
-      window.open(it.url, '_blank', 'noopener');
+      armPopoverAutoClose();
+      void toggleAgentTestsPopover(row, it);
     }
     wrap.addEventListener('mouseover', (e) => {
       const m = e.target.closest('.tep-agent-map-marker');
       // Real hover always wins over a lingering programmatic focus — never
       // bold a stale row from a previous ISP-popover jump in an unrelated
       // cluster the user is now genuinely hovering.
-      if (m) { dashMapFocusAgentKey = null; showTip(m); return; }
-      if (e.target.closest('.tep-agent-map-tip')) cancelHide();
+      if (m) { dashMapFocusAgentKey = null; mouseOverWrap = true; showTip(m); return; }
+      if (e.target.closest('.tep-agent-map-tip')) { mouseOverWrap = true; cancelHide(); }
     });
     wrap.addEventListener('mouseout', (e) => {
       if (!e.target.closest('.tep-agent-map-marker') && !e.target.closest('.tep-agent-map-tip')) return;
       const to = e.relatedTarget;
       const stay = to && to.closest && (to.closest('.tep-agent-map-marker') || to.closest('.tep-agent-map-tip'));
+      mouseOverWrap = !!stay;
       if (!stay) scheduleHide();
     });
+    // Click (not hover) drives the popover — anywhere in the row except the
+    // name (settings/agent view) or the map/location link (Google Maps).
     tip.addEventListener('click', (e) => {
       if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
       openTipAgent(e.target.closest('.tep-map-tip-agent'), !!e.target.closest('.tep-map-tip-name'));
@@ -16199,7 +16387,13 @@
       }
     });
 
-    host.appendChild(wrap);
+    // Swap the whole map in as one atomic operation — everything above this
+    // point built `wrap` (and everything inside it) fully detached from the
+    // document, so the OLD map (still live in `host` this whole time) stays
+    // up and interactive right up until this line, instead of host sitting
+    // empty (host.innerHTML = '') while ~800 lines of clustering/marker/flow-
+    // overlay setup run. See hadRealMap above for the other half of this fix.
+    host.replaceChildren(wrap);
 
     if (full) {
       // Fullscreen has its own +/- buttons stacked under the minimize button
@@ -16483,6 +16677,17 @@
     if (force || !agents.length) jobs.push(loadAgents().catch(() => {}));
     if (jobs.length) { try { await Promise.all(jobs); } catch (_) {} }
     refreshDashMapViews();
+    // SaaS/Network Health scores are a separate synthetic-dashboard fetch
+    // (see refreshDashMapColorScores) that's otherwise only ever kicked off
+    // by opening the fullscreen map — without this, the sidebar map's
+    // markers stay stuck in the default "no metric" blue on first load (and
+    // after a manual refresh) until fullscreen is opened at least once.
+    // Backgrounded, not awaited: agents/markers should appear right away;
+    // colors then fill in a moment later via an in-place, zoom-preserving
+    // re-render once scores land (refreshDashMapColorScores has its own
+    // internal per-fetch caching, so calling it here even when scores are
+    // already fresh is cheap, not a redundant network round-trip).
+    void refreshDashMapColorScores().then(() => refreshDashMapViews(true)).catch(() => {});
   }
 
   // Re-render whichever dashboard map view(s) are currently visible.
@@ -16496,6 +16701,9 @@
     stopDashWidgetsAutoRefresh();
     dashWidgetsRefreshTimer = setTimeout(() => {
       void fillDashWidgetsAsync();
+      void refreshDashMapColorScores().then(() => {
+        if (dashMapFullEl) renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+      });
       dashWidgetsRefreshTimer = setInterval(() => { void dashFullPeriodicRefresh(); }, 120000);
     }, 3000);
   }
@@ -16517,7 +16725,7 @@
   async function dashFullPeriodicRefresh() {
     void fillDashWidgetsAsync();
     const savedZoom = { s: epDashMapZoom.s, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
-    await Promise.all([loadAgents(), loadEndpointAgents()]);
+    await Promise.all([loadAgents(), loadEndpointAgents(), refreshDashMapColorScores()]);
     epDashMapZoom = savedZoom;
     if (dashMapFullEl) {
       renderDashWidgets(dashMapFullEl.querySelector('#tep-dashmap-widgets'));
@@ -16721,27 +16929,34 @@
         + `<div id="tep-w-events">${tepWidgetPending()}</div>`
         + '</a>'
         + '</div></div>';
-      // Full-width row, own grid line below the 5-column stat row above —
-      // see the "Data Window" comment on DASH_METRICS_WINDOWS for why this
-      // is ordered 24h (left) → Live (right).
+      // Full-width row, own grid line below the 5-column stat row above,
+      // right-justified so it lands on Alerts/Events' own right edge. A
+      // plain dropdown — the value/selected state below is baked in at
+      // render time from dashMetricsWindowIdx, so no further JS is needed
+      // to keep the visible selection in sync (a real <select> already
+      // shows its own chosen option).
+      const hwindowOptionsHtml = DASH_METRICS_WINDOWS.map((w, i) =>
+        `<option value="${i}"${i === dashMetricsWindowIdx ? ' selected' : ''}>${tepEscapeHtmlText(tepMetricsWindowOptionText(w.label))}</option>`
+      ).join('');
       const hwindowHtml = '<div class="tep-dashmap-hwindow" id="tep-dashmap-hwindow">'
         + '<div class="tep-dashmap-hwindow-inner">'
-        + '<div class="tep-dashmap-hwindow-title" id="tep-dashmap-hwindow-title"></div>'
-        + '<div class="tep-dashmap-hwindow-current" id="tep-dashmap-hwindow-current"></div>'
-        + '<div class="tep-dashmap-hwindow-track">'
-        + '<div class="tep-dashmap-hwindow-labels" id="tep-dashmap-hwindow-labels"></div>'
-        + '<div class="tep-dashmap-hwindow-ticks" id="tep-dashmap-hwindow-ticks"></div>'
-        + '<input type="range" id="tep-dashmap-hwindow-input" '
-        + `min="0" max="${DASH_METRICS_WINDOWS.length - 1}" step="1" aria-label="Time window for SaaS Health and Network Health metrics" />`
-        + '</div>'
+        + '<span class="tep-dashmap-hwindow-label">Data Window</span>'
+        + `<select id="tep-dashmap-hwindow-select" class="tep-dashmap-hwindow-select" aria-label="Time window for SaaS Health and Network Health metrics">${hwindowOptionsHtml}</select>`
         + '</div>'
         + '</div>';
       container.innerHTML = col1Html + epHtml
-        + tepWidgetCard('SaaS Health', '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
-        + tepWidgetCard('Network Health', '<div id="tep-w-network">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
+        + tepWidgetCard('SaaS Health',
+          tepWidgetFilterCheckbox('tep-dashmap-color-saas', dashMapColorSource === 'saas', 'tep-dashmap-color-source', 'Color map agents by SaaS Health (default)')
+          + '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
+        + tepWidgetCard('Network Health',
+          tepWidgetFilterCheckbox('tep-dashmap-color-network', dashMapColorSource === 'network', 'tep-dashmap-color-source', 'Color map agents by Network Health')
+          + '<div id="tep-w-network">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
         + alertsEventsHtml
         + hwindowHtml;
       void fillDashWidgetsAsync();
+      void refreshDashMapColorScores().then(() => {
+        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+      });
     } else {
       const col1El = container.querySelector('#tep-dashmap-col1');
       if (col1El) col1El.outerHTML = col1Html;
@@ -16764,6 +16979,10 @@
       container.addEventListener('click', (e) => {
         const radio = e.target.closest('input[type="radio"]');
         if (!radio || radio.dataset.wasChecked !== '1') return;
+        // The color-source group always has exactly one selected (default
+        // 'saas') — unlike type/ISP, there's no "off" state to toggle back
+        // to, so clicking the already-checked one is a no-op.
+        if (radio.name === 'tep-dashmap-color-source') return;
         radio.checked = false;
         if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = null;
         else dashMapAgentTypeFilter = null;
@@ -16775,6 +16994,8 @@
         if (radio.id === 'tep-dashmap-filter-ent') dashMapAgentTypeFilter = 'enterprise';
         else if (radio.id === 'tep-dashmap-filter-ep') dashMapAgentTypeFilter = 'endpoint';
         else if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = radio.dataset.value || null;
+        else if (radio.id === 'tep-dashmap-color-saas') { dashMapColorSource = 'saas'; hideAgentTestsPopover(); }
+        else if (radio.id === 'tep-dashmap-color-network') { dashMapColorSource = 'network'; hideAgentTestsPopover(); }
         else return;
         applyFilterChange();
       });
@@ -16808,35 +17029,30 @@
         const epEl = e.target.closest('#tep-dashmap-widget-ep');
         if (epEl) toggleAgentsListPopover(epEl, 'endpoint');
       });
-      // "Data Window" horizontal slider — unlike the type/ISP radios above,
-      // this never changes which agents/markers exist, only the averaging
-      // window behind the SaaS Health / Network Health widgets (and the
-      // map popover's enterprise-agent HTTP test scores), so it refreshes
-      // just those instead of touching the map at all.
-      const hwInput = container.querySelector('#tep-dashmap-hwindow-input');
-      const hwLabels = container.querySelector('#tep-dashmap-hwindow-labels');
-      const hwTicks = container.querySelector('#tep-dashmap-hwindow-ticks');
-      const hwCurrent = container.querySelector('#tep-dashmap-hwindow-current');
-      const hwTitle = container.querySelector('#tep-dashmap-hwindow-title');
-      hwInput.value = String(dashMetricsWindowIdx);
-      hwInput.title = tepMetricsWindowLabel();
-      hwLabels.innerHTML = tepMetricsWindowLabelsHtml();
-      hwTicks.innerHTML = tepMetricsWindowTicksHtml();
-      hwCurrent.textContent = tepMetricsWindowLabel();
-      hwTitle.textContent = tepMetricsWindowTitleWord();
-      hwInput.addEventListener('input', () => {
-        dashMetricsWindowIdx = parseInt(hwInput.value, 10) || 0;
-        hwInput.title = tepMetricsWindowLabel();
-        hwLabels.innerHTML = tepMetricsWindowLabelsHtml();
-        hwTicks.innerHTML = tepMetricsWindowTicksHtml();
-        hwCurrent.textContent = tepMetricsWindowLabel();
-        hwTitle.textContent = tepMetricsWindowTitleWord();
-        // The by-agent SaaS cache was fetched under the OLD window — must
-        // not be served stale on the next map popover open. (Endpoint HTTP
-        // tests' own cache isn't cleared: that source ignores this slider.)
+      // "Data Window" dropdown — unlike the type/ISP radios above, this
+      // never changes which agents/markers EXIST, only the averaging window
+      // behind the SaaS Health / Network Health widgets, the map popover's
+      // enterprise-agent test scores, AND (since marker COLOR now comes from
+      // these same windowed aggregate scores) every marker's color — so it
+      // refreshes the widgets and recolors the map in place, without a full
+      // agent-list rebuild. The select's own displayed value already reflects
+      // dashMetricsWindowIdx (baked into the markup above at render time), so
+      // there's nothing to sync here beyond reacting to a change.
+      const hwSelect = container.querySelector('#tep-dashmap-hwindow-select');
+      hwSelect.addEventListener('change', () => {
+        dashMetricsWindowIdx = parseInt(hwSelect.value, 10) || 0;
+        // The by-agent SaaS/Network caches were fetched under the OLD window
+        // — must not be served stale on the next map popover open or marker
+        // repaint. (Endpoint HTTP tests' own cache isn't cleared: that source
+        // ignores this dropdown entirely.)
         tepHttpAvailByAgentCache = null;
+        tepNetHealthByAgentCache = null;
+        tepNetTestsByAgentCache = null;
         void fillSaasHealthWidget();
         void fillNetworkHealthWidget();
+        void refreshDashMapColorScores().then(() => {
+          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+        });
       });
     }
   }
@@ -17105,25 +17321,31 @@
     }
     return { headerCols, dataLines, names };
   }
-  const tepEpAppScoreByAgentCache = new Map(); // `${agentId}|${windowSec}` -> { ts, score }
+  let tepAllEpAppScoresCache = null; // { ts, windowSec, byAgent: Map<agentId, score> }
   const TEP_EP_APP_SCORE_CACHE_MS = 2 * 60 * 1000;
-  /** Endpoint agents' OVERALL HTTP application score (every HTTP-adjacent
-   *  test blended into one number), for a real Data Window (1h/4h/12h/24h) —
-   *  the windowed counterpart to tepFetchHttpTestsForEndpointAgent's per-test
-   *  "Live" breakdown, which has no windowed equivalent. Uses metric
-   *  ENDPOINT_TEST_HTTP_APPLICATION_SCORE against the ENDPOINT_AGENTS data
-   *  source, grouped by EYEBROW_MACHINE_ID — CONFIRMED via live capture to
-   *  work with a synthetic dashboardId/widgetId (same "no real dashboard
-   *  needed" behavior as the enterprise NAS fetches). UNLIKE those, there is
-   *  NO confirmed way to also break this down by test: the real per-test
-   *  drill-down endpoint (dash-api/dash/drill-down) CONFIRMED via live
-   *  capture to 404 without an actual saved dashboard widget to drill into —
-   *  not usable here. So this deliberately returns one blended number, not a
-   *  list, unlike every other fetch in this file. */
-  async function tepFetchEndpointAgentAppScore(agentId) {
-    const cacheKey = `${agentId}|${tepMetricsWindowSec()}`;
-    const cached = tepEpAppScoreByAgentCache.get(cacheKey);
-    if (cached && (Date.now() - cached.ts) < TEP_EP_APP_SCORE_CACHE_MS) return cached.score;
+  /** ALL endpoint agents' OVERALL HTTP application score (every HTTP-adjacent
+   *  test blended into one number per agent), for a real Data Window
+   *  (1h/4h/12h/24h) — the windowed counterpart to
+   *  tepFetchHttpTestsForEndpointAgent's per-test "Live" breakdown, which has
+   *  no windowed equivalent. Uses metric ENDPOINT_TEST_HTTP_APPLICATION_SCORE
+   *  against the ENDPOINT_AGENTS data source, grouped by EYEBROW_MACHINE_ID —
+   *  CONFIRMED via live capture to work with a synthetic dashboardId/widgetId
+   *  (same "no real dashboard needed" behavior as the enterprise NAS
+   *  fetches), and to return EVERY agent's row in one call (the
+   *  generalFilter's values are already [] = "all agents" — one fetch here
+   *  serves both this map-wide coloring use and tepFetchEndpointAgentAppScore's
+   *  single-agent popover use, instead of one request per agent). UNLIKE the
+   *  enterprise NAS fetches, there is NO confirmed way to also break this down
+   *  by test: the real per-test drill-down endpoint (dash-api/dash/drill-down)
+   *  CONFIRMED via live capture to 404 without an actual saved dashboard
+   *  widget to drill into — not usable here. So this deliberately returns one
+   *  blended number per agent, not a per-test list. */
+  async function tepFetchAllEndpointAgentAppScores() {
+    const windowSec = tepMetricsWindowSec();
+    if (tepAllEpAppScoresCache && tepAllEpAppScoresCache.windowSec === windowSec
+        && (Date.now() - tepAllEpAppScoresCache.ts) < TEP_EP_APP_SCORE_CACHE_MS) {
+      return tepAllEpAppScoresCache.byAgent;
+    }
     const body = {
       aggregateProperties: ['EYEBROW_MACHINE_ID'],
       isToAggregateOnTime: true,
@@ -17139,7 +17361,7 @@
       parentWidgetId: null,
       shouldConvertAlertStoreToStore: true,
       storeMap: {},
-      timeSpanConfig: { now: Date.now(), last: tepMetricsWindowSec(), useGlobalTimespan: false },
+      timeSpanConfig: { now: Date.now(), last: windowSec, useGlobalTimespan: false },
       widgetId: 'tep-ep-http-score',
       widgetType: 'multi-metric-table',
     };
@@ -17161,17 +17383,96 @@
     const idCol = parsed.headerCols.indexOf('EYEBROW_MACHINE_ID');
     const valCol = parsed.headerCols.indexOf('v');
     if (idCol === -1 || valCol === -1) { log('Endpoint app score: unexpected columns', 'tep-log-info'); return null; }
-    let score = null;
+    const byAgent = new Map();
     for (const row of parsed.dataLines) {
-      if (row[idCol] === agentId) {
-        const v = Number(row[valCol]);
-        if (Number.isFinite(v)) score = v;
-        break;
-      }
+      const v = Number(row[valCol]);
+      if (row[idCol] && Number.isFinite(v)) byAgent.set(row[idCol], v);
     }
-    tepEpAppScoreByAgentCache.set(cacheKey, { ts: Date.now(), score });
-    log(`Endpoint app score: agent ${agentId} → ${score != null ? score.toFixed(2) : 'no data'}`, 'tep-log-ok');
-    return score;
+    tepAllEpAppScoresCache = { ts: Date.now(), windowSec, byAgent };
+    log(`Endpoint app score: ${byAgent.size} agent(s)`, 'tep-log-ok');
+    return byAgent;
+  }
+  /** One endpoint agent's overall HTTP application score — thin wrapper
+   *  around tepFetchAllEndpointAgentAppScores (see its comment) for the
+   *  per-agent popover, which only ever needs one row out of that same
+   *  already-cached bulk fetch. */
+  async function tepFetchEndpointAgentAppScore(agentId) {
+    const byAgent = await tepFetchAllEndpointAgentAppScores().catch(() => null);
+    if (!byAgent) return null;
+    return byAgent.has(agentId) ? byAgent.get(agentId) : null;
+  }
+
+  let tepAllEpNetScoresCache = null; // { ts, windowSec, byAgent: Map<agentId, score> }
+  const TEP_EP_NET_SCORE_CACHE_MS = 2 * 60 * 1000;
+  /** ALL endpoint agents' network-path health, for Network Health mode's
+   *  windowed Data Window support — same dashboard-independent data-stream
+   *  technique as tepFetchAllEndpointAgentAppScores (mirrored structurally),
+   *  but metric ENDPOINT_TEST_APPLICATION_SCORE — despite the "APPLICATION"
+   *  name (this metric predates a rename, or was simply misnamed by TE), a
+   *  user cross-check against known network-path-vs-app-layer symptoms on
+   *  several agents CONFIRMED this is actually a loss/latency network-path
+   *  blend, not an application score. There's still no confirmed per-test
+   *  breakdown for it (same drill-down 404 limitation as the HTTP app
+   *  score), so — like that one — this returns one blended number per
+   *  agent, not a per-test list. */
+  async function tepFetchAllEndpointAgentNetScores() {
+    const windowSec = tepMetricsWindowSec();
+    if (tepAllEpNetScoresCache && tepAllEpNetScoresCache.windowSec === windowSec
+        && (Date.now() - tepAllEpNetScoresCache.ts) < TEP_EP_NET_SCORE_CACHE_MS) {
+      return tepAllEpNetScoresCache.byAgent;
+    }
+    const body = {
+      aggregateProperties: ['EYEBROW_MACHINE_ID'],
+      isToAggregateOnTime: true,
+      aggregationType: 'MEAN',
+      metric: 'ENDPOINT_TEST_APPLICATION_SCORE',
+      dashboardId: null,
+      dataSourceFilters: {
+        dataSourceId: 'ENDPOINT_AGENTS',
+        filters: [
+          { filterId: 'EYEBROW_MACHINE_ID', metricIds: ['ENDPOINT_TEST_APPLICATION_SCORE'], values: [], generalFilter: { filterDimensionId: 'EYEBROW_MACHINE_ID', operator: 'IN', values: [] } },
+        ],
+      },
+      parentWidgetId: null,
+      shouldConvertAlertStoreToStore: true,
+      storeMap: {},
+      timeSpanConfig: { now: Date.now(), last: windowSec, useGlobalTimespan: false },
+      widgetId: 'tep-ep-net-score',
+      widgetType: 'multi-metric-table',
+    };
+    const url = `${TEP_DASH_DATA_STREAM_PATH}?widgetId=tep-ep-net-score&metricId=ENDPOINT_TEST_APPLICATION_SCORE&__bg=1`;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`Endpoint network score: fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Endpoint network score: fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    const parsed = tepParseDataStreamText(text);
+    if (!parsed || !parsed.headerCols) { log('Endpoint network score: unparseable response', 'tep-log-info'); return null; }
+    const idCol = parsed.headerCols.indexOf('EYEBROW_MACHINE_ID');
+    const valCol = parsed.headerCols.indexOf('v');
+    if (idCol === -1 || valCol === -1) { log('Endpoint network score: unexpected columns', 'tep-log-info'); return null; }
+    const byAgent = new Map();
+    for (const row of parsed.dataLines) {
+      const v = Number(row[valCol]);
+      if (row[idCol] && Number.isFinite(v)) byAgent.set(row[idCol], v);
+    }
+    tepAllEpNetScoresCache = { ts: Date.now(), windowSec, byAgent };
+    log(`Endpoint network score: ${byAgent.size} agent(s)`, 'tep-log-ok');
+    return byAgent;
+  }
+  /** One endpoint agent's network-path score — thin wrapper around
+   *  tepFetchAllEndpointAgentNetScores for the per-agent popover. */
+  async function tepFetchEndpointAgentNetScore(agentId) {
+    const byAgent = await tepFetchAllEndpointAgentNetScores().catch(() => null);
+    if (!byAgent) return null;
+    return byAgent.has(agentId) ? byAgent.get(agentId) : null;
   }
 
   /** Same dashboard-independent mechanism as tepFetchAllHttpAvailability
@@ -17266,6 +17567,193 @@
     const avgSev = breakdown.reduce((s, r) => s + r.sev, 0) / breakdown.length;
     log(`Network Health: averaged ${breakdown.length} Network test(s) directly (no dashboard) → ${Math.round((1 - avgSev) * 100)} health`, 'tep-log-ok');
     return { avgSev, count: breakdown.length, breakdown };
+  }
+
+  // Same request shape as tepFetchNasMetricAllTests (already grouped by BOTH
+  // NAS-TEST and NAS-AGENT — columnGroupBy: 'NAS-AGENT' — that function just
+  // never reads the agent dimension out of its points). This reuses the
+  // identical fetch and keeps the agent breakdown instead, collapsing across
+  // tests, to drive per-agent map marker coloring under Network Health.
+  // ENTERPRISE AGENTS ONLY — same NAS-AGENT-never-carries-endpoint-agents
+  // limitation as tepFetchHttpAvailabilityByAgent; there is no confirmed
+  // per-agent Network Health metric for endpoint agents (see
+  // dashMapEntNetScoreByName's declaration comment). Keyed by UPPER-CASED
+  // agent display name, same convention as tepFetchHttpAvailabilityByAgent.
+  async function tepFetchNasMetricByAgent(metric) {
+    const fakeNode = {
+      widgetId: 'tep-nethealth-byagent-' + metric, id: 'tep-nethealth-byagent-' + metric, type: 'table',
+      config: {
+        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
+        metric, filters: {}, generalFilters: {},
+        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
+      },
+    };
+    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
+    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
+    const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
+    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`Network Health by-agent: ${metric} fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Network Health by-agent: ${metric} fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    let json;
+    try { json = JSON.parse(text); } catch (_) { log(`Network Health by-agent: non-JSON ${metric} response`, 'tep-log-info'); return null; }
+    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
+    if (!points || !points.length) return new Map();
+    const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
+    const byAgent = new Map();
+    for (const p of points) {
+      if (!p || !p.aggIds) continue;
+      const agentId = p.aggIds['NAS-AGENT'];
+      const v = Number(p.v);
+      if (agentId == null || !Number.isFinite(v)) continue;
+      const agentName = agentNames[agentId];
+      if (!agentName) continue;
+      const key = String(agentName).toUpperCase();
+      if (!byAgent.has(key)) byAgent.set(key, []);
+      byAgent.get(key).push(v);
+    }
+    return byAgent;
+  }
+  let tepNetHealthByAgentCache = null; // { ts, byAgent: Map<UPPER(name), 0-100> }
+  const TEP_NET_HEALTH_BY_AGENT_CACHE_MS = 2 * 60 * 1000;
+  /** Per-enterprise-agent Network Health score, same lenient-latency/hard-loss
+   *  blend tepFetchAllNetworkHealth uses per-test — just collapsed across
+   *  tests to one number per agent instead of per test. Backs marker
+   *  coloring when dashMapColorSource === 'network'. */
+  async function tepFetchNetworkHealthByAgent(force) {
+    if (!force && tepNetHealthByAgentCache && (Date.now() - tepNetHealthByAgentCache.ts) < TEP_NET_HEALTH_BY_AGENT_CACHE_MS) {
+      return tepNetHealthByAgentCache.byAgent;
+    }
+    const [latByAgent, lossByAgent] = await Promise.all([
+      tepFetchNasMetricByAgent('NAS-NET_LATENCY'),
+      tepFetchNasMetricByAgent('NAS-NET_LOSS'),
+    ]);
+    if (!latByAgent && !lossByAgent) return null;
+    const names = new Set([...(latByAgent ? latByAgent.keys() : []), ...(lossByAgent ? lossByAgent.keys() : [])]);
+    const byAgent = new Map();
+    for (const name of names) {
+      const latVals = latByAgent && latByAgent.get(name);
+      const lossVals = lossByAgent && lossByAgent.get(name);
+      const avgLat = latVals && latVals.length ? latVals.reduce((s, x) => s + x, 0) / latVals.length : null;
+      const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
+      if (avgLat == null && avgLoss == null) continue;
+      const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
+      const latSevLenient = latSevRaw * 0.65;
+      const latencyScore = (1 - latSevLenient) * 100;
+      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2) : 0;
+      const score = Math.max(0, Math.round(latencyScore - lossPenalty));
+      byAgent.set(name, score);
+    }
+    tepNetHealthByAgentCache = { ts: Date.now(), byAgent };
+    log(`Network Health by-agent: ${byAgent.size} agent(s)`, 'tep-log-ok');
+    return byAgent;
+  }
+
+  /** Same request shape as tepFetchNasMetricByAgent, but keeps the NAS-TEST
+   *  dimension instead of collapsing across tests — that one is enough for
+   *  marker coloring (one number per agent), but the map popover's per-agent
+   *  TEST LIST (dashMapColorSource === 'network') needs the individual tests.
+   *  Returns Map<UPPER agent name, Map<testId, {name, value}>>. */
+  async function tepFetchNasMetricPointsByAgent(metric) {
+    const fakeNode = {
+      widgetId: 'tep-nettests-byagent-' + metric, id: 'tep-nettests-byagent-' + metric, type: 'table',
+      config: {
+        aggregateProperties: [], isToAggregateOnTime: true, aggregationType: 'NAS-MEAN',
+        metric, filters: {}, generalFilters: {},
+        rowGroupBy: 'NAS-TEST', columnGroupBy: 'NAS-AGENT',
+      },
+    };
+    const entry = { node: fakeNode, parent: null, metricDeclarer: fakeNode, metric };
+    const fakeDash = { defaultTimespan: { timespanDuration: tepMetricsWindowSec() } };
+    const body = tepBuildWidgetDataBody(entry, fakeDash, null, [metric]);
+    const url = `${TEP_DASH_DATA_PATH}?noCache=1&widgetId=${encodeURIComponent(fakeNode.widgetId)}&metricId=${encodeURIComponent(metric)}&__bg=1`;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`Network tests by-agent: ${metric} fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Network tests by-agent: ${metric} fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    let json;
+    try { json = JSON.parse(text); } catch (_) { log(`Network tests by-agent: non-JSON ${metric} response`, 'tep-log-info'); return null; }
+    const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : null;
+    if (!points || !points.length) return new Map();
+    const testNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
+    const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
+    const byAgent = new Map();
+    for (const p of points) {
+      if (!p || !p.aggIds) continue;
+      const testId = p.aggIds['NAS-TEST'];
+      const agentId = p.aggIds['NAS-AGENT'];
+      const v = Number(p.v);
+      if (testId == null || agentId == null || !Number.isFinite(v)) continue;
+      const agentName = agentNames[agentId];
+      if (!agentName) continue;
+      const key = String(agentName).toUpperCase();
+      if (!byAgent.has(key)) byAgent.set(key, new Map());
+      byAgent.get(key).set(String(testId), { name: testNames[testId] || `Test ${testId}`, value: v });
+    }
+    return byAgent;
+  }
+  let tepNetTestsByAgentCache = null; // { ts, byAgent: Map<UPPER(name), [{title,value,testId}]> }
+  const TEP_NET_TESTS_BY_AGENT_CACHE_MS = 2 * 60 * 1000;
+  /** Per-enterprise-agent Network Health TEST LIST (not collapsed to one
+   *  number like tepFetchNetworkHealthByAgent) — same lenient-latency/
+   *  hard-loss per-test blend tepFetchAllNetworkHealth uses, just broken out
+   *  per agent instead of averaged across all of them. Backs the map
+   *  popover's test list when dashMapColorSource === 'network'. ENTERPRISE
+   *  ONLY, same NAS-AGENT limitation as everywhere else in this file. */
+  async function tepFetchNetworkTestsByAgent(force) {
+    if (!force && tepNetTestsByAgentCache && (Date.now() - tepNetTestsByAgentCache.ts) < TEP_NET_TESTS_BY_AGENT_CACHE_MS) {
+      return tepNetTestsByAgentCache.byAgent;
+    }
+    const [latByAgent, lossByAgent] = await Promise.all([
+      tepFetchNasMetricPointsByAgent('NAS-NET_LATENCY'),
+      tepFetchNasMetricPointsByAgent('NAS-NET_LOSS'),
+    ]);
+    if (!latByAgent && !lossByAgent) return null;
+    const agentNames = new Set([...(latByAgent ? latByAgent.keys() : []), ...(lossByAgent ? lossByAgent.keys() : [])]);
+    const byAgent = new Map();
+    for (const agentName of agentNames) {
+      const latTests = latByAgent && latByAgent.get(agentName);
+      const lossTests = lossByAgent && lossByAgent.get(agentName);
+      const testIds = new Set([...(latTests ? latTests.keys() : []), ...(lossTests ? lossTests.keys() : [])]);
+      const rows = [];
+      for (const testId of testIds) {
+        const lat = latTests && latTests.get(testId);
+        const loss = lossTests && lossTests.get(testId);
+        const avgLat = lat ? lat.value : null;
+        const avgLoss = loss ? loss.value : null;
+        if (avgLat == null && avgLoss == null) continue;
+        const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
+        const latSevLenient = latSevRaw * 0.65;
+        const latencyScore = (1 - latSevLenient) * 100;
+        const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2) : 0;
+        const score = Math.max(0, Math.round(latencyScore - lossPenalty));
+        rows.push({ title: (lat || loss).name, value: score, testId });
+      }
+      if (rows.length) {
+        rows.sort((a, b) => a.value - b.value);
+        byAgent.set(agentName, rows);
+      }
+    }
+    tepNetTestsByAgentCache = { ts: Date.now(), byAgent };
+    log(`Network tests by-agent: ${byAgent.size} agent(s)`, 'tep-log-ok');
+    return byAgent;
   }
 
   // Shared "red floor" for SaaS/Network Health's smooth colour gradients —
@@ -17381,12 +17869,17 @@
   // map hover card toggles it closed instead of re-opening.
   let tepAgentTestsPopoverEl = null;
   let tepAgentTestsPopoverAgent = null;
+  // Optional callback the map hover card arms right before opening this
+  // submenu, so it can re-evaluate its own hide timer once this closes (see
+  // scheduleHide's tepAgentTestsPopoverEl check in renderDashboardAgentMap).
+  let tepAgentTestsPopoverOnClose = null;
   function hideAgentTestsPopover() {
     if (tepAgentTestsPopoverEl) { try { tepAgentTestsPopoverEl.remove(); } catch (_) { /* */ } }
     tepAgentTestsPopoverEl = null;
     tepAgentTestsPopoverAgent = null;
     document.removeEventListener('click', tepAgentTestsPopoverOutsideClick, true);
     document.removeEventListener('keydown', tepAgentTestsPopoverEscHandler, true);
+    if (tepAgentTestsPopoverOnClose) { const cb = tepAgentTestsPopoverOnClose; tepAgentTestsPopoverOnClose = null; cb(); }
   }
   function tepAgentTestsPopoverOutsideClick(e) {
     if (tepAgentTestsPopoverEl && !tepAgentTestsPopoverEl.contains(e.target) && !e.target.closest('.tep-map-tip-agent')) hideAgentTestsPopover();
@@ -17404,10 +17897,20 @@
    *  so they share this rendering. */
   async function toggleAgentTestsPopover(anchorEl, it) {
     const agentName = (it && it.name) || 'Agent';
-    if (tepAgentTestsPopoverEl) {
-      const wasSameAgent = tepAgentTestsPopoverAgent === agentName;
+    if (tepAgentTestsPopoverEl && tepAgentTestsPopoverAgent === agentName) {
       hideAgentTestsPopover();
-      if (wasSameAgent) return;
+      return;
+    }
+    return openAgentTestsPopover(anchorEl, it);
+  }
+  // Same submenu, but idempotent instead of toggling — used by hover-
+  // triggered opens (the SaaS/Network Health row), where re-firing on every
+  // mouseover must never close a popover it just opened.
+  async function openAgentTestsPopover(anchorEl, it) {
+    const agentName = (it && it.name) || 'Agent';
+    if (tepAgentTestsPopoverEl) {
+      if (tepAgentTestsPopoverAgent === agentName) return; // already open for this agent
+      hideAgentTestsPopover(); // a different agent's popover is open — swap it
     }
     if (!anchorEl) return;
     const pop = document.createElement('div');
@@ -17431,25 +17934,43 @@
       document.addEventListener('click', tepAgentTestsPopoverOutsideClick, true);
       document.addEventListener('keydown', tepAgentTestsPopoverEscHandler, true);
     }, 0);
+    // Which metric family this popover shows — matches whichever aggregate
+    // score is currently coloring the map (dashMapColorSource), so the list
+    // you get here always matches what you just saw color the marker.
+    const isNetwork = dashMapColorSource === 'network';
+    const metricLabel = isNetwork ? 'Network' : 'HTTP';
     let rows;
     if (it && it.kind === 'endpoint' && it.agentId != null) {
-      if (tepMetricsWindowLabel() === 'Live') {
+      if (isNetwork) {
+        // Same "no confirmed per-test breakdown" limitation as the HTTP
+        // score below (drill-down 404s without a real saved widget) — one
+        // blended row via tepFetchAllEndpointAgentNetScores instead of a
+        // per-test list, on every window (no confirmed live-round source for
+        // this metric either, unlike the HTTP side's segment-visualisation
+        // path — see tepFetchAllEndpointAgentNetScores' comment).
+        const score = await tepFetchEndpointAgentNetScore(it.agentId).catch(() => null);
+        const agentUrl = (it.url && it.url !== '#') ? it.url : null;
+        rows = score != null ? [{ title: 'Overall Network Score', value: score, testId: null, url: agentUrl }] : null;
+      } else if (tepMetricsWindowLabel() === 'Live') {
         rows = await tepFetchHttpTestsForEndpointAgent(it.agentId).catch(() => null);
       } else {
         // No confirmed per-test windowed source for endpoint agents (see
         // tepFetchEndpointAgentAppScore's comment) — one blended row instead
-        // of a real per-test list.
+        // of a real per-test list. Links to the agent's own view page, same
+        // URL (live-test result if one's active, else the base agent view)
+        // clicking the agent's NAME in the hover card already opens.
         const score = await tepFetchEndpointAgentAppScore(it.agentId).catch(() => null);
-        rows = score != null ? [{ title: 'Overall HTTP Application Score', value: score, testId: null, url: null }] : null;
+        const agentUrl = (it.url && it.url !== '#') ? it.url : null;
+        rows = score != null ? [{ title: 'Overall HTTP Application Score', value: score, testId: null, url: agentUrl }] : null;
       }
     } else {
-      const byAgent = await tepFetchHttpAvailabilityByAgent().catch(() => null);
+      const byAgent = await (isNetwork ? tepFetchNetworkTestsByAgent() : tepFetchHttpAvailabilityByAgent()).catch(() => null);
       rows = (byAgent && byAgent.get(String(agentName).toUpperCase())) || null;
     }
     if (tepAgentTestsPopoverEl !== pop) return; // closed (or reopened for another agent) while this was in flight
     if (!rows || !rows.length) {
-      pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s HTTP tests</div>`
-        + '<div class="tep-saas-breakdown-list"><div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">No HTTP Server tests found for this agent</div></div>';
+      pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s ${metricLabel} tests</div>`
+        + `<div class="tep-saas-breakdown-list"><div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">No ${isNetwork ? 'Network' : 'HTTP Server'} tests found for this agent</div></div>`;
       positionPop();
       return;
     }
@@ -17462,19 +17983,22 @@
       // don't, since they're shared cache entries covering every agent that
       // ran the test; filter to THIS popover's agent here instead of baking
       // one agent's id into the shared row.
-      const url = r.url || buildEnterpriseHttpTestAgentUrl(r.testId, it && it.agentId);
+      const url = r.url || (isNetwork
+        ? buildEnterpriseNetworkTestAgentUrl(r.testId, it && it.agentId)
+        : buildEnterpriseHttpTestAgentUrl(r.testId, it && it.agentId));
       const tag = url ? 'a' : 'div';
       const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
       return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
     }).join('');
-    // Endpoint agents: "live round" on Live (segment-visualisation), or a
-    // note that this is one blended score (not per-test) on any other
-    // window (see tepFetchEndpointAgentAppScore). Enterprise always follows
-    // the Data Window slider with a real per-test breakdown.
+    // Endpoint agents: "live round" on Live for HTTP (segment-visualisation)
+    // — Network mode has no live-round source, so it always shows the
+    // windowed blended-score note, even when the dropdown says "Live" (see
+    // tepFetchAllEndpointAgentNetScores). Enterprise always follows the Data
+    // Window slider with a real per-test breakdown.
     const windowNote = (it && it.kind === 'endpoint')
-      ? (tepMetricsWindowLabel() === 'Live' ? 'live round' : `${tepMetricsWindowPhrase()}, overall score only`)
+      ? (!isNetwork && tepMetricsWindowLabel() === 'Live' ? 'live round' : `${tepMetricsWindowPhrase()}, overall score only`)
       : tepMetricsWindowPhrase();
-    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s HTTP tests`
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s ${metricLabel} tests`
       + `<span class="tep-saas-breakdown-hint">worst score first (${tepEscapeHtmlText(windowNote)}) · click a row to open the test</span></div>`
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     positionPop(); // real content likely changed height vs the loading placeholder
@@ -17975,6 +18499,34 @@
         ? `<div class="tep-dash-widget-main">${e.active}<small> events</small></div><div class="tep-dash-widget-sub" title="High-impact events (nesx-api)">high impact</div>`
         : tepWidgetPending();
     }
+  }
+
+  /** Refreshes the per-agent aggregate scores that color every map marker
+   *  (dashMapEntSaasScoreByName/dashMapEpSaasScoreByAgentId/
+   *  dashMapEntNetScoreByName/dashMapEpNetScoreByAgentId) — fetched together
+   *  regardless of which dashMapColorSource is currently active, so flipping
+   *  that radio recolors the map instantly with no fetch delay. Called on
+   *  initial map build, on every Data Window slider change (these are all
+   *  windowed), and on the periodic refresh. Does NOT re-render the map
+   *  itself — callers do that once this resolves. */
+  async function refreshDashMapColorScores() {
+    const [entSaasByAgent, epSaasByAgent, entNetByAgent, epNetByAgent] = await Promise.all([
+      tepFetchHttpAvailabilityByAgent().catch(() => null),
+      tepFetchAllEndpointAgentAppScores().catch(() => null),
+      tepFetchNetworkHealthByAgent().catch(() => null),
+      tepFetchAllEndpointAgentNetScores().catch(() => null),
+    ]);
+    const saasByName = new Map();
+    if (entSaasByAgent) {
+      for (const [name, rows] of entSaasByAgent) {
+        if (!rows || !rows.length) continue;
+        saasByName.set(name, rows.reduce((s, r) => s + (Number(r.value) || 0), 0) / rows.length);
+      }
+    }
+    dashMapEntSaasScoreByName = saasByName;
+    dashMapEpSaasScoreByAgentId = epSaasByAgent || new Map();
+    dashMapEntNetScoreByName = entNetByAgent || new Map();
+    dashMapEpNetScoreByAgentId = epNetByAgent || new Map();
   }
   const TEP_ALERTS_SEARCH_PATH = '/namespace/alerts/alert-service/alerts/_search';
   const TEP_ALERTS_LIST_PATH = '/namespace/alerts/alert-service/alerts';
