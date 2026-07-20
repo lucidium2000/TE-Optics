@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.33';
+  const TEP_VERSION = '3.34';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -21488,16 +21488,45 @@
 
   /** Per-poll: pull per-agent latency (+ 8.8.8.8 destination geo) for whichever
    *  of the enterprise instant / endpoint run-once are active → map labels. */
+  /** Enterprise agent ids from `agentIds` still worth polling — excludes any
+   *  agent that already has BOTH a latency reading AND a CONFIRMED
+   *  (non-estimated) destination PoP. That agent's picture for this run is
+   *  effectively complete: further polling would only refresh a number that,
+   *  for the timescale of a LIVE TEST, is unlikely to move, at the cost of
+   *  its own pair of requests every remaining tick. Trade-off: if that
+   *  agent's route genuinely changes mid-run, this won't catch it — the
+   *  final sync (liveTestSyncNodes, called at completion + the +5s catch-up)
+   *  deliberately does NOT use this filter, so the closing numbers always
+   *  reflect one last poll of every agent regardless. Endpoint agents aren't
+   *  filtered this way — their latency already comes from a single batched
+   *  call for the whole fleet, not one pair of requests per agent, so
+   *  skipping individual agents there wouldn't reduce the call count. */
+  function liveTestPendingEnterpriseIds(agentIds) {
+    return agentIds.filter((id) => {
+      const key = String(id);
+      const e = liveTestLatency.get(key);
+      const hasLatency = !!(e && Number.isFinite(e.ms));
+      const dest = liveTestDestByAgent.get(key);
+      const hasConfirmedDest = !!(dest && !dest.estimated);
+      return !(hasLatency && hasConfirmedDest);
+    });
+  }
   async function liveTestPoll(results, startedAt) {
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
     let gotAny = false;
     if (results.entOk && results.entTestId != null) {
+      const pendingIds = liveTestPendingEnterpriseIds(results.entAgentIds);
+      const skipped = results.entAgentIds.length - pendingIds.length;
       let n = 0;
-      try { n = await liveTestFetchEnterpriseLatency(results.entTestId, results.entAgentIds); } catch (_) { n = 0; }
-      log(`LIVE TEST poll @${elapsed}s: enterprise agents with latency=${n}`, 'tep-log-info');
+      if (pendingIds.length) {
+        try { n = await liveTestFetchEnterpriseLatency(results.entTestId, pendingIds); } catch (_) { n = 0; }
+      }
+      log(`LIVE TEST poll @${elapsed}s: enterprise agents with latency=${n}${skipped ? ` (${skipped} already resolved, skipped)` : ''}`, 'tep-log-info');
       // Resolve each agent's real 8.8.8.8 final-hop location from the path-vis graph.
       let destN = 0;
-      try { destN = await liveTestFetchPathVisDest(results.entTestId, results.entAgentIds); } catch (_) { destN = 0; }
+      if (pendingIds.length) {
+        try { destN = await liveTestFetchPathVisDest(results.entTestId, pendingIds); } catch (_) { destN = 0; }
+      }
       if (n || destN) gotAny = true;
     }
     if (results.epOk && results.epTestId != null && results.epAgentIds.length) {
