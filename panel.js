@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.34';
+  const TEP_VERSION = '3.35';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2623,23 +2623,6 @@
       background: rgba(148,163,184,.08); font-size: 10.5px; color: #94a3b8;
     }
     .tep-map-tip-metricrow b { font-weight: 700; }
-    /* Individual endpoint HTTP test rows under the Application Health
-       metricrow — a compact, scrollable sub-list rather than capped/hidden,
-       since an agent can have many HTTP tests. */
-    .tep-map-tip-tests-head {
-      margin-top: 5px; font-size: 9.5px; font-weight: 700; letter-spacing: .03em;
-      text-transform: uppercase; color: #64748b;
-    }
-    .tep-map-tip-tests {
-      display: flex; flex-direction: column; gap: 1px; margin-top: 2px;
-      max-height: 84px; overflow-y: auto; overscroll-behavior: contain;
-    }
-    .tep-map-tip-test-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 1px 2px; font-size: 10px; color: #94a3b8;
-    }
-    .tep-map-tip-test-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tep-map-tip-test-row b { font-weight: 700; flex-shrink: 0; }
     .tep-map-tip-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
     .tep-map-tip-labels span { background: #334155; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #cbd5e1; }
     .tep-map-tip-more { color: #64748b; margin-top: 4px; }
@@ -15066,14 +15049,12 @@
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.id, latencyMs: liveTestLatencyFor(a.id),
         ip: a.ip || '', localIp: a.localIp || '', users: a.users || [],
-        // cpu/ram/disk/battery/connKind/vpn/httpTests are only present once
-        // this agent has been enriched (segment-visualisation) — lazily,
-        // on-demand, via showTip()'s own enrichment call when its hover card
-        // first opens.
+        // cpu/ram/disk/battery/connKind/vpn are only present once this agent
+        // has been enriched (segment-visualisation) — lazily, on-demand, via
+        // showTip()'s own enrichment call when its hover card first opens.
         cpu: a.cpu || null, ram: a.ram || null, disk: a.disk || null, battery: a.battery || null,
         batteryHealthPct: a.batteryHealthPct,
         connKind: a.connKind || null, vpn: a.vpn === true,
-        httpTests: Array.isArray(a.httpTests) ? a.httpTests : null,
       });
     }
     return { list, entTotal, entMapped, epTotal, epMapped };
@@ -15191,24 +15172,6 @@
     const metricRowHtml = '<div class="tep-map-tip-metricrow">'
       + `<span>${tepEscapeHtmlText(metricLabel)}</span><b style="color:${metricColor}">${tepEscapeHtmlText(metricText)}</b>`
       + '</div>';
-    // Individual endpoint HTTP tests — shown inline (not just behind a click
-    // into the test-list popover) once this agent's segment-visualisation
-    // enrichment resolves, same lazy fetch/cache that already populates
-    // CPU/RAM/battery above (see applySegmentMetricsToAgent). Unlike
-    // Application Health above, this always reflects the LATEST round — it
-    // does not respect the Data Window dropdown, because there's no
-    // confirmed per-test drill-down API for endpoint agents at all (see
-    // tepFetchAllEndpointAgentAppScores' comment); showing it unconditionally
-    // (any window) is the only way this data is available at all.
-    const httpTestsHtml = (it.kind === 'endpoint' && Array.isArray(it.httpTests) && it.httpTests.length)
-      ? '<div class="tep-map-tip-tests-head" title="Latest round — independent of the Data Window setting above">HTTP tests (latest)</div>'
-        + '<div class="tep-map-tip-tests">'
-        + it.httpTests.map((t) => {
-          const c = tepColorFromScore(t.value).fill;
-          return `<div class="tep-map-tip-test-row"><span>${tepEscapeHtmlText(t.title)}</span><b style="color:${c}">${t.value.toFixed(1)}%</b></div>`;
-        }).join('')
-        + '</div>'
-      : '';
     return `<div class="${cls}"${attrs}>
       <div class="tep-map-tip-name">${typeIcon}${tepEscapeHtmlText(it.name)}${badge}${geo}</div>
       ${userSeenHtml}
@@ -15217,7 +15180,6 @@
       ${ispHtml}
       ${metricsHtml}
       ${metricRowHtml}
-      ${httpTestsHtml}
       ${destHtml}
     </div>`;
   }
@@ -17156,8 +17118,11 @@
    *  (same "no real dashboard needed" behavior as the enterprise NAS
    *  fetches), and to return EVERY agent's row in one call (the
    *  generalFilter's values are already [] = "all agents" — one fetch here
-   *  serves both this map-wide coloring use and tepFetchEndpointAgentAppScore's
-   *  single-agent popover use, instead of one request per agent). UNLIKE the
+   *  covers the whole fleet's map coloring instead of one request per agent).
+   *  Feeds ONLY the Application Health score on the hover card/marker color —
+   *  the per-agent tests popover always shows the live round instead (see
+   *  tepFetchHttpTestsForEndpointAgent), since that's real per-test data
+   *  where this is only ever a single blended number. UNLIKE the
    *  enterprise NAS fetches, there is NO confirmed way to also break this down
    *  by test: the real per-test drill-down endpoint (dash-api/dash/drill-down)
    *  CONFIRMED via live capture to 404 without an actual saved dashboard
@@ -17214,15 +17179,6 @@
     tepAllEpAppScoresCache = { ts: Date.now(), windowSec, byAgent };
     log(`Endpoint app score: ${byAgent.size} agent(s)`, 'tep-log-ok');
     return byAgent;
-  }
-  /** One endpoint agent's overall HTTP application score — thin wrapper
-   *  around tepFetchAllEndpointAgentAppScores (see its comment) for the
-   *  per-agent popover, which only ever needs one row out of that same
-   *  already-cached bulk fetch. */
-  async function tepFetchEndpointAgentAppScore(agentId) {
-    const byAgent = await tepFetchAllEndpointAgentAppScores().catch(() => null);
-    if (!byAgent) return null;
-    return byAgent.has(agentId) ? byAgent.get(agentId) : null;
   }
 
   let tepAllEpNetScoresCache = null; // { ts, windowSec, byAgent: Map<agentId, score> }
@@ -17740,17 +17696,15 @@
         const score = await tepFetchEndpointAgentNetScore(it.agentId).catch(() => null);
         const agentUrl = (it.url && it.url !== '#') ? it.url : null;
         rows = score != null ? [{ title: 'Overall Network Score', value: score, testId: null, url: agentUrl }] : null;
-      } else if (tepMetricsWindowLabel() === 'Live') {
-        rows = await tepFetchHttpTestsForEndpointAgent(it.agentId).catch(() => null);
       } else {
-        // No confirmed per-test windowed source for endpoint agents (see
-        // tepFetchEndpointAgentAppScore's comment) — one blended row instead
-        // of a real per-test list. Links to the agent's own view page, same
-        // URL (live-test result if one's active, else the base agent view)
-        // clicking the agent's NAME in the hover card already opens.
-        const score = await tepFetchEndpointAgentAppScore(it.agentId).catch(() => null);
-        const agentUrl = (it.url && it.url !== '#') ? it.url : null;
-        rows = score != null ? [{ title: 'Overall HTTP Application Score', value: score, testId: null, url: agentUrl }] : null;
+        // Always the live/latest round, regardless of the Data Window
+        // dropdown — there's no confirmed windowed/averaging equivalent for
+        // this per-test data (see DASH_METRICS_WINDOWS' comment), so showing
+        // anything else here would mean showing nothing real at all. The
+        // Application Health row on the hover card itself (metricRowHtml)
+        // still follows the Data Window as normal — only this per-test
+        // breakdown behind it is exempt.
+        rows = await tepFetchHttpTestsForEndpointAgent(it.agentId).catch(() => null);
       }
     } else {
       const byAgent = await (isNetwork ? tepFetchNetworkTestsByAgent() : tepFetchHttpAvailabilityByAgent()).catch(() => null);
@@ -17779,13 +17733,14 @@
       const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
       return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
     }).join('');
-    // Endpoint agents: "live round" on Live for HTTP (segment-visualisation)
-    // — Network mode has no live-round source, so it always shows the
-    // windowed blended-score note, even when the dropdown says "Live" (see
+    // Endpoint agents: HTTP always shows "live round" (segment-visualisation
+    // has no windowed equivalent — see the fetch above), regardless of the
+    // Data Window dropdown. Network mode has no live-round source at all, so
+    // it always shows the windowed blended-score note instead (see
     // tepFetchAllEndpointAgentNetScores). Enterprise always follows the Data
     // Window slider with a real per-test breakdown.
     const windowNote = (it && it.kind === 'endpoint')
-      ? (!isNetwork && tepMetricsWindowLabel() === 'Live' ? 'live round' : `${tepMetricsWindowPhrase()}, overall score only`)
+      ? (!isNetwork ? 'live round' : `${tepMetricsWindowPhrase()}, overall score only`)
       : tepMetricsWindowPhrase();
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s ${metricLabel} tests`
       + `<span class="tep-saas-breakdown-hint">worst score first (${tepEscapeHtmlText(windowNote)}) · click a row to open the test</span></div>`
