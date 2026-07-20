@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.38';
+  const TEP_VERSION = '3.39';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2106,6 +2106,13 @@
        content instead of scrolling, which is exactly the "loading too
        small" / overlapping-ring bug this fixes. */
     .tep-dash-widget--matchheight { min-height: 108px; }
+    /* The OTHER widget in a radio pair (Enterprise/Endpoint Agents,
+       SaaS/Network Health) dims while one side is explicitly selected —
+       both stay fully lit only when neither is selected (the default,
+       "everything"/"combined" state). Opacity only, same reasoning as the
+       marker fade-in keyframe: a transform here would fight the widget's
+       own layout. */
+    .tep-dash-widget--dimmed { opacity: .45; transition: opacity .15s ease; }
     .tep-dash-widget-filter {
       position: absolute; top: 8px; right: 8px; z-index: 1;
       display: flex; align-items: center; justify-content: center; cursor: pointer;
@@ -2236,6 +2243,15 @@
     .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: #f1f5f9; }
     .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: #64748b; margin-top: 2px; }
     .tep-saas-breakdown-list { display: flex; flex-direction: column; gap: 2px; }
+    /* HTTP/Network sub-section label inside the per-agent tests popover —
+       shows both metric families together now regardless of which one is
+       currently coloring the map. */
+    .tep-saas-breakdown-section-head {
+      font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+      color: #64748b; margin: 8px 0 3px;
+    }
+    .tep-saas-breakdown-section-head:first-of-type { margin-top: 0; }
+    .tep-saas-breakdown-section-head .tep-saas-breakdown-hint { display: inline; margin: 0 0 0 4px; text-transform: none; letter-spacing: normal; font-size: 10px; }
     .tep-saas-breakdown-row {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 5px 6px; margin: 0 -6px; border-radius: 6px;
@@ -14590,13 +14606,16 @@
   // entirely (not just visually — excluded from the map's own counts too,
   // same as the existing offline/health filtering during a LIVE TEST).
   let dashMapAgentTypeFilter = null;
-  // Which aggregate health score colors every map marker — 'saas' (default,
-  // radio on the SaaS Health widget) or 'network' (radio on Network Health).
-  // Replaces the old online/offline-status coloring entirely; that status
-  // (tepEnterpriseHealth/tepEndpointHealth) still exists and still drives
-  // OTHER things (LIVE TEST's online-only filter, the online-breathe pulse)
-  // but no longer the fill color. See tepColorForItem / refreshDashMapColorScores.
-  let dashMapColorSource = 'saas';
+  // Which aggregate health score colors every map marker — 'saas' (radio on
+  // the SaaS Health widget), 'network' (radio on Network Health), or
+  // 'combined' (default — averages both; active whenever NEITHER radio is
+  // checked, since they're a togglable pair rather than an always-one-picked
+  // group). Replaces the old online/offline-status coloring entirely; that
+  // status (tepEnterpriseHealth/tepEndpointHealth) still exists and still
+  // drives OTHER things (LIVE TEST's online-only filter, the online-breathe
+  // pulse) but no longer the fill color. See tepColorForItem /
+  // refreshDashMapColorScores.
+  let dashMapColorSource = 'combined';
   // Per-agent aggregate scores backing dashMapColorSource, refreshed together
   // (regardless of which is selected, so flipping the radio is instant) by
   // refreshDashMapColorScores() whenever the map opens, the Data Window
@@ -14794,28 +14813,44 @@
     return 'seen ' + epRelativeTime(it.lastSeenMs);
   }
 
-  /** The 0-100 score that drives one item's marker color under the current
-   *  dashMapColorSource — null when no data exists yet (fresh map open, this
-   *  agent has no tests of that kind, or — for endpoint + 'network' — no
-   *  confirmed source exists at all). Callers must treat null as "unknown",
-   *  same as the old health-bucket system's gray fallback. */
-  function tepColorScoreForItem(it) {
+  /** Raw per-metric lookups tepColorScoreForItem blends — split out so
+   *  'combined' mode can pull both without duplicating the lookup logic. */
+  function tepSaasScoreForItem(it) {
     if (!it) return null;
-    if (dashMapColorSource === 'network') {
-      if (it.kind === 'enterprise') {
-        const m = dashMapEntNetScoreByName;
-        return m ? (m.has(String(it.name).toUpperCase()) ? m.get(String(it.name).toUpperCase()) : null) : null;
-      }
-      const em = dashMapEpNetScoreByAgentId;
-      return (em && it.agentId != null && em.has(String(it.agentId))) ? em.get(String(it.agentId)) : null;
-    }
-    // 'saas' (default)
     if (it.kind === 'enterprise') {
       const m = dashMapEntSaasScoreByName;
       return m ? (m.has(String(it.name).toUpperCase()) ? m.get(String(it.name).toUpperCase()) : null) : null;
     }
     const m = dashMapEpSaasScoreByAgentId;
     return (m && it.agentId != null && m.has(String(it.agentId))) ? m.get(String(it.agentId)) : null;
+  }
+  function tepNetScoreForItem(it) {
+    if (!it) return null;
+    if (it.kind === 'enterprise') {
+      const m = dashMapEntNetScoreByName;
+      return m ? (m.has(String(it.name).toUpperCase()) ? m.get(String(it.name).toUpperCase()) : null) : null;
+    }
+    const em = dashMapEpNetScoreByAgentId;
+    return (em && it.agentId != null && em.has(String(it.agentId))) ? em.get(String(it.agentId)) : null;
+  }
+  /** The 0-100 score that drives one item's marker color under the current
+   *  dashMapColorSource — null when no data exists yet (fresh map open, this
+   *  agent has no tests of that kind, or — for endpoint + 'network' — no
+   *  confirmed source exists at all). Callers must treat null as "unknown",
+   *  same as the old health-bucket system's gray fallback. 'combined' (the
+   *  default, active when neither the SaaS nor Network Health radio is
+   *  checked) averages both metrics when both exist; falls back to
+   *  whichever one is actually available rather than forcing "no data" just
+   *  because the other side hasn't loaded or doesn't apply to this agent. */
+  function tepColorScoreForItem(it) {
+    if (!it) return null;
+    if (dashMapColorSource === 'network') return tepNetScoreForItem(it);
+    if (dashMapColorSource === 'saas') return tepSaasScoreForItem(it);
+    const s = tepSaasScoreForItem(it);
+    const n = tepNetScoreForItem(it);
+    if (s == null) return n;
+    if (n == null) return s;
+    return (s + n) / 2;
   }
   /** {fill,stroke} for a 0-100 score, same smooth gradient (and red floor) the
    *  SaaS/Network Health widgets' own rings already use — a plain default
@@ -15147,7 +15182,9 @@
     // "SaaS Health" name.
     const metricLabel = dashMapColorSource === 'network'
       ? 'Network Health'
-      : (it.kind === 'endpoint' ? 'Application Health' : 'SaaS Health');
+      : dashMapColorSource === 'saas'
+        ? (it.kind === 'endpoint' ? 'Application Health' : 'SaaS Health')
+        : 'Overall Health';
     const metricScore = tepColorScoreForItem(it);
     const metricColor = tepColorFromScore(metricScore).fill;
     const metricText = metricScore != null ? `${metricScore.toFixed(1)}%` : 'no data';
@@ -15344,6 +15381,14 @@
     // Called at build time and again on in-place refreshes (no DOM rebuild).
     function paintMarker(m) {
       const cl = m._cluster;
+      // Was this marker hidden going into this repaint? If so and it ends up
+      // shown below, it gets the same one-shot fade-in a brand-new agent's
+      // marker gets (see markersFadedIn below) — a LIVE TEST agent that just
+      // started reporting (health filter revealing it) shouldn't just snap
+      // into existence. classList.add is a no-op once the class is already
+      // present, so this only plays once per marker per reveal, not on every
+      // repaint while it stays visible.
+      const wasHidden = m.style.display === 'none';
       // During a LIVE TEST, only online agents are shown — hide offline-only
       // markers in place (no DOM rebuild → the map never repositions/zooms).
       // An active search query is exempt from that filter: search exists to
@@ -15438,6 +15483,7 @@
         lbl.textContent = parts.join(' · ');
         m.appendChild(lbl);
       }
+      if (wasHidden) m.classList.add('tep-agent-map-marker--fadein');
     }
 
     const markerEls = [];
@@ -16647,18 +16693,22 @@
     const entTot = s.entOnline + s.entOffline + s.entUnknown;
     const entBar = tepWidgetBar([{ v: s.entOnline, color: '#22c55e' }, { v: s.entOffline, color: '#ef4444' }, { v: s.entUnknown, color: '#64748b' }]);
     const epBar = tepWidgetBar([{ v: s.epOnline, color: '#22c55e' }, { v: s.epOffline, color: '#ef4444' }]);
+    // Each side of a radio pair dims while the OTHER side is explicitly
+    // selected — both stay lit only when neither is (the default).
+    const entDimCls = dashMapAgentTypeFilter === 'endpoint' ? ' tep-dash-widget--dimmed' : '';
+    const epDimCls = dashMapAgentTypeFilter === 'enterprise' ? ' tep-dash-widget--dimmed' : '';
     const entWidget = tepWidgetCard('Enterprise Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ent', dashMapAgentTypeFilter === 'enterprise')
       + `<div class="tep-dash-widget-main">${s.entOnline}<small> / ${entTot} online</small></div>${entBar}`
       + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`,
-      'tep-dash-widget--matchheight tep-dash-widget--clickable', null,
+      'tep-dash-widget--matchheight tep-dash-widget--clickable' + entDimCls, null,
       ' id="tep-dashmap-widget-ent" title="Click to see Enterprise agents, worst latency first"');
     const col1Html = `<div class="tep-dashmap-col1" id="tep-dashmap-col1">${entWidget}${tepIspStackHtml()}</div>`;
     const epHtml = tepWidgetCard('Endpoint Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ep', dashMapAgentTypeFilter === 'endpoint')
       + `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
       + `<div class="tep-dash-widget-sub" title="online = seen in the last 24 h">${s.epOnline} online · ${s.epOffline} offline</div>`,
-      'tep-dash-widget--matchheight tep-dash-widget--clickable', null,
+      'tep-dash-widget--matchheight tep-dash-widget--clickable' + epDimCls, null,
       ' id="tep-dashmap-widget-ep" title="Click to see Endpoint agents, worst latency first"');
     // Enterprise/Endpoint/ISP stack are cheap, synchronous, and driven by
     // data that's already in memory — safe to rebuild on every call (LIVE
@@ -16708,11 +16758,15 @@
         + '</div>';
       container.innerHTML = col1Html + epHtml
         + tepWidgetCard('SaaS Health',
-          tepWidgetFilterCheckbox('tep-dashmap-color-saas', dashMapColorSource === 'saas', 'tep-dashmap-color-source', 'Color map agents by SaaS Health (default)')
-          + '<div id="tep-w-saas">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
+          tepWidgetFilterCheckbox('tep-dashmap-color-saas', dashMapColorSource === 'saas', 'tep-dashmap-color-source', 'Color map agents by SaaS Health only (click again for the default: combined with Network Health)')
+          + '<div id="tep-w-saas">' + tepWidgetPending() + '</div>',
+          'tep-dash-widget--matchheight' + (dashMapColorSource === 'network' ? ' tep-dash-widget--dimmed' : ''),
+          null, ' id="tep-dashmap-widget-saas"')
         + tepWidgetCard('Network Health',
-          tepWidgetFilterCheckbox('tep-dashmap-color-network', dashMapColorSource === 'network', 'tep-dashmap-color-source', 'Color map agents by Network Health')
-          + '<div id="tep-w-network">' + tepWidgetPending() + '</div>', 'tep-dash-widget--matchheight')
+          tepWidgetFilterCheckbox('tep-dashmap-color-network', dashMapColorSource === 'network', 'tep-dashmap-color-source', 'Color map agents by Network Health only (click again for the default: combined with SaaS Health)')
+          + '<div id="tep-w-network">' + tepWidgetPending() + '</div>',
+          'tep-dash-widget--matchheight' + (dashMapColorSource === 'saas' ? ' tep-dash-widget--dimmed' : ''),
+          null, ' id="tep-dashmap-widget-network"')
         + alertsEventsHtml
         + hwindowHtml;
       void fillDashWidgetsAsync();
@@ -16724,6 +16778,13 @@
       if (col1El) col1El.outerHTML = col1Html;
       const epEl = container.querySelector('#tep-dashmap-widget-ep');
       if (epEl) epEl.outerHTML = epHtml;
+      // SaaS/Network Health cards aren't rebuilt here (their inner content is
+      // live-fetched separately by fillDashWidgetsAsync, not by this
+      // function) — just keep their dim state in sync directly instead.
+      const saasEl = container.querySelector('#tep-dashmap-widget-saas');
+      if (saasEl) saasEl.classList.toggle('tep-dash-widget--dimmed', dashMapColorSource === 'network');
+      const networkEl = container.querySelector('#tep-dashmap-widget-network');
+      if (networkEl) networkEl.classList.toggle('tep-dash-widget--dimmed', dashMapColorSource === 'saas');
     }
     if (!container._tepFilterWired) {
       container._tepFilterWired = true;
@@ -16741,12 +16802,13 @@
       container.addEventListener('click', (e) => {
         const radio = e.target.closest('input[type="radio"]');
         if (!radio || radio.dataset.wasChecked !== '1') return;
-        // The color-source group always has exactly one selected (default
-        // 'saas') — unlike type/ISP, there's no "off" state to toggle back
-        // to, so clicking the already-checked one is a no-op.
-        if (radio.name === 'tep-dashmap-color-source') return;
         radio.checked = false;
         if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = null;
+        // Clicking the already-checked color-source radio turns it back off
+        // — unlike type/ISP (which fall back to "show everything" with no
+        // filter), that "off" state here IS a real mode: 'combined' colors
+        // by both SaaS and Network Health together (see tepColorScoreForItem).
+        else if (radio.name === 'tep-dashmap-color-source') { dashMapColorSource = 'combined'; hideAgentTestsPopover(); }
         else dashMapAgentTypeFilter = null;
         applyFilterChange();
       });
@@ -17620,16 +17682,20 @@
     if (tepAgentTestsPopoverEl && !tepAgentTestsPopoverEl.contains(e.target) && !e.target.closest('.tep-map-tip-agent')) hideAgentTestsPopover();
   }
   function tepAgentTestsPopoverEscHandler(e) { if (e.key === 'Escape') hideAgentTestsPopover(); }
-  /** Submenu popover for one agent's HTTP tests, worst score first — same
-   *  visual language as the SaaS Health widget's own breakdown popover,
-   *  opened from the map's hover card instead of navigating away. Shows a
-   *  loading state immediately (the fetch behind it isn't instant), then
-   *  fills in once the right data source resolves: enterprise agents use
-   *  tepFetchHttpAvailabilityByAgent (dashboard-wide SaaS availability),
-   *  endpoint agents use tepFetchHttpTestsForEndpointAgent (per-agent
-   *  application score via segment-visualisation) — the two metrics aren't
-   *  the same thing but both read as a 0-100 "how healthy is this test" %,
-   *  so they share this rendering. */
+  /** Submenu popover for one agent's tests, worst score first — same visual
+   *  language as the SaaS Health widget's own breakdown popover, opened from
+   *  the map's hover card instead of navigating away. Shows a loading state
+   *  immediately (the fetch behind it isn't instant), then fills in once
+   *  both data sources resolve. ALWAYS shows both HTTP and Network sections
+   *  (whichever have data) regardless of dashMapColorSource — the map
+   *  marker/aggregate row may be colored by just one metric, but an agent
+   *  with tests on only the OTHER metric shouldn't read as "no tests found"
+   *  here just because that happened to be the one currently coloring the
+   *  map. Enterprise agents use tepFetchHttpAvailabilityByAgent/
+   *  tepFetchNetworkTestsByAgent (dashboard-wide, real per-test breakdowns);
+   *  endpoint agents use tepFetchHttpTestsForEndpointAgent (per-agent,
+   *  live-round per-test breakdown) for HTTP, and tepFetchEndpointAgentNetScore
+   *  (one blended number — no confirmed per-test source) for Network. */
   async function toggleAgentTestsPopover(anchorEl, it) {
     const agentName = (it && it.name) || 'Agent';
     if (tepAgentTestsPopoverEl && tepAgentTestsPopoverAgent === agentName) {
@@ -17669,45 +17735,47 @@
       document.addEventListener('click', tepAgentTestsPopoverOutsideClick, true);
       document.addEventListener('keydown', tepAgentTestsPopoverEscHandler, true);
     }, 0);
-    // Which metric family this popover shows — matches whichever aggregate
-    // score is currently coloring the map (dashMapColorSource), so the list
-    // you get here always matches what you just saw color the marker.
-    const isNetwork = dashMapColorSource === 'network';
-    const metricLabel = isNetwork ? 'Network' : 'HTTP';
-    let rows;
+    // Always fetch BOTH HTTP and Network breakdowns — see the doc comment
+    // above for why this no longer follows dashMapColorSource.
+    let httpRows, netRows;
     if (it && it.kind === 'endpoint' && it.agentId != null) {
-      if (isNetwork) {
-        // Same "no confirmed per-test breakdown" limitation as the HTTP
-        // score below (drill-down 404s without a real saved widget) — one
-        // blended row via tepFetchAllEndpointAgentNetScores instead of a
-        // per-test list, on every window (no confirmed live-round source for
-        // this metric either, unlike the HTTP side's segment-visualisation
-        // path — see tepFetchAllEndpointAgentNetScores' comment).
-        const score = await tepFetchEndpointAgentNetScore(it.agentId).catch(() => null);
-        const agentUrl = (it.url && it.url !== '#') ? it.url : null;
-        rows = score != null ? [{ title: 'Overall Network Score', value: score, testId: null, url: agentUrl }] : null;
-      } else {
-        // Always the live/latest round, regardless of the Data Window
-        // dropdown — there's no confirmed windowed/averaging equivalent for
-        // this per-test data (see DASH_METRICS_WINDOWS' comment), so showing
-        // anything else here would mean showing nothing real at all. The
-        // Application Health row on the hover card itself (metricRowHtml)
-        // still follows the Data Window as normal — only this per-test
-        // breakdown behind it is exempt.
-        rows = await tepFetchHttpTestsForEndpointAgent(it.agentId).catch(() => null);
-      }
+      const agentUrl = (it.url && it.url !== '#') ? it.url : null;
+      const [hRows, netScore] = await Promise.all([
+        tepFetchHttpTestsForEndpointAgent(it.agentId).catch(() => null),
+        tepFetchEndpointAgentNetScore(it.agentId).catch(() => null),
+      ]);
+      httpRows = hRows;
+      // No confirmed per-test breakdown for endpoint Network (drill-down
+      // 404s without a real saved widget) — one blended row instead, same
+      // limitation tepFetchAllEndpointAgentNetScores documents.
+      netRows = netScore != null ? [{ title: 'Overall Network Score', value: netScore, testId: null, url: agentUrl }] : null;
     } else {
-      const byAgent = await (isNetwork ? tepFetchNetworkTestsByAgent() : tepFetchHttpAvailabilityByAgent()).catch(() => null);
-      rows = (byAgent && byAgent.get(String(agentName).toUpperCase())) || null;
+      const key = String(agentName).toUpperCase();
+      const [httpByAgent, netByAgent] = await Promise.all([
+        tepFetchHttpAvailabilityByAgent().catch(() => null),
+        tepFetchNetworkTestsByAgent().catch(() => null),
+      ]);
+      httpRows = (httpByAgent && httpByAgent.get(key)) || null;
+      netRows = (netByAgent && netByAgent.get(key)) || null;
     }
     if (tepAgentTestsPopoverEl !== pop) return; // closed (or reopened for another agent) while this was in flight
-    if (!rows || !rows.length) {
-      pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s ${metricLabel} tests</div>`
-        + `<div class="tep-saas-breakdown-list"><div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">No ${isNetwork ? 'Network' : 'HTTP Server'} tests found for this agent</div></div>`;
+    const hasHttp = !!(httpRows && httpRows.length);
+    const hasNet = !!(netRows && netRows.length);
+    if (!hasHttp && !hasNet) {
+      pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s tests</div>`
+        + `<div class="tep-saas-breakdown-list"><div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">No HTTP or Network tests found for this agent</div></div>`;
       positionPop();
       return;
     }
-    const rowsHtml = rows.map((r) => {
+    // Endpoint agents: HTTP always shows "live round" (segment-visualisation
+    // has no windowed equivalent), Network always shows the windowed
+    // blended-score note (no live-round source for it at all — see
+    // tepFetchAllEndpointAgentNetScores). Enterprise always follows the Data
+    // Window slider with a real per-test breakdown, for either metric.
+    const isEndpoint = it && it.kind === 'endpoint';
+    const httpWindowNote = isEndpoint ? 'live round' : tepMetricsWindowPhrase();
+    const netWindowNote = isEndpoint ? `${tepMetricsWindowPhrase()}, overall score only` : tepMetricsWindowPhrase();
+    const rowsHtml = (rows, isNet) => rows.map((r) => {
       const p = Math.max(0, Math.min(100, Number(r.value) || 0));
       const f = Math.max(0, Math.min(1, (100 - p) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
       const c = tepHealthColorFrac(f);
@@ -17716,25 +17784,25 @@
       // don't, since they're shared cache entries covering every agent that
       // ran the test; filter to THIS popover's agent here instead of baking
       // one agent's id into the shared row.
-      const url = r.url || (isNetwork
+      const url = r.url || (isNet
         ? buildEnterpriseNetworkTestAgentUrl(r.testId, it && it.agentId)
         : buildEnterpriseHttpTestAgentUrl(r.testId, it && it.agentId));
       const tag = url ? 'a' : 'div';
       const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
       return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
     }).join('');
-    // Endpoint agents: HTTP always shows "live round" (segment-visualisation
-    // has no windowed equivalent — see the fetch above), regardless of the
-    // Data Window dropdown. Network mode has no live-round source at all, so
-    // it always shows the windowed blended-score note instead (see
-    // tepFetchAllEndpointAgentNetScores). Enterprise always follows the Data
-    // Window slider with a real per-test breakdown.
-    const windowNote = (it && it.kind === 'endpoint')
-      ? (!isNetwork ? 'live round' : `${tepMetricsWindowPhrase()}, overall score only`)
-      : tepMetricsWindowPhrase();
-    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s ${metricLabel} tests`
-      + `<span class="tep-saas-breakdown-hint">worst score first (${tepEscapeHtmlText(windowNote)}) · click a row to open the test</span></div>`
-      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
+    let sectionsHtml = '';
+    if (hasHttp) {
+      sectionsHtml += `<div class="tep-saas-breakdown-section-head">HTTP<span class="tep-saas-breakdown-hint">(${tepEscapeHtmlText(httpWindowNote)})</span></div>`
+        + `<div class="tep-saas-breakdown-list">${rowsHtml(httpRows, false)}</div>`;
+    }
+    if (hasNet) {
+      sectionsHtml += `<div class="tep-saas-breakdown-section-head">Network<span class="tep-saas-breakdown-hint">(${tepEscapeHtmlText(netWindowNote)})</span></div>`
+        + `<div class="tep-saas-breakdown-list">${rowsHtml(netRows, true)}</div>`;
+    }
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s tests`
+      + `<span class="tep-saas-breakdown-hint">worst score first · click a row to open the test</span></div>`
+      + sectionsHtml;
     positionPop(); // real content likely changed height vs the loading placeholder
   }
 
@@ -17966,13 +18034,19 @@
   }
   function tepIspPopoverEscHandler(e) { if (e.key === 'Escape') hideIspAgentsPopover(); }
   function tepIspAgentRowHtml(it) {
-    // Offline/unhealthy (and unknown-status) agents flip the kind badge to
-    // red — a plain green "enterprise"/"user" badge next to a blank latency
-    // cell read as if the agent just hadn't reported yet, not that it's
-    // actually down.
+    // Offline/unhealthy (and unknown-status) agents show a plain dark-grey
+    // icon + name instead of a health-score color — a stale score next to an
+    // agent this list already knows isn't reachable would read as "it's
+    // fine", not "it's down". Online agents' icon color IS the health signal
+    // now (replaces the old text "enterprise"/"user" pill — see typeIcon).
     const isOffline = it.health != null && it.health !== 'healthy';
-    const badgeClass = isOffline ? 'tep-dash-kind--offline' : `tep-dash-kind--${it.kind}`;
-    const badge = `<span class="tep-dash-kind ${badgeClass}">${it.kind === 'enterprise' ? 'enterprise' : 'user'}</span>`;
+    const hc = isOffline ? { fill: '#475569', stroke: '#94a3b8' } : tepColorFromScore(tepColorScoreForItem(it));
+    const iconStyle = `style="fill:${hc.fill};stroke:${hc.stroke};stroke-width:2"`;
+    // Same shapes the map marker itself uses: rounded square = enterprise,
+    // head/shoulders = user.
+    const typeIcon = it.kind === 'enterprise'
+      ? `<svg class="tep-map-tip-typeicon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="0.65" y="4" width="14.7" height="8" rx="2" ${iconStyle}/><line x1="2.2" y1="9.3" x2="13.8" y2="9.3" stroke="#000" stroke-width="1"/><circle cx="3.8" cy="6.7" r="1" fill="#000"/></svg>`
+      : `<svg class="tep-map-tip-typeicon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">${tepUserIconInner(iconStyle)}</svg>`;
     const latGoalMs = it.kind === 'endpoint' ? ISP_HEALTH_LATENCY_GOAL_MS : undefined;
     // No reading at all → leave the cell blank rather than a "—" placeholder.
     const lat = Number.isFinite(it.latencyMs)
@@ -17987,9 +18061,13 @@
     const lanTag = it.lanIssue
       ? ' <span style="color:#f87171;font-weight:700;" title="Latency excluded from the ISP average — the delay showed up on this agent’s own local subnet, not the ISP">(LAN)</span>'
       : '';
+    // Name stays plain white — the icon above already carries the health
+    // color — EXCEPT when offline, where it matches the icon's dark grey so
+    // the whole row reads as "off" at a glance rather than just its icon.
+    const nameStyle = isOffline ? ' style="color:#64748b"' : '';
     return `<div class="tep-saas-breakdown-row tep-isp-agents-row" role="button" tabindex="0" `
       + `data-kind="${tepEscapeHtmlText(it.kind)}" data-agentid="${tepEscapeHtmlText(String(it.agentId))}">`
-      + `<span class="tep-saas-breakdown-title">${badge}${tepEscapeHtmlText(it.name)}${lanTag}</span>`
+      + `<span class="tep-saas-breakdown-title">${typeIcon}<span${nameStyle}>${tepEscapeHtmlText(it.name)}</span>${lanTag}</span>`
       + `<span>${lat}${loss}</span></div>`;
   }
   function toggleIspAgentsPopover(anchorEl, ispName) {
