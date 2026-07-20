@@ -257,7 +257,7 @@
   <div class="container">
     <h1 class="install-title">
       <span class="install-title-mark" aria-hidden="true">&#x2316;</span>
-        TE Optics<span class="install-version" aria-label="Build">3.27</span>
+        TE Optics<span class="install-version" aria-label="Build">3.28</span>
     </h1>
     <p class="subtitle">
       An open source, free sidebar for ThousandEyes, allowing you to quickly manage tests,
@@ -437,7 +437,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.27';
+  const TEP_VERSION = '3.28';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16341,11 +16341,25 @@
       const placedPx = destPx.slice();
       const markerPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
                                           // flow line starting from the same agent marker
+      // While a pan/zoom animation is actively running (animateZoomTo's own
+      // rAF loop — see dashMapZoomAnimFrame), skip the overlap-avoidance
+      // nudging below (the nested loop + up to 14 SVG isPointInFill hit-
+      // tests per conflicting marker) and just place every marker at its
+      // true fractional position instead. That per-frame cost, multiplied
+      // across however many markers/clusters exist, is what was making a
+      // sizable animated reframe (e.g. the fullscreen map's 1s-after-open
+      // settle) stutter and read as jerky rather than smooth — CONFIRMED
+      // via user report. Overlap avoidance still runs on every NON-animated
+      // apply() (drag/pan, instant snaps) and — via the extra apply() call
+      // animateZoomTo's step() now makes right as it finishes — on the
+      // settled final frame, so it's only ever skipped for the handful of
+      // frames an animation is actually mid-flight, never permanently.
+      const midAnimation = dashMapZoomAnimFrame !== null;
       for (const m of markerEls) {
         const trueX = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
         const trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
         let x = trueX, y = trueY;
-        for (const p of placedPx) {
+        if (!midAnimation) for (const p of placedPx) {
           const ddx = x - p.x, ddy = y - p.y;
           const dist = Math.hypot(ddx, ddy);
           if (dist < MIN_SEP) {
@@ -16442,6 +16456,13 @@
           dashMapZoomAnimFrame = requestAnimationFrame(step);
         } else {
           dashMapZoomAnimFrame = null;
+          // One more pass now that dashMapZoomAnimFrame is null — the apply()
+          // a few lines up just ran with it still set, so layoutMarkers()
+          // used its cheap mid-animation fast path (true positions, no
+          // overlap-avoidance nudging) for what's otherwise the final,
+          // settled frame. This redoes it with the full, careful placement,
+          // a one-time cost rather than a per-frame one.
+          apply();
           // Fires once the marker has actually settled at its final on-screen
           // position — anything that positions itself off marker.getBoundingClientRect()
           // (e.g. a hover card opened programmatically) needs to wait for this,
@@ -16680,9 +16701,9 @@
     // move FROM, so animating it just flashes the zoomed-out origin before
     // easing into place, which reads as a jerky reset rather than a move).
     const liveMapSession = liveTestRunning || liveTestLatencyActive;
-    const frameTo = (target) => {
+    const frameTo = (target, duration) => {
       if (dashMapFramedOnce) {
-        animateZoomTo(target);
+        animateZoomTo(target, duration);
       } else {
         dashMapFramedOnce = true;
         epDashMapZoom = target;
@@ -16720,7 +16741,11 @@
       // invisible (opacity:0) and is what the user sees the instant it
       // fades in, not a jump partway through or after.
       const topShift = full ? 0.05 * vh : 0;
-      frameTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift });
+      // 1000ms — double animateZoomTo's own 500ms default, i.e. half speed,
+      // per user request. Only this animated reframe's duration (the one
+      // the 1s-after-open settle uses); the "no markers to fit" fallback a
+      // few lines down keeps the plain default.
+      frameTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift }, 1000);
     } else if (!preserveZoom && !liveMapSession) {
       // Falls here when there are no markers to fit, OR wrap.clientWidth/
       // clientHeight isn't ready yet. If the map already has an established
@@ -18961,26 +18986,30 @@
         if (el) { dashFullHidden.push([el, el.style.display]); el.style.display = 'none'; }
       }
     }, TEP_TOGGLE_ANIM_MS);
-    // One-time settle: 1s after open, smoothly pan/zoom to fit every agent
-    // on screen, centered on their middle — per user request, a deliberate
-    // visible "glide into place" beat, not an instant snap. Also doubles as
-    // the fix for a load-timing miss: the very first render (below,
-    // synchronous with this whole function) ran against whatever
+    // One-time settle: 2s after open (was 1s, per user request), smoothly
+    // pan/zoom (at half speed — 1000ms instead of animateZoomTo's default
+    // 500ms, see the frameTo() call this triggers) to fit every agent on
+    // screen, centered on their middle — a deliberate visible "glide into
+    // place" beat, not an instant snap, and the map stays visible/
+    // interactive the whole time (an earlier attempt at fully hiding it
+    // until this resolved was rejected — the fix for reported jerkiness is
+    // layoutMarkers()' own mid-animation fast path, not hiding the map).
+    // Also doubles as the fix for a load-timing miss: the very first render
+    // (below, synchronous with this whole function) ran against whatever
     // agents/allEndpointAgents held at that instant, which on a fresh load
     // can be before that data has actually resolved (markerEls comes back
-    // empty, falling back to a flat, uncentered default view) — 1s gives it
-    // far more time to arrive than the old 300ms fix this replaces did.
-    // dashMapFramedOnce is deliberately NOT reset here (unlike a fresh
-    // open): frameTo() already animates instead of snapping whenever it's
-    // still true, which it will be from the synchronous render below having
-    // already framed once. Scoped entirely to this open call — never fires
-    // from a data refresh (dashFullPeriodicRefresh/refreshDashMapColorScores'
-    // own re-renders all pass preserveZoom, which skips re-centering
-    // entirely).
+    // empty, falling back to a flat, uncentered default view) — 2s gives it
+    // even more time to arrive. dashMapFramedOnce is deliberately NOT reset
+    // here (unlike a fresh open): frameTo() already animates instead of
+    // snapping whenever it's still true, which it will be from the
+    // synchronous render below having already framed once. Scoped entirely
+    // to this open call (never fires from a data refresh —
+    // dashFullPeriodicRefresh/refreshDashMapColorScores' own re-renders all
+    // pass preserveZoom, which skips re-centering entirely).
     setTimeout(() => {
       if (dashMapFullEl !== ov) return;
       renderDashboardAgentMap(ov.querySelector('#tep-dashmap-mapbody'), { full: true });
-    }, 1000);
+    }, 2000);
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
     ov.querySelector('#tep-dashmap-zoom-in').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.in(); });
     ov.querySelector('#tep-dashmap-zoom-out').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.out(); });
@@ -19101,19 +19130,22 @@
       // was open, so it never got a chance to lay itself out, and the
       // shared epDashMapZoom (tx/ty/s) was last set by the much larger
       // fullscreen view — applied to the small sidebar map that reads as
-      // "jumbled" until manually refreshed. Force a fresh auto-fit render
-      // now that the host is visible again with real dimensions, instead
-      // of leaving it stale. Deferred here (not run synchronously above,
-      // right after removing tep-panel-extend) because the panel's own
-      // width-shrink transition hasn't actually finished at that point —
-      // measuring #tep-dash-map-host's size mid-shrink (or at t=0, before
-      // the animation has progressed at all) reads its still-full-viewport
-      // width instead of its real sidebar width, producing exactly the
-      // "small map looks wrong after collapsing from fullscreen" bug this
-      // guards against. TEP_TOGGLE_ANIM_MS matches that transition's own
+      // "jumbled" until manually refreshed. Used to force a fresh AUTO-FIT
+      // render here (recentering on the agent spread), but that was itself
+      // causing a visible glitch right after collapsing — CONFIRMED via
+      // user report. A flat reset instead: set the zoom straight to fully
+      // zoomed out and redraw with preserveZoom so renderDashboardAgentMap
+      // doesn't run its own auto-fit framing math at all (no dimension
+      // measurement to get wrong, no glitch surface). Deferred here (not
+      // synchronous, right after removing tep-panel-extend above) because
+      // the panel's own width-shrink transition hasn't actually finished at
+      // that point yet; TEP_TOGGLE_ANIM_MS matches that transition's own
       // duration, so by the time this fires the panel has settled at its
-      // real width and this measures correctly.
-      if ($('#tep-dash-map-host')) renderDashboardAgentMap();
+      // real width and the redraw measures it correctly.
+      if ($('#tep-dash-map-host')) {
+        epDashMapZoom = { s: 1, tx: 0, ty: 0 };
+        renderDashboardAgentMap(null, { preserveZoom: true });
+      }
     }, TEP_TOGGLE_ANIM_MS);
   }
 
