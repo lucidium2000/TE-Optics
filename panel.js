@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.43';
+  const TEP_VERSION = '3.44';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2281,6 +2281,15 @@
     .tep-agenttests-pop--cols { min-width: 320px; max-width: 460px; }
     .tep-agenttests-cols { display: flex; gap: 12px; }
     .tep-agenttests-col { flex: 1; min-width: 0; }
+    /* Agent name + "Load Agent Views" link share the head's top line,
+       name left / link right, instead of the link sitting as its own row
+       at the bottom of the popover. */
+    .tep-agenttests-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .tep-agenttests-head-link {
+      font-size: 11px; font-weight: 600; color: #93c5fd; text-decoration: none;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .tep-agenttests-head-link:hover { color: #bfdbfe; text-decoration: underline; }
     .tep-saas-breakdown-row {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 5px 6px; margin: 0 -6px; border-radius: 6px;
@@ -13624,6 +13633,12 @@
   // bounded deep search by candidate key names).
   // ---------------------------------------------------------------------------
   const ENDPOINT_AGENT_SEARCH_PATH = '/namespace/endpoint-api/agent-management-service/v3/agent/management/metadata/search';
+  // Confirmed via live capture — same endpoint the Agent Settings page
+  // itself uses (referer /endpoint/agent-settings/?section=agents). Battery
+  // only (see fetchEndpointAgentBatteryStatus) — NOT the roster source; a
+  // brief attempt to use this for the roster too lost real lat/lng data
+  // (see fetchEndpointAgentsViaSearch's own comment) and broke solo map pins.
+  const ENDPOINT_AGENT_SETTINGS_SEARCH_PATH = '/namespace/endpoint-api/agent-management-service/v3/agent/management/settings/search';
   const ENDPOINT_AGENT_VIEW_BASE = '/endpoint/agent-views/';
   const ENDPOINT_AGENT_TAGS_PATH = '/namespace/tags-api/internal-tags-service/tags';
 
@@ -13661,6 +13676,31 @@
       }
       for (const v of Object.values(o)) {
         if (found !== undefined) return;
+        if (v && typeof v === 'object') walk(v, depth + 1);
+      }
+    })(obj, 0);
+    return found;
+  }
+  /** Same matching as epAgentPickField, but returns the KEY that actually
+   *  matched (its real casing, not the lowercased candidate) instead of its
+   *  value — diagnostic only, so a misreported metric can be traced to the
+   *  exact field name straight from the log, without needing a fresh live
+   *  capture every time. */
+  function epAgentPickFieldKey(obj, candidates) {
+    if (!obj || typeof obj !== 'object') return null;
+    const wants = candidates.map((c) => c.toLowerCase());
+    for (const [k, v] of Object.entries(obj)) {
+      if (wants.includes(k.toLowerCase()) && v != null && typeof v !== 'object' && String(v) !== '') return k;
+    }
+    let found = null;
+    (function walk(o, depth) {
+      if (found !== null || !o || typeof o !== 'object' || depth > 4) return;
+      for (const [k, v] of Object.entries(o)) {
+        if (found !== null) return;
+        if (wants.includes(k.toLowerCase()) && v != null && typeof v !== 'object' && String(v) !== '') { found = k; return; }
+      }
+      for (const v of Object.values(o)) {
+        if (found !== null) return;
         if (v && typeof v === 'object') walk(v, depth + 1);
       }
     })(obj, 0);
@@ -13741,7 +13781,14 @@
    *  already carries the labelId (== a tag's legacyId) regardless of whether
    *  that tag is static or dynamic. */
   function epAgentMatchedLabelIds(raw) {
-    const arr = epAgentPickArray(raw, ['matchedLabels']) || [];
+    // 'matchedLabelIds' added alongside the older 'matchedLabels' —
+    // CONFIRMED via live capture that ENDPOINT_AGENT_SETTINGS_SEARCH_PATH's
+    // response nests this as labels: { machineId, matchedLabelIds: [ids] },
+    // a flat array of raw numeric ids rather than {labelId} objects; the
+    // `typeof m === 'object' ? m.labelId : m` line below already handles
+    // both shapes since epAgentPickArray's own recursive walk finds either
+    // key regardless of nesting depth.
+    const arr = epAgentPickArray(raw, ['matchedLabels', 'matchedLabelIds']) || [];
     const ids = new Set();
     for (const m of arr) {
       if (m == null) continue;
@@ -14031,6 +14078,23 @@
     return null;
   }
 
+  /** Roster fetch — REVERTED back to the metadata/search endpoint after a
+   *  brief attempt to merge this with the settings/search sweep
+   *  (fetchEndpointAgentBatteryStatus) broke solo map pins: CONFIRMED via
+   *  the user's own settings/search capture that its response has NO
+   *  lat/lng/latitude/longitude field anywhere, only locationName text —
+   *  so every endpoint agent fell back to text-geocoding a hardcoded city
+   *  dictionary (epGeocode), and any agent whose location string wasn't in
+   *  it got silently dropped from the map instead of pinned precisely
+   *  (agents sharing a common recognized city still clustered together and
+   *  looked fine, which is what made this look like a "clustering" issue
+   *  rather than a missing-coordinates one). metadata/search evidently
+   *  carries real coordinates (tepAgentLatLng's deep search was finding
+   *  something here that isn't in settings/search), so this is the source
+   *  of truth for the roster again — battery still comes from
+   *  settings/search, just back to being its own fetch (see
+   *  fetchEndpointAgentBatteryStatus below). Cursor-based (searchAfter),
+   *  same as this endpoint has always used. */
   async function fetchEndpointAgentsViaSearch() {
     const pageSize = 500;
     const merged = [];
@@ -14054,8 +14118,15 @@
       if (!Array.isArray(elements)) throw new Error(`unexpected shape keys: ${topLevelKeysLabel(data)}`);
       merged.push(...elements);
       if (data && data.totalCount != null) totalCount = Number(data.totalCount);
-      if (!elements.length || elements.length < pageSize) break;
-      if (totalCount != null && merged.length >= totalCount) break;
+      if (!elements.length) break; // truly empty page — nothing more to get
+      // totalCount (when given) is authoritative, checked before the short-
+      // page fallback — a page shorter than requested shouldn't be read as
+      // "must be the last one" if the real count says otherwise.
+      if (totalCount != null) {
+        if (merged.length >= totalCount) break;
+      } else if (elements.length < pageSize) {
+        break;
+      }
       const next = epAgentSearchCursor(data, elements);
       if (!next || !next.length) {
         if (totalCount != null && merged.length < totalCount) {
@@ -16065,10 +16136,11 @@
       tepAgentTestsPopoverOnClose = () => { if (!mouseOverWrap) scheduleHide(); };
     }
     /** Lazily fetch connection type/VPN (and disk, best-effort) for one
-     *  endpoint agent via segment-visualisation — CPU/RAM/battery are already
-     *  populated fleet-wide by tepFetchAllEyebrowMetrics before this ever
-     *  runs, so this is now just a top-up for the fields data-stream doesn't
-     *  cover. Same call the sidebar Endpoint Agents list already uses,
+     *  endpoint agent via segment-visualisation — CPU/RAM are already
+     *  populated fleet-wide by tepFetchAllEyebrowMetrics and battery by
+     *  fetchEndpointAgentBatteryStatus before this ever runs, so this is now
+     *  just a top-up for the fields those two don't cover. Same call the
+     *  sidebar Endpoint Agents list already uses,
      *  triggered by hover instead of scroll-into-view, then re-renders the
      *  tip IN PLACE — but only if it's still showing the SAME cluster;
      *  hovering away before the fetch resolves must not stomp whatever the
@@ -17093,7 +17165,7 @@
         + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
         + `<div class="tep-dash-widget-sub">${g.count} agent${g.count === 1 ? '' : 's'}</div>`
         + `<div class="tep-dash-widget-sub">${latTxt} · ${lossTxt}</div></div>`
-        + tepSeverityRingHtml(sev, '')
+        + tepSeverityRingHtml(sev, '', undefined, isNew)
         + '</div>',
         'tep-isp-widget tep-isp-widget--clickable' + (isNew ? ' tep-isp-widget--in' : ''),
         null,
@@ -17203,6 +17275,7 @@
           null, ' id="tep-dashmap-widget-network"')
         + alertsEventsHtml
         + hwindowHtml;
+      tepGrowRingsIn(container.querySelector('#tep-dashmap-col1'));
       void fillDashWidgetsAsync();
       void refreshDashMapColorScores().then(() => {
         renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
@@ -17210,6 +17283,7 @@
     } else {
       const col1El = container.querySelector('#tep-dashmap-col1');
       if (col1El) col1El.outerHTML = col1Html;
+      tepGrowRingsIn(container.querySelector('#tep-dashmap-col1'));
       const epEl = container.querySelector('#tep-dashmap-widget-ep');
       if (epEl) epEl.outerHTML = epHtml;
       // SaaS/Network Health cards aren't rebuilt here (their inner content is
@@ -18076,18 +18150,23 @@
   /** Circular health ring whose arc length is the availability percent and
    *  whose colour follows TEP_HEALTH_RED_FLOOR_PCT's gradient — the old
    *  99%/95% 3-bucket cutoffs read a perfectly reasonable 93% as flat-out
-   *  red. */
-  function tepHealthRingHtml(pct, centerLabel) {
+   *  red. `animate`, when true, tags the fill circle with a data-ring-target
+   *  attribute (its final dasharray) for tepGrowRingsIn to pick up right
+   *  after insertion and grow it from 0 — callers pass true only for a
+   *  widget's first-ever real paint, so later refreshes of the same ring
+   *  don't replay the grow-in. */
+  function tepHealthRingHtml(pct, centerLabel, animate) {
     const p = Math.max(0, Math.min(100, Number(pct) || 0));
     const f = Math.max(0, Math.min(1, (100 - p) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
     const c = tepHealthColorFrac(f);
     const label = centerLabel
       ? `<span class="tep-health-ring-label" style="color:${c.fill}">${tepEscapeHtmlText(centerLabel)}</span>`
       : '';
+    const targetAttr = animate ? ` data-ring-target="${p.toFixed(1)}"` : '';
     return `<div class="tep-health-ring">
       <svg viewBox="0 0 36 36" aria-hidden="true">
         <circle class="tep-health-ring-track" cx="18" cy="18" r="15.5" pathLength="100"/>
-        <circle class="tep-health-ring-fill" cx="18" cy="18" r="15.5" pathLength="100" style="stroke:${c.fill};stroke-dasharray:${p.toFixed(1)} 100"/>
+        <circle class="tep-health-ring-fill" cx="18" cy="18" r="15.5" pathLength="100" style="stroke:${c.fill};stroke-dasharray:${p.toFixed(1)} 100"${targetAttr}/>
       </svg>${label}
     </div>`;
   }
@@ -18099,8 +18178,9 @@
    *  (default 1, ISP Health's own scale, unchanged) lets a caller compress
    *  the colour gradient — Network Health passes 0.25 so it reaches full red
    *  at score 75 and full green at 100, matching SaaS Health's own ring
-   *  instead of the plain 0–100 linear default. */
-  function tepSeverityRingHtml(sev, centerLabel, redAtSev) {
+   *  instead of the plain 0–100 linear default. `animate` is the same
+   *  first-paint-only grow-in flag tepHealthRingHtml takes. */
+  function tepSeverityRingHtml(sev, centerLabel, redAtSev, animate) {
     const s = Math.max(0, Math.min(1, Number(sev) || 0));
     const score = Math.round((1 - s) * 100);
     const cap = redAtSev != null ? redAtSev : 1;
@@ -18109,12 +18189,31 @@
     const label = centerLabel
       ? `<span class="tep-health-ring-label" style="color:${c.fill}">${tepEscapeHtmlText(centerLabel)}</span>`
       : '';
+    const targetAttr = animate ? ` data-ring-target="${score.toFixed(1)}"` : '';
     return `<div class="tep-health-ring">
       <svg viewBox="0 0 36 36" aria-hidden="true">
         <circle class="tep-health-ring-track" cx="18" cy="18" r="15.5" pathLength="100"/>
-        <circle class="tep-health-ring-fill" cx="18" cy="18" r="15.5" pathLength="100" style="stroke:${c.fill};stroke-dasharray:${score.toFixed(1)} 100"/>
+        <circle class="tep-health-ring-fill" cx="18" cy="18" r="15.5" pathLength="100" style="stroke:${c.fill};stroke-dasharray:${score.toFixed(1)} 100"${targetAttr}/>
       </svg>${label}
     </div>`;
+  }
+  /** Grows any freshly-inserted health rings within `container` from 0 up to
+   *  their real value — cheap (a single CSS transition, already wired via
+   *  .tep-health-ring-fill's `transition: stroke-dasharray`, just kicked by a
+   *  double rAF so the browser paints the 0 state first before animating to
+   *  the target). Only touches rings the HTML builders tagged with
+   *  data-ring-target (i.e. a caller-confirmed first paint) — a no-op for
+   *  everything else, so calling this after every re-render is harmless. */
+  function tepGrowRingsIn(container) {
+    if (!container) return;
+    const fills = container.querySelectorAll('.tep-health-ring-fill[data-ring-target]');
+    if (!fills.length) return;
+    fills.forEach((fill) => { fill.style.strokeDasharray = '0 100'; });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        fills.forEach((fill) => { fill.style.strokeDasharray = `${fill.getAttribute('data-ring-target')} 100`; });
+      });
+    });
   }
 
   // Set by fillDashWidgetsAsync whenever the SaaS Health average resolves to a
@@ -18338,23 +18437,23 @@
     // at the actual Agent Views/Settings page regardless of that.
     const agentUrl = (it && it.baseUrl && it.baseUrl !== '#') ? it.baseUrl
       : (it && it.url && it.url !== '#') ? it.url : null;
-    const agentLinkRow = agentUrl
-      ? `<a class="tep-saas-breakdown-row" href="${tepEscapeHtmlText(agentUrl)}" target="_blank" rel="noopener noreferrer"><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(agentPageLabel)}</span></a>`
+    // Sits in the head row, right-justified beside the agent's name —
+    // "Load Agent Views"/"Load Agent Settings" — instead of its own row at
+    // the bottom of the popover.
+    const agentHeadLink = agentUrl
+      ? `<a class="tep-agenttests-head-link" href="${tepEscapeHtmlText(agentUrl)}" target="_blank" rel="noopener noreferrer">Load ${tepEscapeHtmlText(agentPageLabel)}</a>`
       : '';
+    const headRowHtml = `<div class="tep-agenttests-head-row"><span>${tepEscapeHtmlText(agentName)}</span>${agentHeadLink}</div>`;
     if (!showHttp && !showNet) {
-      // Just the link when there's somewhere to send them — no health info
-      // for the requested metric (or either) means there's nothing to list,
-      // so skip straight to Agent Views/Settings rather than a dead-end
-      // "no tests found" message. That text is only a last-resort fallback
-      // for the rare case there's no URL at all, so the popover isn't left
-      // blank.
+      // No health info for the requested metric (or either) means there's
+      // nothing to list — the head link is still there either way, so only
+      // show the "no tests found" fallback text when there's genuinely no
+      // URL at all either, so the popover isn't left blank.
       const noneText = onlyMetric === 'http' ? 'No HTTP tests found for this agent'
         : onlyMetric === 'network' ? 'No Network tests found for this agent'
           : 'No HTTP or Network tests found for this agent';
-      const linkRow = agentLinkRow
-        || `<div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">${tepEscapeHtmlText(noneText)}</div>`;
-      pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s tests</div>`
-        + `<div class="tep-saas-breakdown-list">${linkRow}</div>`;
+      const body = agentHeadLink ? '' : `<div class="tep-saas-breakdown-list"><div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">${tepEscapeHtmlText(noneText)}</div></div>`;
+      pop.innerHTML = `<div class="tep-saas-breakdown-head">${headRowHtml}</div>${body}`;
       positionPop();
       return;
     }
@@ -18394,10 +18493,9 @@
         + `<div class="tep-saas-breakdown-list">${rowsHtml(httpRows, false)}</div></div>`
       : '';
     pop.classList.toggle('tep-agenttests-pop--cols', showHttp && showNet);
-    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s tests`
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${headRowHtml}`
       + `<span class="tep-saas-breakdown-hint">worst score first · click a row to open the test</span></div>`
-      + `<div class="tep-agenttests-cols">${netCol}${httpCol}</div>`
-      + (agentLinkRow ? `<div class="tep-saas-breakdown-list">${agentLinkRow}</div>` : '');
+      + `<div class="tep-agenttests-cols">${netCol}${httpCol}</div>`;
     positionPop(); // real content likely changed height vs the loading placeholder
   }
 
@@ -19171,6 +19269,13 @@
     }, 0);
   }
 
+  // Set once Network/SaaS Health's ring has grown in for the very first
+  // time this session — later refetches (Data Window slider, periodic
+  // refresh) redraw the same ring at its new value without replaying the
+  // 0-to-value animation.
+  let tepNetworkRingAnimated = false;
+  let tepSaasRingAnimated = false;
+
   /** Fetch + render just the Network Health tile — split out from
    *  fillDashWidgetsAsync so the Data Window slider can refresh it alone
    *  without re-fetching Alerts/Events/SaaS too. */
@@ -19190,8 +19295,10 @@
         netEl.innerHTML = '<div class="tep-saas-health">'
           + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
           + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} Network test${fetched.count === 1 ? '' : 's'}</div></div>`
-          + tepSeverityRingHtml(fetched.avgSev, '', (100 - TEP_HEALTH_RED_FLOOR_PCT) / 100)
+          + tepSeverityRingHtml(fetched.avgSev, '', (100 - TEP_HEALTH_RED_FLOOR_PCT) / 100, !tepNetworkRingAnimated)
           + '</div>';
+        tepGrowRingsIn(netEl);
+        tepNetworkRingAnimated = true;
       } else {
         const netN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'onewaynetwork').length;
         netEl.innerHTML = netN
@@ -19225,8 +19332,10 @@
         saasEl.innerHTML = '<div class="tep-saas-health">'
           + `<div><div class="tep-dash-widget-main">${fetched.avg.toFixed(1)}<small>% avail</small></div>`
           + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} HTTP test${fetched.count === 1 ? '' : 's'}</div></div>`
-          + tepHealthRingHtml(fetched.avg, '')
+          + tepHealthRingHtml(fetched.avg, '', !tepSaasRingAnimated)
           + '</div>';
+        tepGrowRingsIn(saasEl);
+        tepSaasRingAnimated = true;
       } else {
         const httpN = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'http').length;
         saasEl.innerHTML = httpN
@@ -19896,15 +20005,15 @@
       log(`Loaded ${allEndpointAgents.length} endpoint agent(s)`, 'tep-log-ok');
       populateEndpointAgentTagFilter();
       renderEndpointAgents();
-      // CPU/RAM (see tepFetchAllEyebrowMetrics below) + battery status (see
-      // fetchEndpointAgentBatteryStatus below) for the whole fleet, fetched
-      // together in the background so neither delays the initial list paint;
-      // re-renders whatever's currently showing (sidebar list and/or fullscreen
-      // map) once the numbers land.
+      // CPU/RAM + battery for the whole fleet — fetched in the background so
+      // it doesn't delay the initial list paint; re-renders whatever's
+      // currently showing (sidebar list and/or fullscreen map) once the
+      // numbers land. Battery is its own sweep (fetchEndpointAgentBatteryStatus)
+      // since the roster fetch (metadata/search) doesn't carry battery data.
       void (async () => {
         const [snap, batteryById] = await Promise.all([
           tepFetchAllEyebrowMetrics(),
-          fetchEndpointAgentBatteryStatus().catch((e) => { log(`Battery status: ${e.message}`, 'tep-log-info'); return null; }),
+          fetchEndpointAgentBatteryStatus().catch((e) => { log(`Endpoint agent battery fetch failed: ${e.message}`, 'tep-log-info'); return null; })
         ]);
         let changed = false;
         if (snap && applyEyebrowMetricsToAgents(snap) > 0) changed = true;
@@ -19914,8 +20023,7 @@
           // preserveZoom: this background enrichment can land well after the
           // map is open and the user has zoomed/panned — CONFIRMED via user
           // report that resetting to auto-fit here was yanking the view back
-          // mid-session, more noticeably once battery status (a second
-          // paginated fetch) made this land later/less predictably.
+          // mid-session.
           refreshDashMapViews(true);
         }
       })();
@@ -19937,12 +20045,10 @@
   // ride along on this same path (ENDPOINT_GATEWAY_BATTERY_HEALTH_PERCENT),
   // but that's state-of-health (long-term wear), not the state-of-charge
   // "how much life is left right now" reading users actually want — and
-  // there's no dashboard-widget metric for state-of-charge at all. It's
-  // fetched separately below via fetchEndpointAgentBatteryStatus(), straight
-  // from the same per-agent settings/search endpoint the Agent View page
-  // uses (CONFIRMED via live capture: batteryMetrics.batteryLevelNormalizedPercent),
-  // keyed directly by agent id — no dashboard-anchoring needed for that one. Unlike
-  // self-service/data (used by the SaaS/Network Health widgets), data-stream
+  // there's no dashboard-widget metric for state-of-charge at all. That one
+  // comes from its own separate sweep instead (see
+  // fetchEndpointAgentBatteryStatus below).
+  // Unlike self-service/data (used by the SaaS/Network Health widgets), data-stream
   // 404s on a fully made-up dashboardId — CONFIRMED it accepts any REAL
   // dashboard id the account can see, with a made-up widgetId (server treats
   // widgetId as a fresh cache key, not a saved-widget lookup). One request per
@@ -20105,71 +20211,74 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Battery status (state-of-charge — "how much life is left right now") via
-  // the same v3 agent-management-service search the Agent View/Settings pages
-  // use — CONFIRMED via live capture: POST .../v3/agent/management/settings/search
-  // returns every agent's batteryMetrics.batteryLevelNormalizedPercent (0-1)
-  // directly, keyed by the agent's own `id` (same UUID scheme normalizeEndpointAgent
-  // already uses), no dashboard-anchoring or hostname matching needed. That
-  // payload also carries batteryHealthNormalizedPercent (long-term wear,
-  // 1.0 = no measurable degradation yet) and batteryChargeCyclesCount
-  // (unused). Health is surfaced as a plain Healthy/Degraded label rather
-  // than its own percentage — the exact wear number isn't very actionable,
-  // whether it's degraded at all is.
+  // Battery status (state-of-charge — "how much life is left right now") —
+  // CONFIRMED via live capture to live on ENDPOINT_AGENT_SETTINGS_SEARCH_PATH's
+  // response, NOT the roster endpoint (metadata/search) — this used to be
+  // merged into the roster fetch to save a request, but that endpoint has no
+  // lat/lng field at all, so switching the roster to it broke solo map pins
+  // (see fetchEndpointAgentsViaSearch's comment). Back to its own paginated
+  // sweep, page-based (page/pageSize), each element's
+  // batteryMetrics.{batteryLevelNormalizedPercent, batteryHealthNormalizedPercent}
+  // (0-1). Health is surfaced as a plain Healthy/Degraded label rather than
+  // its own percentage — the exact wear number isn't very actionable, whether
+  // it's degraded at all is.
   // ---------------------------------------------------------------------------
-  const ENDPOINT_AGENT_SETTINGS_SEARCH_PATH = '/namespace/endpoint-api/agent-management-service/v3/agent/management/settings/search';
-
-  /** Battery state-of-charge + health for every endpoint agent in one
-   *  paginated sweep. Returns Map<agentId, { pct: 0-100, healthy: boolean }>. */
   async function fetchEndpointAgentBatteryStatus() {
-    const pageSize = 100;
+    const pageSize = 500;
     const byId = new Map();
-    let page = 0, totalCount = null, fetchedCount = 0;
-    for (let guard = 0; guard < 50; guard++) {
-      const url = `${ENDPOINT_AGENT_SETTINGS_SEARCH_PATH}?page=${page}&pageSize=${pageSize}&sortDirection=DESCENDING&sortProperty=LAST_MODIFIED`;
-      let resp;
-      try {
-        resp = await ajax(url, { method: 'POST', body: JSON.stringify({ searchTerm: '', searchTermFields: [], filters: [] }) });
-      } catch (e) {
-        log(`Battery status: fetch error — ${e.message}`, 'tep-log-info');
-        break;
-      }
+    let page = 0;
+    let fetchedCount = 0;
+    let totalCount = null;
+    for (let guard = 0; guard < 100; guard++) {
+      const resp = await ajax(`${ENDPOINT_AGENT_SETTINGS_SEARCH_PATH}?page=${page}&pageSize=${pageSize}`, {
+        method: 'POST',
+        body: JSON.stringify({ filters: [{ key: 'includeDeleted', values: ['NEVER_OR_RECOVERABLE_ONLY'] }], searchTerm: '' })
+      });
       const text = await resp.text().catch(() => '');
-      if (!resp.ok) { log(`Battery status: HTTP ${resp.status} — ${text.slice(0, 160)}`, 'tep-log-info'); break; }
+      if (!resp.ok) throw new Error(`${resp.status}: ${text.slice(0, 240)}`);
       let data;
-      try { data = JSON.parse(text); } catch (e) { log(`Battery status: JSON parse error — ${e.message}`, 'tep-log-info'); break; }
-      const elements = Array.isArray(data && data.elements) ? data.elements : [];
+      try { data = JSON.parse(text); } catch (e) { throw new Error(`JSON parse: ${e.message}`); }
+      const elements = extractEndpointAgentsFromSearchResponse(data);
+      if (!Array.isArray(elements)) throw new Error(`unexpected shape keys: ${topLevelKeysLabel(data)}`);
       for (const el of elements) {
-        const id = el && el.id;
-        const bm = el && el.batteryMetrics;
-        const levelPct = bm && Number(bm.batteryLevelNormalizedPercent);
-        const healthPct = bm && Number(bm.batteryHealthNormalizedPercent);
-        if (id && Number.isFinite(levelPct)) {
-          byId.set(String(id), {
-            pct: Math.round(levelPct * 100),
-            healthPct: Number.isFinite(healthPct) ? Math.round(healthPct * 100) : null,
-          });
-        }
+        const raw = el && el.agentInfo ? el.agentInfo : el;
+        const id = epAgentPickId(el);
+        const bm = raw && typeof raw === 'object' ? raw.batteryMetrics : null;
+        if (!id || !bm) continue;
+        const bmLevel = Number(bm.batteryLevelNormalizedPercent);
+        const bmHealth = Number(bm.batteryHealthNormalizedPercent);
+        byId.set(id, {
+          pct: Number.isFinite(bmLevel) ? Math.round(bmLevel * 100) : null,
+          healthPct: Number.isFinite(bmHealth) ? Math.round(bmHealth * 100) : null
+        });
       }
       fetchedCount += elements.length;
       if (data && data.totalCount != null) totalCount = Number(data.totalCount);
-      if (!elements.length || elements.length < pageSize) break;
-      if (totalCount != null && fetchedCount >= totalCount) break;
+      if (!elements.length) break; // truly empty page — nothing more to get
+      // totalCount (when given) is authoritative, checked before the short-
+      // page fallback — a page shorter than requested shouldn't be read as
+      // "must be the last one" if the real count says otherwise.
+      if (totalCount != null) {
+        if (fetchedCount >= totalCount) break;
+      } else if (elements.length < pageSize) {
+        break;
+      }
       page++;
     }
-    if (byId.size) log(`Battery status: ${byId.size} agent(s)`, 'tep-log-ok');
     return byId;
   }
 
   /** Applies a fetched battery-status map onto every allEndpointAgents entry
-   *  by matching agent id. Returns how many agents got updated. */
+   *  by agent id. Returns how many agents got updated. */
   function applyBatteryStatusToAgents(byId) {
     if (!byId || !byId.size) return 0;
     let applied = 0;
     for (const agent of allEndpointAgents) {
-      if (!agent.id) continue;
-      const v = byId.get(String(agent.id));
-      if (v != null) { agent.battery = `${v.pct}%`; agent.batteryHealthPct = v.healthPct; applied++; }
+      const hit = byId.get(agent.id);
+      if (!hit) continue;
+      if (hit.pct != null) agent.battery = `${hit.pct}%`;
+      agent.batteryHealthPct = hit.healthPct;
+      applied++;
     }
     return applied;
   }
@@ -20243,26 +20352,37 @@
    *  unusable, the far more common raw shape for a WiFi signal value) mapped
    *  onto that same 0-100 scale. Returns null if neither is found — callers
    *  must treat that as "no data" (keep the existing flat wifi color), not
-   *  "bad signal". epWifiScoreLogged (see applySegmentMetricsToAgent) logs
-   *  once per session whether this actually found something, so a wrong
-   *  guess here is easy to spot and correct against a real capture.
-   *  CONFIRMED WRONG via user report: whichever named field in the list
-   *  below actually matches reads inverted from this app's 0=bad/100=good
-   *  convention — agents with genuinely good WiFi were showing a red icon.
-   *  Flipped (100 - pct) to correct it. The RSSI fallback derives its own
-   *  0-100 value straight from dBm and was never part of the bug, so it's
-   *  untouched. */
+   *  "bad signal".
+   *
+   *  History: originally treated every candidate field as higher=better.
+   *  A user reported good signal showing red, so every field got flipped
+   *  (100 - pct) uniformly — which then made a DIFFERENT set of agents read
+   *  way LOWER than expected, i.e. the uniform flip over-corrected agents
+   *  that were never wrong. Conclusion: different agents/platforms expose
+   *  different fields here, not all with the same polarity. Now split into
+   *  two tiers — WIFI_PCT_KEYS_DIRECT (explicitly "quality"/"strength"
+   *  named, near-universal higher=better telemetry convention, trusted
+   *  as-is and checked first) and WIFI_PCT_KEYS_INVERTED (just
+   *  connectionScore — generic/ambiguous enough that it could easily be a
+   *  "connection PROBLEM score" instead, only tried once no direct field is
+   *  present). Still an unconfirmed guess — the per-agent log line in
+   *  applySegmentMetricsToAgent below names the exact matched field and its
+   *  raw value for every wifi agent (capped), so if a specific agent still
+   *  looks wrong, its log line is what to paste back for a real fix. */
+  const WIFI_PCT_KEYS_DIRECT = [
+    'wifiScore', 'wifiSignalScore', 'wifiQualityScore',
+    'signalQuality', 'signalQualityPercent', 'wifiQuality', 'linkQuality',
+    'signalStrengthPercent', 'wifiSignalStrengthPercent',
+  ];
+  const WIFI_PCT_KEYS_INVERTED = ['connectionScore'];
+  const WIFI_RSSI_KEYS = ['rssi', 'wifiRssi', 'signalStrength', 'wifiSignalStrength', 'signalLevel', 'wifiSignalLevel', 'signalDbm'];
   function epAgentPickWifiScore(raw) {
     if (!raw || typeof raw !== 'object') return null;
-    const pct = epAgentPickPercentMetric(raw, [
-      'wifiScore', 'wifiSignalScore', 'wifiQualityScore', 'connectionScore',
-      'signalQuality', 'signalQualityPercent', 'wifiQuality', 'linkQuality',
-      'signalStrengthPercent', 'wifiSignalStrengthPercent',
-    ]);
-    if (pct != null) return Math.round(100 - parseFloat(pct));
-    const rssiRaw = epAgentPickField(raw, [
-      'rssi', 'wifiRssi', 'signalStrength', 'wifiSignalStrength', 'signalLevel', 'wifiSignalLevel', 'signalDbm',
-    ]);
+    const direct = epAgentPickPercentMetric(raw, WIFI_PCT_KEYS_DIRECT);
+    if (direct != null) return Math.round(parseFloat(direct));
+    const inverted = epAgentPickPercentMetric(raw, WIFI_PCT_KEYS_INVERTED);
+    if (inverted != null) return Math.round(100 - parseFloat(inverted));
+    const rssiRaw = epAgentPickField(raw, WIFI_RSSI_KEYS);
     const rssi = Number(rssiRaw);
     if (Number.isFinite(rssi) && rssi < 0 && rssi >= -100) {
       const clamped = Math.max(-90, Math.min(-30, rssi));
@@ -20270,7 +20390,12 @@
     }
     return null;
   }
-  let epWifiScoreLogged = false;
+  // Capped counter (not a one-shot flag) — the previous "log once ever"
+  // version only ever showed whichever wifi agent happened to enrich
+  // first, useless for tracking down a mismatch on one SPECIFIC agent.
+  // Capped instead of unlimited so a huge fleet doesn't flood the log.
+  let epWifiScoreLoggedCount = 0;
+  const EP_WIFI_SCORE_LOG_CAP = 40;
 
   function applySegmentMetricsToAgent(agent, data) {
     const agentNode = (data && data.agent && typeof data.agent === 'object') ? data.agent : data;
@@ -20288,11 +20413,23 @@
     if (kind === 'wifi') {
       const wifiScore = epAgentPickWifiScore(conn) != null ? epAgentPickWifiScore(conn) : epAgentPickWifiScore(agentNode);
       if (wifiScore != null) agent.wifiScore = wifiScore;
-      if (!epWifiScoreLogged) {
-        epWifiScoreLogged = true;
+      if (epWifiScoreLoggedCount < EP_WIFI_SCORE_LOG_CAP) {
+        epWifiScoreLoggedCount++;
+        // Names the exact field + raw value this agent's score came from —
+        // whichever of conn/agentNode actually supplied it, checked in the
+        // same direct-then-inverted-then-rssi order epAgentPickWifiScore
+        // itself uses. If a specific agent's color still looks wrong, this
+        // line (searchable by agent name) is the ground truth to paste back.
+        const src = (epAgentPickPercentMetric(conn, WIFI_PCT_KEYS_DIRECT) != null || epAgentPickPercentMetric(conn, WIFI_PCT_KEYS_INVERTED) != null || epAgentPickField(conn, WIFI_RSSI_KEYS) != null)
+          ? conn : agentNode;
+        const matchedKey = epAgentPickFieldKey(src, WIFI_PCT_KEYS_DIRECT)
+          || epAgentPickFieldKey(src, WIFI_PCT_KEYS_INVERTED)
+          || epAgentPickFieldKey(src, WIFI_RSSI_KEYS);
+        const matchedRaw = matchedKey ? epAgentPickField(src, [matchedKey]) : null;
+        const inverted = matchedKey && WIFI_PCT_KEYS_INVERTED.some((k) => k.toLowerCase() === matchedKey.toLowerCase());
         log(wifiScore != null
-          ? `WiFi score: found ${wifiScore} for agent ${agent.id} — check this reads sensibly (0=unusable, 100=excellent)`
-          : `WiFi score: no known field found on a wifi-connected agent (${agent.id}) — see the "Segment connection keys" log line above for the real field names to add`, 'tep-log-info');
+          ? `WiFi score: ${agent.name || agent.id} → ${wifiScore}% (field "${matchedKey}" = ${matchedRaw}${inverted ? ', inverted' : ''}) — flag this line if the color looks wrong for THIS agent`
+          : `WiFi score: no known field found on a wifi-connected agent (${agent.name || agent.id}) — see the "Segment connection keys" log line above for the real field names to add`, 'tep-log-info');
       }
     }
     // VPN on the last sample: the segment response lists active tunnels under `vpns`.

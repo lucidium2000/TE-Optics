@@ -38,7 +38,7 @@ The panel **figures out your session** from the page (cookies, storage, or heade
 
 ## Updating
 
-Nothing to do — the bookmark streams the latest `panel.js` straight from GitHub (via jsDelivr) every time you click it, so it's always current. No need to delete or redrag it. (Version 3.35 and newer; if yours is older, delete it and drag a new one once.)
+Nothing to do — the bookmark streams the latest `panel.js` straight from GitHub (via jsDelivr) every time you click it, so it's always current. No need to delete or redrag it.
 
 The installer page shows a **small build number** next to the title; the same number appears in the panel footer so you can confirm you’re on the latest build.
 
