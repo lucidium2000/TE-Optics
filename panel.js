@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.44';
+  const TEP_VERSION = '3.45';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -20241,7 +20241,7 @@
       const elements = extractEndpointAgentsFromSearchResponse(data);
       if (!Array.isArray(elements)) throw new Error(`unexpected shape keys: ${topLevelKeysLabel(data)}`);
       for (const el of elements) {
-        const raw = el && el.agentInfo ? el.agentInfo : el;
+        const raw = epAgentPickRaw(el);
         const id = epAgentPickId(el);
         const bm = raw && typeof raw === 'object' ? raw.batteryMetrics : null;
         if (!id || !bm) continue;
