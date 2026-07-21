@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.41';
+  const TEP_VERSION = '3.42';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -14187,7 +14187,7 @@
     // WiFi gets colored by its own signal score (epAgentPickWifiScore) when
     // available, same as the map hover card — falls back to the flat green
     // it always had when no score was found.
-    const agentWifiScoreColor = agent.connKind === 'wifi' && agent.wifiScore != null ? tepColorFromScore(agent.wifiScore).fill : null;
+    const agentWifiScoreColor = agent.connKind === 'wifi' && agent.wifiScore != null ? tepWifiScoreColor(agent.wifiScore).fill : null;
     const connColor = agent.connKind === 'wifi' ? (agentWifiScoreColor || '#4ade80') : '#94a3b8';
     const connTitle = agent.connKind === 'wifi' ? `Wi-Fi${agent.wifiScore != null ? ` — signal ${agent.wifiScore}%` : ''}` : 'Ethernet';
     const connHtml = agent.connKind && EP_CONN_ICON[agent.connKind]
@@ -15021,6 +15021,22 @@
     const f = Math.max(0, Math.min(1, (100 - score) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
     return tepHealthColorFrac(f);
   }
+  /** WiFi-specific color bands — deliberately much more lenient than the
+   *  generic health gradient above (tepColorFromScore), per explicit
+   *  request: a "merely good" wifi signal shouldn't read as red/orange the
+   *  way a middling health score would. Flat color per band (not a smooth
+   *  blend) rather than a continuous gradient — red only below 60%, then
+   *  progressively greener bands up to a full green at 93%+. */
+  function tepWifiScoreColor(score) {
+    if (score == null || !Number.isFinite(score)) return { fill: '#3b82f6', stroke: '#93c5fd' };
+    const stop = score < 60 ? [220, 38, 38]      // red
+      : score < 75 ? [249, 115, 22]              // orange
+        : score < 85 ? [250, 204, 21]            // yellow
+          : score < 93 ? [163, 230, 53]          // yellow-green
+            : [34, 197, 94];                     // green
+    const light = stop.map((c) => Math.round(c + (255 - c) * 0.55));
+    return { fill: `rgb(${stop.join(',')})`, stroke: `rgb(${light.join(',')})` };
+  }
   // Continuous freshness from an agent's OWN last-seen recency — NOT the Last
   // Seen slider's position (that's still a pure hide/show filter, see
   // tepPassesSeenFilter below). 1.0 fresh, fading to a low floor by 30 days
@@ -15337,9 +15353,10 @@
     // by showTip() the first time its hover card opens; same mechanism the
     // sidebar Endpoint Agents list already uses). Nothing shows until then.
     // WiFi gets colored by its own signal score (epAgentPickWifiScore) when
-    // available — same red→green health gradient as everything else —
-    // falling back to the flat blue it always had when no score was found.
-    const wifiScoreColor = it.connKind === 'wifi' && it.wifiScore != null ? tepColorFromScore(it.wifiScore).fill : null;
+    // available — its own, more lenient banded scale (tepWifiScoreColor),
+    // not the generic health gradient — falling back to the flat blue it
+    // always had when no score was found.
+    const wifiScoreColor = it.connKind === 'wifi' && it.wifiScore != null ? tepWifiScoreColor(it.wifiScore).fill : null;
     const connColor = it.connKind === 'wifi' ? (wifiScoreColor || '#93c5fd') : (it.connKind === 'ethernet' ? '#86efac' : '#94a3b8');
     const connTitle = it.connKind === 'wifi' ? `Wi-Fi${it.wifiScore != null ? ` — signal ${it.wifiScore}%` : ''}` : 'Ethernet';
     const connHtml = it.kind === 'endpoint' && it.connKind && EP_CONN_ICON[it.connKind]
@@ -15442,18 +15459,39 @@
       ${destHtml}
     </div>`;
   }
+  /** True if this item is one of the current map-wide highlight matches —
+   *  same sources paintMarker checks to gold-ring a marker (search, the
+   *  SaaS/Network test-row hover, a locked alert, or an Enterprise/Endpoint
+   *  Agents list hover) — used by tepDashTooltipHtml to sort matches to the
+   *  top of a cluster's row list, not just ring the marker itself. */
+  function tepItemIsMapHighlightMatch(it) {
+    if (dashMapSearchQuery && dashMapItemMatchesQuery(it, dashMapSearchQuery)) return true;
+    if (dashMapTestHighlight && it.kind === 'enterprise' && it.name
+      && dashMapTestHighlight.has(String(it.name).toUpperCase())) return true;
+    if (it.agentId != null) {
+      if (dashMapAlertPreviewHighlight && dashMapAlertPreviewHighlight.has(String(it.agentId))) return true;
+      if (dashMapAgentsListHoverHighlight && dashMapAgentsListHoverHighlight.has(String(it.agentId))) return true;
+    }
+    return false;
+  }
   function tepDashTooltipHtml(cluster) {
     const loc = cluster.items[0].location || 'Unknown';
     const n = cluster.items.length;
     const head = `<span>${tepEscapeHtmlText(loc)}${n > 1 ? ' · ' + n + ' agents' : ''}</span>`;
     const cap = 60;
-    // Loss-having agents surface first (a lossy agent is the more actionable
-    // signal than raw latency), then worst latency, then original order.
-    // data-idx (read by openTipAgent) must still point at the item's
-    // position in the UNSORTED cluster.items, so pair each with its real
-    // index before sorting a copy just for display order.
+    // Any current highlight match (search, alert, test-row hover, or
+    // agents-list hover — see tepItemIsMapHighlightMatch) surfaces first,
+    // ahead of even loss/latency — that's specifically who this tooltip was
+    // opened to point out. Loss-having agents surface next (a lossy agent
+    // is the more actionable signal than raw latency), then worst latency,
+    // then original order. data-idx (read by openTipAgent) must still point
+    // at the item's position in the UNSORTED cluster.items, so pair each
+    // with its real index before sorting a copy just for display order.
     const ordered = cluster.items.map((it, idx) => ({ it, idx }));
     ordered.sort((a, b) => {
+      const aHit = tepItemIsMapHighlightMatch(a.it);
+      const bHit = tepItemIsMapHighlightMatch(b.it);
+      if (aHit !== bHit) return aHit ? -1 : 1;
       const aLoss = Number.isFinite(a.it.lossPct) && a.it.lossPct > 0;
       const bLoss = Number.isFinite(b.it.lossPct) && b.it.lossPct > 0;
       if (aLoss !== bLoss) return aLoss ? -1 : 1;
@@ -20175,7 +20213,13 @@
    *  must treat that as "no data" (keep the existing flat wifi color), not
    *  "bad signal". epWifiScoreLogged (see applySegmentMetricsToAgent) logs
    *  once per session whether this actually found something, so a wrong
-   *  guess here is easy to spot and correct against a real capture. */
+   *  guess here is easy to spot and correct against a real capture.
+   *  CONFIRMED WRONG via user report: whichever named field in the list
+   *  below actually matches reads inverted from this app's 0=bad/100=good
+   *  convention — agents with genuinely good WiFi were showing a red icon.
+   *  Flipped (100 - pct) to correct it. The RSSI fallback derives its own
+   *  0-100 value straight from dBm and was never part of the bug, so it's
+   *  untouched. */
   function epAgentPickWifiScore(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const pct = epAgentPickPercentMetric(raw, [
@@ -20183,7 +20227,7 @@
       'signalQuality', 'signalQualityPercent', 'wifiQuality', 'linkQuality',
       'signalStrengthPercent', 'wifiSignalStrengthPercent',
     ]);
-    if (pct != null) return Math.round(parseFloat(pct));
+    if (pct != null) return Math.round(100 - parseFloat(pct));
     const rssiRaw = epAgentPickField(raw, [
       'rssi', 'wifiRssi', 'signalStrength', 'wifiSignalStrength', 'signalLevel', 'wifiSignalLevel', 'signalDbm',
     ]);
@@ -21606,19 +21650,85 @@
     liveTestClearLatency();
   }
 
-  function onlineEnterpriseVAgentIdsForLiveTest() {
-    const set = new Set();
-    for (const a of agents) {
-      if (a.agentType === 'Enterprise' && a.status === 'online') set.add(a.agentId);
+  // LIVE TEST fires one instant test per eligible agent — an org with
+  // thousands of online agents would otherwise create thousands of
+  // concurrent probes. Capped per kind; when over the cap, selection
+  // prioritizes recency and geographic spread (see liveTestSpreadSelect)
+  // over an arbitrary source-order slice.
+  const LIVE_TEST_MAX_PER_KIND = 100;
+  /** Resolves an agent's map coordinates the same way buildDashboardMapAgents
+   *  does — real lat/lng first, falling back to geocoding its location text
+   *  (cached per-agent for endpoint via epAgentGeo; enterprise has no
+   *  equivalent cache slot, so epGeocode is just called directly — it's a
+   *  dictionary lookup, not a network call). Returns null if neither
+   *  resolves. */
+  function liveTestAgentLatLng(a, isEndpoint) {
+    if (a.lat != null && a.lng != null) return { lat: a.lat, lng: a.lng };
+    const g = isEndpoint ? epAgentGeo(a) : (a.location ? epGeocode(a.location) : null);
+    return g ? { lat: g.lat, lng: g.lng } : null;
+  }
+  /** Picks up to `max` from `list` (a no-op when list.length <= max — the
+   *  common case). Buckets candidates into a coarse 10°×10° lat/lng grid
+   *  (roughly country/region-scale) so a handful of dense cities can't crowd
+   *  out everywhere else, sorts each bucket most-recently-seen first, then
+   *  round-robins across buckets — each round visiting the bucket whose
+   *  next-up agent is most recent first — so the result is spread
+   *  geographically while still favoring recency both within and across
+   *  buckets. Agents with no resolvable coordinates land in their own
+   *  'unknown' bucket rather than being dropped. */
+  function liveTestSpreadSelect(list, max, isEndpoint) {
+    if (list.length <= max) return list.slice();
+    const buckets = new Map(); // key -> agents[], sorted most-recent-first
+    for (const a of list) {
+      const geo = liveTestAgentLatLng(a, isEndpoint);
+      const key = geo ? `${Math.floor(geo.lat / 10)}:${Math.floor(geo.lng / 10)}` : 'unknown';
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(a);
     }
+    for (const arr of buckets.values()) arr.sort((x, y) => (Number(y.lastSeenMs) || 0) - (Number(x.lastSeenMs) || 0));
+    const bucketArr = Array.from(buckets.values());
+    const picked = [];
+    while (picked.length < max && bucketArr.some((b) => b.length)) {
+      bucketArr.sort((x, y) => {
+        const xr = x.length ? (Number(x[0].lastSeenMs) || 0) : -Infinity;
+        const yr = y.length ? (Number(y[0].lastSeenMs) || 0) : -Infinity;
+        return yr - xr;
+      });
+      for (const b of bucketArr) {
+        if (picked.length >= max) break;
+        if (b.length) picked.push(b.shift());
+      }
+    }
+    return picked;
+  }
+
+  function onlineEnterpriseVAgentIdsForLiveTest() {
+    // Dedupe by agentId first (agents[] can carry more than one row per
+    // physical agent) — otherwise a duplicate could eat a slot in the cap
+    // below without adding a genuinely new agent to the run.
+    const seenIds = new Set();
+    const online = [];
+    for (const a of agents) {
+      if (a.agentType === 'Enterprise' && a.status === 'online' && !seenIds.has(a.agentId)) {
+        seenIds.add(a.agentId);
+        online.push(a);
+      }
+    }
+    const picked = liveTestSpreadSelect(online, LIVE_TEST_MAX_PER_KIND, false);
+    if (picked.length < online.length) {
+      log(`LIVE TEST: ${online.length} online enterprise agent(s) — capped to ${picked.length} (most recent, spread geographically)`, 'tep-log-info');
+    }
+    const set = new Set(picked.map((a) => a.agentId));
     return selectionSetToVAgentIds(set);
   }
 
   function onlineEndpointAgentIdsForLiveTest() {
-    return allEndpointAgents
-      .filter((a) => tepEndpointHealth(a.lastSeenMs) === 'healthy')
-      .map((a) => a.id)
-      .filter(Boolean);
+    const online = allEndpointAgents.filter((a) => tepEndpointHealth(a.lastSeenMs) === 'healthy');
+    const picked = liveTestSpreadSelect(online, LIVE_TEST_MAX_PER_KIND, true);
+    if (picked.length < online.length) {
+      log(`LIVE TEST: ${online.length} online endpoint agent(s) — capped to ${picked.length} (most recent, spread geographically)`, 'tep-log-info');
+    }
+    return picked.map((a) => a.id).filter(Boolean);
   }
 
   /** True when a test's machineConfig actually pins it to specific agents or
