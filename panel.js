@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.42';
+  const TEP_VERSION = '3.43';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -16142,11 +16142,18 @@
         const hitRow = tip.querySelector('.tep-map-tip-agent--focushit');
         if (hitRow) { try { hitRow.scrollIntoView({ block: 'nearest' }); } catch (_) { /* */ } }
       }
-      // Kick off lazy hardware enrichment for any endpoint agent shown here
-      // that hasn't been enriched yet (bounded to what's actually displayed,
-      // never a bulk fetch).
-      for (const it of marker._cluster.items) {
-        void enrichEndpointAgentForTip(it, marker._cluster, marker);
+      // Lazy hardware enrichment (connKind/WiFi/VPN/disk — see
+      // enrichEndpointAgentForTip's own comment for why CPU/RAM/battery
+      // don't need this at all) — a solo-agent tooltip enriches immediately
+      // since opening it already commits to seeing just this one agent, but
+      // a multi-agent cluster does NOT: this used to loop every item in
+      // marker._cluster.items regardless of tepDashTooltipHtml's own 60-row
+      // display cap, firing one segment-visualisation call per agent in the
+      // WHOLE cluster the instant it was hovered — hundreds at once for a
+      // dense cluster. Multi-agent clusters now enrich per-row instead, on
+      // hover (see the mouseover listener below).
+      if (marker._cluster.items.length === 1) {
+        void enrichEndpointAgentForTip(marker._cluster.items[0], marker._cluster, marker);
       }
     }
     // The agent-tests submenu lives outside `wrap` (appended to <html>, same
@@ -16222,7 +16229,32 @@
       // bold a stale row from a previous ISP-popover jump in an unrelated
       // cluster the user is now genuinely hovering.
       if (m) { dashMapFocusAgentKey = null; mouseOverWrap = true; showTip(m); return; }
-      if (e.target.closest('.tep-agent-map-tip')) { mouseOverWrap = true; cancelHide(); }
+      if (e.target.closest('.tep-agent-map-tip')) {
+        mouseOverWrap = true;
+        cancelHide();
+        // Per-row lazy enrichment (connKind/WiFi/VPN/disk) for a hovered
+        // agent inside an open multi-agent cluster tooltip — see showTip's
+        // own comment for why the cluster as a whole no longer eager-
+        // enriches everyone just because it was opened. No marker passed
+        // (null) since a row hover doesn't move anything — the tip's
+        // existing position is left alone; enrichEndpointAgentForTip
+        // already no-ops the reposition when marker is falsy.
+        const row = e.target.closest('.tep-map-tip-agent');
+        if (row && tip._cluster) {
+          const it = tip._cluster.items[parseInt(row.dataset.idx, 10)];
+          // Cheap pre-filter here (kind/agentId only) so re-entering the
+          // same row's child elements — mouseover re-fires per descendant
+          // crossed — doesn't repeatedly call into
+          // enrichEndpointAgentForTip just to hit its own already-
+          // enriched/enriching guard; that function's own DIAG logging
+          // would otherwise spam once per pixel of mouse movement instead
+          // of once per agent.
+          if (it && it.kind === 'endpoint' && it.agentId != null) {
+            const agent = allEndpointAgents.find((x) => String(x.id) === String(it.agentId));
+            if (agent && !agent._enriched && !agent._enriching) void enrichEndpointAgentForTip(it, tip._cluster, null);
+          }
+        }
+      }
     });
     wrap.addEventListener('mouseout', (e) => {
       if (!e.target.closest('.tep-agent-map-marker') && !e.target.closest('.tep-agent-map-tip')) return;
