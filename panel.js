@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.46';
+  const TEP_VERSION = '3.47';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2300,6 +2300,32 @@
     .tep-isp-agents-row { cursor: pointer; }
     .tep-isp-agents-row:hover { background: rgba(249,115,22,.14); }
     .tep-saas-breakdown-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-agentkind-badge {
+      display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
+      border-radius: 999px; padding: 1px 6px 1px 5px; margin-left: 2px;
+      font-size: 10px; font-weight: 700; transition: background .15s ease, color .15s ease;
+    }
+    .tep-agentkind-badge--cloud { background: rgba(59,130,246,.18); color: #93c5fd; }
+    .tep-agentkind-badge--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
+    .tep-agentkind-badge svg { fill: none; transition: fill .15s ease; }
+    .tep-agentkind-count { line-height: 1; }
+    /* "Cloud" wording only shows up alongside the count while its row is
+       hovered — see the a.tep-saas-breakdown-row:hover rule below. */
+    .tep-agentkind-label { display: none; line-height: 1; }
+    /* Light-blue pulsing glow (same technique as the map's gold
+       tep-search-hit-pulse, just its own colour) — lit up + filled in while
+       the row it belongs to is hovered. Cloud-only rows only — per user
+       request, the Enterprise badge stays as-is on hover. */
+    @keyframes tep-cloud-badge-pulse {
+      0%, 100% { filter: drop-shadow(0 0 3px rgba(125,211,252,.9)) drop-shadow(0 0 9px rgba(125,211,252,.55)); }
+      50%      { filter: drop-shadow(0 0 7px rgba(125,211,252,1)) drop-shadow(0 0 16px rgba(125,211,252,.9)); }
+    }
+    a.tep-saas-breakdown-row:hover .tep-agentkind-badge--cloud {
+      background: rgba(125,211,252,.24); color: #e0f2fe;
+      animation: tep-cloud-badge-pulse 1s ease-in-out infinite;
+    }
+    a.tep-saas-breakdown-row:hover .tep-agentkind-badge--cloud svg { fill: currentColor; }
+    a.tep-saas-breakdown-row:hover .tep-agentkind-badge--cloud .tep-agentkind-label { display: inline; }
     .tep-health-ring { position: relative; width: 52px; height: 52px; flex: 0 0 52px; }
     .tep-health-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
     .tep-health-ring-track { fill: none; stroke: #1e293b; stroke-width: 3.5; }
@@ -18147,6 +18173,60 @@
   // breakdown-list rows, so a row's colour always matches what the ring
   // above it is showing.
   const TEP_HEALTH_RED_FLOOR_PCT = 80;
+  // Agent-kind badge icons for breakdown rows — a rounder, more solid-looking
+  // cloud than the SaaS Health title icon's (needs to read clearly filled-in
+  // on hover, see .tep-agentkind-badge svg's fill transition), and a plain
+  // stroke-only rack/appliance glyph for Enterprise so it fills in the same
+  // way instead of the widget title icon's flat currentColor fill.
+  const TEP_CLOUD_ONLY_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9z"/></svg>';
+  const TEP_ENTERPRISE_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="3.2" width="14" height="8" rx="1.8"/><line x1="3" y1="7.2" x2="13" y2="7.2"/></svg>';
+  /** UPPER-CASED display names of every currently-known Enterprise Agent
+   *  (from the `agents` roster this panel already loads for the Enterprise
+   *  Agents widget/map markers — no extra fetch). Used to split a
+   *  breakdown row's NAS-AGENT names into Enterprise vs Cloud. */
+  function tepEnterpriseAgentNameSet() {
+    const set = new Set();
+    for (const a of agents) {
+      if (a.agentType === 'Enterprise' && a.agentName) set.add(String(a.agentName).toUpperCase());
+    }
+    return set;
+  }
+  /** Tags each breakdown row with a small badge showing which agent kind ran
+   *  it — icon + count, right next to the title. CONFIRMED endpoint agents
+   *  never appear in the NAS-AGENT dimension these rows are built from, so
+   *  every name is either Enterprise or Cloud: a row with zero Enterprise
+   *  matches gets the cloud badge (count = every runner, since none of them
+   *  are Enterprise); a row with at least one gets the Enterprise badge
+   *  (count = just the Enterprise ones — a mixed cloud+enterprise test still
+   *  reads as "Enterprise ran this too", the more actionable half). Runs
+   *  once byTestAgents resolves — reuses the same cached per-test-agent map
+   *  the row hover highlight already fetches, so this costs nothing extra.
+   *  A row with no agent names at all is left unmarked (unknown). */
+  function tepMarkBreakdownRowAgentBadges(pop, byTestAgents) {
+    if (!pop || !byTestAgents) return;
+    const entNames = tepEnterpriseAgentNameSet();
+    pop.querySelectorAll('.tep-saas-breakdown-row[data-test-id]').forEach((row) => {
+      const names = byTestAgents.get(row.dataset.testId);
+      if (!names || !names.size) return;
+      const titleEl = row.querySelector('.tep-saas-breakdown-title');
+      if (!titleEl || titleEl.querySelector('.tep-agentkind-badge')) return;
+      let entCount = 0;
+      for (const n of names) { if (entNames.has(n)) entCount++; }
+      const cloudOnly = entCount === 0;
+      const kind = cloudOnly ? 'cloud' : 'enterprise';
+      const icon = cloudOnly ? TEP_CLOUD_ONLY_ICON_SVG : TEP_ENTERPRISE_ICON_SVG;
+      const n = cloudOnly ? names.size : entCount;
+      const title = cloudOnly
+        ? `${n} Cloud Agent${n === 1 ? '' : 's'} only — no Enterprise Agent ran this test`
+        : `${n} Enterprise Agent${n === 1 ? '' : 's'} ran this test`;
+      // Cloud-only badge stays icon+count at rest — the "Cloud" wording only
+      // appears alongside it while the row is hovered (see .tep-agentkind-label,
+      // shown via a.tep-saas-breakdown-row:hover), so the count is always
+      // visible but the row hover confirms what kind it's counting.
+      const labelHtml = cloudOnly ? '<span class="tep-agentkind-label">Cloud</span>' : '';
+      titleEl.insertAdjacentHTML('beforeend', ` <span class="tep-agentkind-badge tep-agentkind-badge--${kind}" title="${tepEscapeHtmlText(title)}">${icon}<span class="tep-agentkind-count">${n}</span>${labelHtml}</span>`);
+    });
+  }
   /** Circular health ring whose arc length is the availability percent and
    *  whose colour follows TEP_HEALTH_RED_FLOOR_PCT's gradient — the old
    *  99%/95% 3-bucket cutoffs read a perfectly reasonable 93% as flat-out
@@ -18273,7 +18353,7 @@
     // check in the mouseover handler below just means nothing highlights
     // until this resolves, which given the cache is near-instant.
     let byTestAgents = null;
-    tepFetchHttpAgentsByTest().then((m) => { byTestAgents = m; });
+    tepFetchHttpAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
     pop.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
       if (!row || !row.dataset.testId || !byTestAgents) return;
@@ -18554,7 +18634,7 @@
     document.documentElement.appendChild(pop);
     tepNetworkPopoverEl = pop;
     let byTestAgents = null;
-    tepFetchNetworkAgentsByTest().then((m) => { byTestAgents = m; });
+    tepFetchNetworkAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
     pop.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
       if (!row || !row.dataset.testId || !byTestAgents) return;
@@ -21256,16 +21336,21 @@
   }
   /** ISP widget's own latency scale — deliberately separate from
    *  tepLatencySeverity (used for marker colours/hover badges elsewhere,
-   *  and unchanged): a fixed 0–300ms range regardless of agent kind, no
+   *  and unchanged): a fixed 0–312ms range regardless of agent kind, no
    *  longer baseline-relative (was ISP_HEALTH_LATENCY_GOAL_MS for endpoint
    *  vs LIVE_TEST_LATENCY_BASELINE_MS for enterprise). 0ms → 0 (best),
-   *  100ms → 0.5 (an average this bad is exactly half health), 300ms+ → 1
-   *  (worst), linear on each side of that 100ms midpoint. */
+   *  104ms → 0.5 (an average this bad is exactly half health), 312ms+ → 1
+   *  (worst), linear on each side of that midpoint. Shared by both ISP
+   *  Health and Network Health (tepFetchAllNetworkHealth and friends), so
+   *  tuning it here moves both at once — anchors bumped 4% higher (was
+   *  100/300) per user request, to be a little more forgiving of normal
+   *  latency across both widgets. */
   function tepIspLatencySeverity(ms) {
     if (!Number.isFinite(ms) || ms <= 0) return 0;
-    if (ms >= 300) return 1;
-    if (ms <= 100) return 0.5 * (ms / 100);
-    return 0.5 + 0.5 * ((ms - 100) / 200);
+    const mid = 104, max = 312;
+    if (ms >= max) return 1;
+    if (ms <= mid) return 0.5 * (ms / mid);
+    return 0.5 + 0.5 * ((ms - mid) / (max - mid));
   }
   // Any packet loss degrades health: >0 starts at amber, ≥10% → full red.
   function tepLossSeverity(loss) {
