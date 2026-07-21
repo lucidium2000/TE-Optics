@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.40';
+  const TEP_VERSION = '3.41';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2658,20 +2658,25 @@
     }
     .tep-map-tip-dest-g { flex: 0 0 auto; display: inline-flex; }
     .tep-map-tip-metrics span { color: #e2e8f0; font-weight: 600; }
-    /* App (SaaS/Application) + Net (Network) health, side by side — purely
-       informational, always both values regardless of which one
-       dashMapColorSource is currently using to color the marker itself; NOT
-       its own click target — the whole row opens the per-agent test
-       popover, see openTipAgent. flex-start (not space-between) keeps the
-       two pairs grouped together on the left instead of stretched to
-       opposite edges of a wide hover card. */
+    /* App (SaaS/Application) + Net (Network) health, side by side, whichever
+       are actually present — each is its own click target opening the
+       per-agent test popover scoped to that metric, see the tip's click
+       listener. flex-start (not space-between) keeps the pairs grouped
+       together on the left instead of stretched to opposite edges of a
+       wide hover card. */
     .tep-map-tip-metricrow {
       display: flex; align-items: center; justify-content: flex-start; gap: 18px;
       margin-top: 4px; padding: 3px 6px; border-radius: 4px;
       background: rgba(148,163,184,.08); font-size: 10.5px; color: #94a3b8;
     }
     .tep-map-tip-metricrow b { font-weight: 700; }
-    .tep-map-tip-metric-pair { display: flex; align-items: center; gap: 4px; }
+    .tep-map-tip-metric-pair { display: flex; align-items: center; gap: 4px; cursor: pointer; border-radius: 3px; padding: 1px 3px; margin: -1px -3px; }
+    .tep-map-tip-metric-pair:hover { background: rgba(148,163,184,.16); }
+    /* Shown in place of the metric row entirely when this agent has neither
+       App nor Network data at all — a direct link out instead of an empty
+       row (see tepDashTipRow). */
+    .tep-map-tip-metricrow--link { text-decoration: none; color: #93c5fd; cursor: pointer; font-weight: 600; }
+    .tep-map-tip-metricrow--link:hover { background: rgba(148,163,184,.16); }
     /* Alert-agent variant of the metricrow above (see tepDashTipRow's
        alertMetricRowHtml) — same shape, red-tinted, dot + description
        instead of a label + score. */
@@ -3453,6 +3458,7 @@
   root._tepHide = () => {
     root.classList.add('tep-offscreen');
     toggleBtn.textContent = '⌖';
+    tepPlayVelvetClick();
     setTimeout(() => {
       // Guards against a rapid re-show landing mid-animation: if _tepShow
       // already removed .tep-offscreen by the time this fires, leave the
@@ -15348,22 +15354,38 @@
       connHtml, vpnHtml,
     ].filter(Boolean) : [];
     const metricsHtml = metricParts.length ? `<div class="tep-map-tip-metrics">${metricParts.join('')}</div>` : '';
-    // Informational row showing BOTH App (SaaS/Application) and Network
-    // health, always — regardless of which single metric dashMapColorSource
-    // is currently using to color the AGENT ITSELF (tepColorForItem,
-    // unaffected by this) — so the combined-vs-one-metric marker color
-    // never hides the other half of the picture. NOT independently
-    // clickable/focusable itself; the whole row (see openTipAgent) opens the
-    // same per-agent test-list popover these scores are driven by.
-    const metricScoreText = (s) => (s != null ? `${s.toFixed(1)}%` : '—');
+    // Informational row showing whichever of App (SaaS/Application) and
+    // Network health this agent actually has data for — regardless of
+    // which single metric dashMapColorSource is currently using to color
+    // the AGENT ITSELF (tepColorForItem, unaffected by this), so the
+    // combined-vs-one-metric marker color never hides the other half of
+    // the picture. Each present value is its own click target (see the
+    // tip's click listener) opening the per-agent test popover scoped to
+    // just that metric; a missing metric is omitted rather than shown as a
+    // dash, and if NEITHER has data the whole row is replaced by a direct
+    // link to the agent's own settings/view page instead of sitting empty.
     const saasScore = tepSaasScoreForItem(it);
     const netScore = tepNetScoreForItem(it);
-    const saasColor = saasScore != null ? tepColorFromScore(saasScore).fill : '#64748b';
-    const netColor = netScore != null ? tepColorFromScore(netScore).fill : '#64748b';
-    const metricRowHtml = '<div class="tep-map-tip-metricrow">'
-      + `<span class="tep-map-tip-metric-pair"><span>App</span><b style="color:${saasColor}">${tepEscapeHtmlText(metricScoreText(saasScore))}</b></span>`
-      + `<span class="tep-map-tip-metric-pair"><span>Net</span><b style="color:${netColor}">${tepEscapeHtmlText(metricScoreText(netScore))}</b></span>`
-      + '</div>';
+    const hasSaas = saasScore != null;
+    const hasNet = netScore != null;
+    const agentPageLabel = it.kind === 'endpoint' ? 'Agent Views' : 'Agent Settings';
+    // baseUrl (not url) — url gets swapped to a LIVE TEST result link while
+    // one's active, but this fallback should always point at the actual
+    // Agent Views/Settings page regardless of that.
+    const agentPageUrl = (it.baseUrl && it.baseUrl !== '#') ? it.baseUrl
+      : (it.url && it.url !== '#') ? it.url : null;
+    const metricRowHtml = (!hasSaas && !hasNet)
+      ? (agentPageUrl
+        ? `<a class="tep-map-tip-metricrow tep-map-tip-metricrow--link" href="${tepEscapeHtmlText(agentPageUrl)}" target="_blank" rel="noopener noreferrer">${tepEscapeHtmlText(agentPageLabel)}</a>`
+        : '')
+      : '<div class="tep-map-tip-metricrow">'
+        + (hasSaas
+          ? `<span class="tep-map-tip-metric-pair" data-metric="http" role="button" tabindex="0" title="Click to see HTTP tests"><span>App</span><b style="color:${tepColorFromScore(saasScore).fill}">${saasScore.toFixed(1)}%</b></span>`
+          : '')
+        + (hasNet
+          ? `<span class="tep-map-tip-metric-pair" data-metric="network" role="button" tabindex="0" title="Click to see Network tests"><span>Net</span><b style="color:${tepColorFromScore(netScore).fill}">${netScore.toFixed(1)}%</b></span>`
+          : '')
+        + '</div>';
     // Dedicated alert row — replaces the normal health metricrow entirely
     // for whichever agent is currently alert-highlighted (see
     // dashMapAlertHighlight, set by hovering/clicking a row in the Alerts
@@ -16124,10 +16146,18 @@
         if (dashMapSearchHook) dashMapSearchHook.refresh();
       }
     }
-    function openTipAgent(row, isNameClick) {
+    function openTipAgent(row, isNameClick, metricKind) {
       if (!row || !tip._cluster) return;
       const it = tip._cluster.items[parseInt(row.dataset.idx, 10)];
       if (!it) return;
+      // Clicking the App or Net value (tepDashTipRow's metric-pair spans)
+      // opens the same test-list popover as the rest of the row, but scoped
+      // to just that metric — 'http' for App, 'network' for Net.
+      if (metricKind) {
+        armPopoverAutoClose();
+        void toggleAgentTestsPopover(row, it, metricKind);
+        return;
+      }
       // Clicking EITHER agent kind's NAME jumps straight to its own agent
       // page — settings for enterprise, agent view for endpoint — same URL
       // (it.url, live-test result if one's active, else the base page) the
@@ -16173,15 +16203,19 @@
     tip.addEventListener('click', (e) => {
       if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
       if (e.target.closest('.tep-map-tip-metricrow--alert')) return; // let the alert's own test link open
+      if (e.target.closest('.tep-map-tip-metricrow--link')) return; // let the Agent Settings/Views link open
+      const metricPair = e.target.closest('.tep-map-tip-metric-pair');
       const isNameClick = !!e.target.closest('.tep-map-tip-name') && !e.target.closest('.tep-map-tip-health');
-      openTipAgent(e.target.closest('.tep-map-tip-agent'), isNameClick);
+      openTipAgent(e.target.closest('.tep-map-tip-agent'), isNameClick, metricPair && metricPair.dataset.metric);
     });
     tip.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       if (e.target.closest('.tep-map-tip-geo')) return;
       if (e.target.closest('.tep-map-tip-metricrow--alert')) return;
+      if (e.target.closest('.tep-map-tip-metricrow--link')) return;
       const row = e.target.closest('.tep-map-tip-agent');
-      if (row) { e.preventDefault(); openTipAgent(row, !!e.target.closest('.tep-map-tip-name')); }
+      const metricPair = e.target.closest('.tep-map-tip-metric-pair');
+      if (row) { e.preventDefault(); openTipAgent(row, !!e.target.closest('.tep-map-tip-name'), metricPair && metricPair.dataset.metric); }
     });
 
     // --- Zoom / pan (viewBox-based, vector-crisp) ---------------------------
@@ -18108,6 +18142,13 @@
   // map hover card toggles it closed instead of re-opening.
   let tepAgentTestsPopoverEl = null;
   let tepAgentTestsPopoverAgent = null;
+  // 'http' | 'network' | null — set alongside tepAgentTestsPopoverAgent when
+  // the popover was opened scoped to just one metric (App/Net click in the
+  // hover card, see openTipAgent's metricKind); null means "both", the
+  // default for a plain row click. Tracked so re-clicking a DIFFERENT
+  // metric's pair for the same agent switches scope instead of just
+  // toggling the popover closed.
+  let tepAgentTestsPopoverOnlyMetric = null;
   // Optional callback the map hover card arms right before opening this
   // submenu, so it can re-evaluate its own hide timer once this closes (see
   // scheduleHide's tepAgentTestsPopoverEl check in renderDashboardAgentMap).
@@ -18116,6 +18157,7 @@
     if (tepAgentTestsPopoverEl) { try { tepAgentTestsPopoverEl.remove(); } catch (_) { /* */ } }
     tepAgentTestsPopoverEl = null;
     tepAgentTestsPopoverAgent = null;
+    tepAgentTestsPopoverOnlyMetric = null;
     document.removeEventListener('click', tepAgentTestsPopoverOutsideClick, true);
     document.removeEventListener('keydown', tepAgentTestsPopoverEscHandler, true);
     if (tepAgentTestsPopoverOnClose) { const cb = tepAgentTestsPopoverOnClose; tepAgentTestsPopoverOnClose = null; cb(); }
@@ -18128,32 +18170,39 @@
    *  language as the SaaS Health widget's own breakdown popover, opened from
    *  the map's hover card instead of navigating away. Shows a loading state
    *  immediately (the fetch behind it isn't instant), then fills in once
-   *  both data sources resolve. ALWAYS shows both HTTP and Network sections
+   *  both data sources resolve. Shows both HTTP and Network sections
    *  (whichever have data) regardless of dashMapColorSource — the map
    *  marker/aggregate row may be colored by just one metric, but an agent
    *  with tests on only the OTHER metric shouldn't read as "no tests found"
    *  here just because that happened to be the one currently coloring the
-   *  map. Enterprise agents use tepFetchHttpAvailabilityByAgent/
-   *  tepFetchNetworkTestsByAgent (dashboard-wide, real per-test breakdowns);
-   *  endpoint agents use tepFetchHttpTestsForEndpointAgent (per-agent,
-   *  live-round per-test breakdown) for HTTP, and tepFetchEndpointAgentNetScore
-   *  (one blended number — no confirmed per-test source) for Network. */
-  async function toggleAgentTestsPopover(anchorEl, it) {
+   *  map — UNLESS `onlyMetric` ('http' | 'network') is given, in which case
+   *  only that one section renders (App/Net clicks in the hover card, see
+   *  openTipAgent's metricKind); both are still fetched either way, so
+   *  switching scope on an already-open popover for the same agent doesn't
+   *  need a fresh request. Enterprise agents use
+   *  tepFetchHttpAvailabilityByAgent/tepFetchNetworkTestsByAgent
+   *  (dashboard-wide, real per-test breakdowns); endpoint agents use
+   *  tepFetchHttpTestsForEndpointAgent (per-agent, live-round per-test
+   *  breakdown) for HTTP, and tepFetchEndpointAgentNetScore (one blended
+   *  number — no confirmed per-test source) for Network. */
+  async function toggleAgentTestsPopover(anchorEl, it, onlyMetric) {
     const agentName = (it && it.name) || 'Agent';
-    if (tepAgentTestsPopoverEl && tepAgentTestsPopoverAgent === agentName) {
+    if (tepAgentTestsPopoverEl && tepAgentTestsPopoverAgent === agentName
+      && tepAgentTestsPopoverOnlyMetric === (onlyMetric || null)) {
       hideAgentTestsPopover();
       return;
     }
-    return openAgentTestsPopover(anchorEl, it);
+    return openAgentTestsPopover(anchorEl, it, onlyMetric);
   }
   // Same submenu, but idempotent instead of toggling — used by hover-
   // triggered opens (the SaaS/Network Health row), where re-firing on every
   // mouseover must never close a popover it just opened.
-  async function openAgentTestsPopover(anchorEl, it) {
+  async function openAgentTestsPopover(anchorEl, it, onlyMetric) {
     const agentName = (it && it.name) || 'Agent';
     if (tepAgentTestsPopoverEl) {
-      if (tepAgentTestsPopoverAgent === agentName) return; // already open for this agent
-      hideAgentTestsPopover(); // a different agent's popover is open — swap it
+      // Already open for this exact agent+scope — nothing to do.
+      if (tepAgentTestsPopoverAgent === agentName && tepAgentTestsPopoverOnlyMetric === (onlyMetric || null)) return;
+      hideAgentTestsPopover(); // a different agent (or scope)'s popover is open — swap it
     }
     if (!anchorEl) return;
     const pop = document.createElement('div');
@@ -18162,6 +18211,7 @@
     document.documentElement.appendChild(pop);
     tepAgentTestsPopoverEl = pop;
     tepAgentTestsPopoverAgent = agentName;
+    tepAgentTestsPopoverOnlyMetric = onlyMetric || null;
     const positionPop = () => {
       const rect = anchorEl.getBoundingClientRect();
       const popRect = pop.getBoundingClientRect();
@@ -18203,22 +18253,36 @@
     if (tepAgentTestsPopoverEl !== pop) return; // closed (or reopened for another agent) while this was in flight
     const hasHttp = !!(httpRows && httpRows.length);
     const hasNet = !!(netRows && netRows.length);
+    // onlyMetric restricts which of the two (both fetched regardless) is
+    // actually shown — see openTipAgent's metricKind.
+    const showHttp = hasHttp && onlyMetric !== 'network';
+    const showNet = hasNet && onlyMetric !== 'http';
     // Same URL clicking the agent's own NAME in the hover card already
     // opens (live-test result if one's active, else settings/agent view) —
     // labeled to match what that page actually is: enterprise agents have a
     // Settings page, endpoint agents an Agent Views page (see
     // buildEnterpriseAgentSettingsUrl/buildEndpointAgentViewUrl).
     const agentPageLabel = (it && it.kind === 'endpoint') ? 'Agent Views' : 'Agent Settings';
-    const agentUrl = (it && it.url && it.url !== '#') ? it.url : null;
+    // baseUrl (not url) — url gets swapped to a LIVE TEST result link while
+    // one's active/showing results, but this fallback should always point
+    // at the actual Agent Views/Settings page regardless of that.
+    const agentUrl = (it && it.baseUrl && it.baseUrl !== '#') ? it.baseUrl
+      : (it && it.url && it.url !== '#') ? it.url : null;
     const agentLinkRow = agentUrl
       ? `<a class="tep-saas-breakdown-row" href="${tepEscapeHtmlText(agentUrl)}" target="_blank" rel="noopener noreferrer"><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(agentPageLabel)}</span></a>`
       : '';
-    if (!hasHttp && !hasNet) {
-      // Just the link when there's somewhere to send them — the explanatory
-      // "no tests found" text only matters as a fallback for the rare case
-      // there's no URL at all, so the popover isn't left blank.
+    if (!showHttp && !showNet) {
+      // Just the link when there's somewhere to send them — no health info
+      // for the requested metric (or either) means there's nothing to list,
+      // so skip straight to Agent Views/Settings rather than a dead-end
+      // "no tests found" message. That text is only a last-resort fallback
+      // for the rare case there's no URL at all, so the popover isn't left
+      // blank.
+      const noneText = onlyMetric === 'http' ? 'No HTTP tests found for this agent'
+        : onlyMetric === 'network' ? 'No Network tests found for this agent'
+          : 'No HTTP or Network tests found for this agent';
       const linkRow = agentLinkRow
-        || '<div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">No HTTP or Network tests found for this agent</div>';
+        || `<div class="tep-saas-breakdown-row" style="opacity:.6;cursor:default;">${tepEscapeHtmlText(noneText)}</div>`;
       pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s tests</div>`
         + `<div class="tep-saas-breakdown-list">${linkRow}</div>`;
       positionPop();
@@ -18251,15 +18315,15 @@
     // Network sits to the left, beside HTTP, instead of stacked below it —
     // see .tep-agenttests-cols. Only widen the popover when both columns
     // actually exist; a single metric still reads fine at the normal width.
-    const netCol = hasNet
+    const netCol = showNet
       ? `<div class="tep-agenttests-col"><div class="tep-saas-breakdown-section-head">Network<span class="tep-saas-breakdown-hint">(${tepEscapeHtmlText(netWindowNote)})</span></div>`
         + `<div class="tep-saas-breakdown-list">${rowsHtml(netRows, true)}</div></div>`
       : '';
-    const httpCol = hasHttp
+    const httpCol = showHttp
       ? `<div class="tep-agenttests-col"><div class="tep-saas-breakdown-section-head">HTTP<span class="tep-saas-breakdown-hint">(${tepEscapeHtmlText(httpWindowNote)})</span></div>`
         + `<div class="tep-saas-breakdown-list">${rowsHtml(httpRows, false)}</div></div>`
       : '';
-    pop.classList.toggle('tep-agenttests-pop--cols', hasHttp && hasNet);
+    pop.classList.toggle('tep-agenttests-pop--cols', showHttp && showNet);
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(agentName)}’s tests`
       + `<span class="tep-saas-breakdown-hint">worst score first · click a row to open the test</span></div>`
       + `<div class="tep-agenttests-cols">${netCol}${httpCol}</div>`
@@ -18552,7 +18616,7 @@
     if (!tepAlertsData || !tepAlertsData.rows || !tepAlertsData.rows.length || !anchorEl) return;
     const pop = document.createElement('div');
     pop.className = 'tep-saas-breakdown-pop';
-    pop.innerHTML = '<div class="tep-saas-breakdown-head">Active alerts'
+    pop.innerHTML = `<div class="tep-saas-breakdown-head"><a class="tep-combo-title-link" href="${window.location.origin}/alerts/list?tab=active" target="_blank" rel="noopener noreferrer" title="Open the Active Alerts page">Active alerts</a>`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click to locate on the map</span></div>'
       + `<div class="tep-saas-breakdown-list">${tepAlertsData.rows.map(tepAlertRowHtml).join('')}</div>`;
     document.documentElement.appendChild(pop);
@@ -21351,6 +21415,41 @@
       g.gain.exponentialRampToValueAtTime(0.0001, now + 0.02);
       src.connect(filter); filter.connect(g); g.connect(ctx.destination);
       src.start(now); src.stop(now + 0.03);
+    } catch (_) { /* */ }
+  }
+  /** Filtered noise transient plus a warm sine body underneath — played when
+   *  the sidebar panel is closed down to just its bottom-right toggle icon
+   *  (see root._tepHide). `volumeScale` scales peak gain, same convention
+   *  as tepPlayDigitalBlip. */
+  function tepPlayVelvetClick(volumeScale) {
+    const ctx = tepEnsureAudioCtx();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const vol = 0.28 * (volumeScale != null ? volumeScale : 1);
+      const master = ctx.createGain();
+      master.gain.value = 1;
+      master.connect(ctx.destination);
+      const src = ctx.createBufferSource();
+      src.buffer = tepGetNoiseBuffer(ctx);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 4000;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(vol, now + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.02);
+      src.connect(filter); filter.connect(g); g.connect(master);
+      src.start(now); src.stop(now + 0.03);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(340, now);
+      const g2 = ctx.createGain();
+      g2.gain.setValueAtTime(0.0001, now);
+      g2.gain.exponentialRampToValueAtTime(vol * 0.5, now + 0.01);
+      g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+      osc.connect(g2); g2.connect(master);
+      osc.start(now); osc.stop(now + 0.12);
     } catch (_) { /* */ }
   }
   /** Ascending four-note arpeggio (523/659/784/1047Hz) with a shimmering top
