@@ -20,7 +20,22 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.48';
+  // Bookmarklet only works on ThousandEyes itself — no session, no API to
+  // call anywhere else. Rather than mounting a non-functional panel (or
+  // just logging an error nobody sees, since the panel wouldn't even be
+  // visible on some unrelated page), send the whole tab straight to the
+  // real app instead. Exact-hostname match, not a suffix check — a
+  // redirect is a bigger action than the existing isOnTEPage() suffix
+  // check further down (still used for the in-panel error message/guard
+  // on the off chance a same-origin subdomain ever gets here), so this one
+  // is deliberately narrower: only the two hostnames the user actually
+  // expects to run this on.
+  const TEP_EXPECTED_HOSTS = ['app.thousandeyes.com', 'app.thousandeyes.us'];
+  if (!TEP_EXPECTED_HOSTS.includes(String(window.location.hostname).toLowerCase())) {
+    window.location.href = 'https://app.thousandeyes.com';
+    return;
+  }
+  const TEP_VERSION = '3.49';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
