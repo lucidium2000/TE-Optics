@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.45';
+  const TEP_VERSION = '3.46';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -20226,31 +20226,41 @@
   async function fetchEndpointAgentBatteryStatus() {
     const pageSize = 500;
     const byId = new Map();
-    let page = 0;
-    let fetchedCount = 0;
-    let totalCount = null;
+    let page = 0, totalCount = null, fetchedCount = 0;
     for (let guard = 0; guard < 100; guard++) {
-      const resp = await ajax(`${ENDPOINT_AGENT_SETTINGS_SEARCH_PATH}?page=${page}&pageSize=${pageSize}`, {
-        method: 'POST',
-        body: JSON.stringify({ filters: [{ key: 'includeDeleted', values: ['NEVER_OR_RECOVERABLE_ONLY'] }], searchTerm: '' })
-      });
+      const url = `${ENDPOINT_AGENT_SETTINGS_SEARCH_PATH}?page=${page}&pageSize=${pageSize}&sortDirection=DESCENDING&sortProperty=LAST_MODIFIED`;
+      let resp;
+      try {
+        resp = await ajax(url, { method: 'POST', body: JSON.stringify({ searchTerm: '', searchTermFields: [], filters: [] }) });
+      } catch (e) {
+        log(`Battery status: fetch error — ${e.message}`, 'tep-log-info');
+        break;
+      }
       const text = await resp.text().catch(() => '');
-      if (!resp.ok) throw new Error(`${resp.status}: ${text.slice(0, 240)}`);
+      if (!resp.ok) { log(`Battery status: HTTP ${resp.status} — ${text.slice(0, 160)}`, 'tep-log-info'); break; }
       let data;
-      try { data = JSON.parse(text); } catch (e) { throw new Error(`JSON parse: ${e.message}`); }
-      const elements = extractEndpointAgentsFromSearchResponse(data);
-      if (!Array.isArray(elements)) throw new Error(`unexpected shape keys: ${topLevelKeysLabel(data)}`);
+      try { data = JSON.parse(text); } catch (e) { log(`Battery status: JSON parse error — ${e.message}`, 'tep-log-info'); break; }
+      // Direct data.elements + el.id/el.batteryMetrics, NOT the generic
+      // extractEndpointAgentsFromSearchResponse/epAgentPickId/epAgentPickRaw
+      // helpers the roster fetch uses — CONFIRMED via live capture that this
+      // endpoint's elements carry `id` and `batteryMetrics` flat at the top
+      // level (same UUID scheme normalizeEndpointAgent's own id uses), and a
+      // brief attempt to run them through the generic pickers instead
+      // silently matched nothing (byId stayed empty, battery vanished
+      // everywhere) — those pickers are tuned for metadata/search's shape,
+      // not settings/search's.
+      const elements = Array.isArray(data && data.elements) ? data.elements : [];
       for (const el of elements) {
-        const raw = epAgentPickRaw(el);
-        const id = epAgentPickId(el);
-        const bm = raw && typeof raw === 'object' ? raw.batteryMetrics : null;
-        if (!id || !bm) continue;
-        const bmLevel = Number(bm.batteryLevelNormalizedPercent);
-        const bmHealth = Number(bm.batteryHealthNormalizedPercent);
-        byId.set(id, {
-          pct: Number.isFinite(bmLevel) ? Math.round(bmLevel * 100) : null,
-          healthPct: Number.isFinite(bmHealth) ? Math.round(bmHealth * 100) : null
-        });
+        const id = el && el.id;
+        const bm = el && el.batteryMetrics;
+        const levelPct = bm && Number(bm.batteryLevelNormalizedPercent);
+        const healthPct = bm && Number(bm.batteryHealthNormalizedPercent);
+        if (id && Number.isFinite(levelPct)) {
+          byId.set(String(id), {
+            pct: Math.round(levelPct * 100),
+            healthPct: Number.isFinite(healthPct) ? Math.round(healthPct * 100) : null,
+          });
+        }
       }
       fetchedCount += elements.length;
       if (data && data.totalCount != null) totalCount = Number(data.totalCount);
@@ -20265,6 +20275,7 @@
       }
       page++;
     }
+    if (byId.size) log(`Battery status: ${byId.size} agent(s)`, 'tep-log-ok');
     return byId;
   }
 
