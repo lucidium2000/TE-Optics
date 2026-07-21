@@ -20,7 +20,7 @@
  */
 (function () {
   'use strict';
-  const TEP_VERSION = '3.47';
+  const TEP_VERSION = '3.48';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1826,6 +1826,20 @@
     .tep-agent-map-marker--online svg {
       transform-origin: 50% 50%;
       animation: tep-marker-breathe 1.4s ease-in-out infinite;
+      /* Hints the compositor to give this its own layer up front instead of
+         falling back to main-thread paint each frame — CONFIRMED via user
+         report this animation was jerky in Firefox specifically (Chrome was
+         already smooth without it). */
+      will-change: transform, opacity;
+    }
+    /* fill-box makes the 50%/50% origin above resolve against this SVG's own
+       rendered content instead of its viewBox — deliberately solo markers
+       only (excludes --cluster): a cluster marker's SVG also renders a text
+       count label, whose width varies (e.g. "5" vs "128"), which would skew
+       fill-box's bounding box off-center and could introduce a NEW wobble
+       there instead of fixing one. */
+    .tep-agent-map-marker--online:not(.tep-agent-map-marker--cluster) svg {
+      transform-box: fill-box;
     }
     @media (prefers-reduced-motion: reduce) {
       .tep-agent-map-marker--online svg { animation: none; }
@@ -16978,7 +16992,14 @@
     }
   }
 
-  /** Ensure agent data is present, then (re)render the dashboard map. */
+  /** Ensure agent data is present, then (re)render the dashboard map. Each
+   *  fetch reframes (refreshDashMapViews) the instant IT resolves, rather
+   *  than waiting on both together — Enterprise agents are usually already
+   *  cached from the portal's own auth-time load (see loadAgents's own
+   *  comment below), so that reframe typically fires near-instantly instead
+   *  of behind a fixed settle delay; Endpoint agents (always a real fetch
+   *  here) then refine the fit again whenever they land, without holding up
+   *  the first one. */
   async function loadDashboardMapAgents(force) {
     const host = $('#tep-dash-map-host');
     const countEl = $('#tep-dash-map-count');
@@ -16986,7 +17007,7 @@
     if (countEl) countEl.textContent = 'Loading…';
     const jobs = [];
     // Endpoint agents are not fetched elsewhere on the dashboard page → load here.
-    if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().catch(() => {}));
+    if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().then(() => refreshDashMapViews()).catch(() => {}));
     // Enterprise agents normally come from the portal load at auth time — but
     // CONFIRMED that load is skipped entirely on the Endpoint Tools and Manage
     // Alerts pages (see the page-mode branches around session init), so
@@ -16994,9 +17015,15 @@
     // refresh. Fetch whenever it's actually empty, not just on `force`,
     // otherwise opening the full-screen map from those pages never shows any
     // enterprise agents at all.
-    if (force || !agents.length) jobs.push(loadAgents().catch(() => {}));
-    if (jobs.length) { try { await Promise.all(jobs); } catch (_) {} }
-    refreshDashMapViews();
+    if (force || !agents.length) jobs.push(loadAgents().then(() => refreshDashMapViews()).catch(() => {}));
+    if (jobs.length) {
+      try { await Promise.all(jobs); } catch (_) {}
+    } else {
+      // Both already cached (e.g. reopening fullscreen) — nothing to
+      // fetch/reframe off of, but the "Loading…" placeholder set above still
+      // needs clearing.
+      refreshDashMapViews();
+    }
     // SaaS/Network Health scores are a separate synthetic-dashboard fetch
     // (see refreshDashMapColorScores) that's otherwise only ever kicked off
     // by opening the fullscreen map — without this, the sidebar map's
@@ -19763,30 +19790,15 @@
         if (el) { dashFullHidden.push([el, el.style.display]); el.style.display = 'none'; }
       }
     }, TEP_TOGGLE_ANIM_MS);
-    // One-time settle: 2s after open (was 1s, per user request), smoothly
-    // pan/zoom (at half speed — 1000ms instead of animateZoomTo's default
-    // 500ms, see the frameTo() call this triggers) to fit every agent on
-    // screen, centered on their middle — a deliberate visible "glide into
-    // place" beat, not an instant snap, and the map stays visible/
-    // interactive the whole time (an earlier attempt at fully hiding it
-    // until this resolved was rejected — the fix for reported jerkiness is
-    // layoutMarkers()' own mid-animation fast path, not hiding the map).
-    // Also doubles as the fix for a load-timing miss: the very first render
-    // (below, synchronous with this whole function) ran against whatever
-    // agents/allEndpointAgents held at that instant, which on a fresh load
-    // can be before that data has actually resolved (markerEls comes back
-    // empty, falling back to a flat, uncentered default view) — 2s gives it
-    // even more time to arrive. dashMapFramedOnce is deliberately NOT reset
-    // here (unlike a fresh open): frameTo() already animates instead of
-    // snapping whenever it's still true, which it will be from the
-    // synchronous render below having already framed once. Scoped entirely
-    // to this open call (never fires from a data refresh —
-    // dashFullPeriodicRefresh/refreshDashMapColorScores' own re-renders all
-    // pass preserveZoom, which skips re-centering entirely).
-    setTimeout(() => {
-      if (dashMapFullEl !== ov) return;
-      renderDashboardAgentMap(ov.querySelector('#tep-dashmap-mapbody'), { full: true });
-    }, 2000);
+    // No more blind settle timer here — the fit-to-markers reframe is now
+    // triggered directly off loadDashboardMapAgents's own loadAgents()/
+    // loadEndpointAgents() calls (see refreshDashMapViews there), each firing
+    // the instant ITS data actually resolves instead of guessing a fixed
+    // delay. Enterprise agents are usually already cached from the portal's
+    // own auth-time load (see loadAgents's own comment), so that reframe
+    // typically happens near-instantly; Endpoint agents (always a real fetch)
+    // then refine the fit again whenever they land, without holding up the
+    // first one or leaving a stale flat view if the network is slow.
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
     ov.querySelector('#tep-dashmap-zoom-in').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.in(); });
     ov.querySelector('#tep-dashmap-zoom-out').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.out(); });
