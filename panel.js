@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.52';
+  const TEP_VERSION = '3.53';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -19892,6 +19892,16 @@
   // just collapse the fullscreen map back to the sidebar the moment the user
   // clicks up there, so TE's own UI is never obstructed.
   function dashFullTopBarHandler(e) {
+    // CONFIRMED via user report (Firefox only): picking an option from a
+    // native <select> — e.g. the Data Window dropdown — can fire a click on
+    // document whose clientY doesn't reflect where the user actually
+    // clicked (Firefox's native option-list popup isn't part of the page's
+    // own coordinate space the way Chrome/WebKit's is), sometimes reporting
+    // 0 and tripping the < 56 check below even though nothing near TE's
+    // title bar was touched. A click whose target lives inside our own
+    // overlay is never "clicked into TE's real menu" regardless of what
+    // clientY claims, so that's checked first and takes priority.
+    if (e.target && e.target.closest && e.target.closest('.tep-dashmap-full')) return;
     if (e.clientY >= 56) return;
     closeDashMapFullscreen();
     // The user clicked into TE's own menu, not ours — minimize the side panel
