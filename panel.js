@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.49';
+  const TEP_VERSION = '3.50';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3623,6 +3623,10 @@
 
   const mainStyles = tepInjectCSS(STYLES);
 
+  // Last TEP_VERSION seen on this origin — lets a fresh load detect (and
+  // toast) that it's actually newer than what was here before, since the
+  // bootstrap bookmarklet itself can never signal that on its own.
+  const TEP_LAST_VERSION_KEY = 'tep-last-version';
   // Push TE page content to the left
   const TEP_WIDTH_KEY = 'tep-panel-width';
   let panelWidth = parseInt(localStorage.getItem(TEP_WIDTH_KEY), 10) || 576;
@@ -4477,6 +4481,21 @@
       // called synchronously here, `let tepAudioCtx` (declared much further
       // down, near tepEnsureAudioCtx) wouldn't be initialized yet.
       tepPlayRadarSweep(0.5);
+      // The bookmarklet itself can never change once someone's dragged it —
+      // only what it fetches (this file) can. So the one thing we CAN surface
+      // here is "the code you just got is different from last time", via a
+      // version stamped in localStorage (persists across tabs/restarts,
+      // unlike the DOM — this whole block only runs on a genuine fresh build,
+      // never the same-version toggle path above, which returns early).
+      // Silently no-ops on a brand-new install (nothing to compare against
+      // yet) and on any localStorage failure (private/incognito mode, etc.).
+      try {
+        const lastVersion = localStorage.getItem(TEP_LAST_VERSION_KEY);
+        if (lastVersion && lastVersion !== TEP_VERSION) {
+          toast(`TE Optics updated to ${TEP_VERSION}`, 'ok');
+        }
+        localStorage.setItem(TEP_LAST_VERSION_KEY, TEP_VERSION);
+      } catch (_) { /* localStorage unavailable — skip silently */ }
     });
   });
 
