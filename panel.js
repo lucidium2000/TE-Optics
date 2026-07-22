@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.50';
+  const TEP_VERSION = '3.51';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2287,6 +2287,29 @@
     .tep-saas-breakdown-pop::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
     .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: #f1f5f9; }
     .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: #64748b; margin-top: 2px; }
+    /* Centered confirm modal (tepConfirmModal) — used in place of the
+       browser's native confirm(), which anchors near the top of the
+       viewport instead of the middle. Same dark palette as the popovers
+       above (.tep-saas-breakdown-pop). */
+    .tep-confirm-overlay {
+      position: fixed; inset: 0; z-index: 2147483647; background: rgba(2,6,23,.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tep-confirm-box {
+      background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.6); padding: 20px 22px; max-width: 340px;
+      font-size: 13.5px; line-height: 1.5; text-align: center;
+    }
+    .tep-confirm-msg { margin-bottom: 16px; color: #f1f5f9; font-weight: 600; }
+    .tep-confirm-btns { display: flex; gap: 10px; justify-content: center; }
+    .tep-confirm-btn {
+      border: none; border-radius: 8px; padding: 8px 18px; font-size: 12.5px; font-weight: 700;
+      cursor: pointer; font-family: inherit;
+    }
+    .tep-confirm-btn.tep-confirm-cancel { background: #1e293b; color: #cbd5e1; }
+    .tep-confirm-btn.tep-confirm-cancel:hover { background: #334155; }
+    .tep-confirm-btn.tep-confirm-ok { background: #dc2626; color: #fff; }
+    .tep-confirm-btn.tep-confirm-ok:hover { background: #ef4444; }
     /* Enterprise/Endpoint Agents popover's "lowest health first" / "alphabetical"
        sort toggle — same weight/color as the head text, just underlined to read
        as clickable, matching the "click to toggle" affordance elsewhere. */
@@ -3569,14 +3592,29 @@
     'transition:transform .15s,background .15s;user-select:none;font-family:inherit;';
   liveTestBtn.addEventListener('mouseenter', () => { liveTestBtn.style.transform = 'scale(1.06)'; });
   liveTestBtn.addEventListener('mouseleave', () => { liveTestBtn.style.transform = ''; });
-  liveTestBtn.addEventListener('click', () => {
-    // Create/resume the AudioContext HERE, synchronously inside the real
-    // click, not later inside runLiveTest() — by the time the first screen
-    // pulse fires we're several `await`s deep and may have fallen outside
-    // the browser's user-activation window for starting audio.
+  const liveTestBeginRun = () => {
+    // Create/resume the AudioContext HERE, synchronously inside a real
+    // click (the button itself, or the confirm modal's own OK button below
+    // — both are genuine user gestures), not later inside runLiveTest() —
+    // by the time the first screen pulse fires we're several `await`s deep
+    // and may have fallen outside the browser's user-activation window for
+    // starting audio.
     tepEnsureAudioCtx();
     tepPlayNotificationPop();
     void runLiveTest();
+  };
+  liveTestBtn.addEventListener('click', () => {
+    // Confirm before STARTING a fresh run only — a second click while one's
+    // already in flight is how the user cancels it (see runLiveTest's own
+    // liveTestRunning check), and re-confirming that would just be an
+    // annoying extra step in the way of stopping it.
+    if (!liveTestRunning) {
+      void tepConfirmModal('Are you sure you want to test all agents?').then((ok) => {
+        if (ok) liveTestBeginRun();
+      });
+      return;
+    }
+    liveTestBeginRun();
   });
   // Hidden globally — this button only lives inside the fullscreen map view
   // (openDashMapFullscreen re-parents it into the overlay and shows it).
@@ -4876,6 +4914,41 @@
     const body = root.querySelector('.tep-body');
     body.insertBefore(el, body.firstChild);
     return () => el.remove();
+  }
+
+  /** Centered confirm modal, in place of the browser's native confirm()
+   *  (which anchors near the top of the viewport, not the middle) — used
+   *  for LIVE TEST's "are you sure" safeguard, since that button lives
+   *  inside the fullscreen map and a native dialog reads as detached from
+   *  it up there. Mounted on documentElement (same reasoning as every other
+   *  piece of floating chrome in this file — body sits inside dark mode's
+   *  filtered/lower-stacking subtree). Resolves true (OK/Enter) or false
+   *  (Cancel/Escape/backdrop click). */
+  function tepConfirmModal(message) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'tep-confirm-overlay';
+      overlay.innerHTML = '<div class="tep-confirm-box">'
+        + `<div class="tep-confirm-msg">${tepEscapeHtmlText(message)}</div>`
+        + '<div class="tep-confirm-btns">'
+        + '<button type="button" class="tep-confirm-btn tep-confirm-cancel">Cancel</button>'
+        + '<button type="button" class="tep-confirm-btn tep-confirm-ok">OK</button>'
+        + '</div></div>';
+      document.documentElement.appendChild(overlay);
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+        else if (e.key === 'Enter') { e.stopPropagation(); finish(true); }
+      };
+      function finish(result) {
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        resolve(result);
+      }
+      document.addEventListener('keydown', onKey, true);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+      overlay.querySelector('.tep-confirm-cancel').addEventListener('click', () => finish(false));
+      overlay.querySelector('.tep-confirm-ok').addEventListener('click', () => finish(true));
+    });
   }
 
   /** Show × in filter wrap when text present; clear runs onClear (e.g. re-render agent list). */
@@ -17026,14 +17099,12 @@
     }
   }
 
-  /** Ensure agent data is present, then (re)render the dashboard map. Each
-   *  fetch reframes (refreshDashMapViews) the instant IT resolves, rather
-   *  than waiting on both together — Enterprise agents are usually already
-   *  cached from the portal's own auth-time load (see loadAgents's own
-   *  comment below), so that reframe typically fires near-instantly instead
-   *  of behind a fixed settle delay; Endpoint agents (always a real fetch
-   *  here) then refine the fit again whenever they land, without holding up
-   *  the first one. */
+  /** Ensure agent data is present, then (re)render the dashboard map. The
+   *  fullscreen map's own initial center/zoom no longer depends on this
+   *  function's timing at all — see waitForEnterpriseAgentsThenFrame,
+   *  called directly from openDashMapFullscreen, which just polls `agents`
+   *  itself until it's non-empty and reframes right then. This function's
+   *  job is purely to make sure the data actually gets fetched. */
   async function loadDashboardMapAgents(force) {
     const host = $('#tep-dash-map-host');
     const countEl = $('#tep-dash-map-count');
@@ -17041,7 +17112,7 @@
     if (countEl) countEl.textContent = 'Loading…';
     const jobs = [];
     // Endpoint agents are not fetched elsewhere on the dashboard page → load here.
-    if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().then(() => refreshDashMapViews()).catch(() => {}));
+    if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().catch(() => {}));
     // Enterprise agents normally come from the portal load at auth time — but
     // CONFIRMED that load is skipped entirely on the Endpoint Tools and Manage
     // Alerts pages (see the page-mode branches around session init), so
@@ -17049,15 +17120,9 @@
     // refresh. Fetch whenever it's actually empty, not just on `force`,
     // otherwise opening the full-screen map from those pages never shows any
     // enterprise agents at all.
-    if (force || !agents.length) jobs.push(loadAgents().then(() => refreshDashMapViews()).catch(() => {}));
-    if (jobs.length) {
-      try { await Promise.all(jobs); } catch (_) {}
-    } else {
-      // Both already cached (e.g. reopening fullscreen) — nothing to
-      // fetch/reframe off of, but the "Loading…" placeholder set above still
-      // needs clearing.
-      refreshDashMapViews();
-    }
+    if (force || !agents.length) jobs.push(loadAgents().catch(() => {}));
+    if (jobs.length) { try { await Promise.all(jobs); } catch (_) {} }
+    refreshDashMapViews();
     // SaaS/Network Health scores are a separate synthetic-dashboard fetch
     // (see refreshDashMapColorScores) that's otherwise only ever kicked off
     // by opening the fullscreen map — without this, the sidebar map's
@@ -18788,8 +18853,29 @@
    *  distinguishable beyond that without more capture data) and its own
    *  start.ts — a more precise per-agent violation round than the alert's
    *  own top-level start — when available. Without detail, still returns a
-   *  valid (just agent-less) link off the list data alone. */
+   *  valid (just agent-less) link off the list data alone.
+   *
+   *  Traffic Insights alerts (rule.type === 'TrafficInsightsFlow') are a
+   *  completely different shape — CONFIRMED via live capture: no
+   *  _embedded.test at all, and detail.details[0] is
+   *  { id: "<app display name>", type: "app", start: { ts } } instead of an
+   *  agent. There's no agent-less list-data fallback here (the list/_search
+   *  response never carries details[], only the single-alert GET does — see
+   *  tepFetchAlertDetail), so this returns null until `detail` resolves. */
   function tepAlertTestUrl(a, detail) {
+    const rule = a && a._embedded && a._embedded.rule;
+    if (rule && rule.type === 'TrafficInsightsFlow') {
+      const app = detail && Array.isArray(detail.details) ? detail.details.find((d) => d && d.type === 'app' && d.id != null) : null;
+      if (!app) return null;
+      const tsMs = (app.start && app.start.ts) || tepAlertStartMs(a);
+      // Built with encodeURIComponent, NOT URLSearchParams (which encodes
+      // spaces as "+") — matches the CONFIRMED-working example URL's
+      // literal "%20"s exactly, rather than assuming the traffic-insights
+      // page treats "+" the same as a real space in this param.
+      let url = `${window.location.origin}/traffic-insights/views/?appName=${encodeURIComponent(app.id)}`;
+      if (tsMs) url += `&timestampInSec=${Math.floor(tsMs / 1000)}`;
+      return url;
+    }
     const test = a && a._embedded && a._embedded.test;
     if (!test || test.id == null) return null;
     const params = new URLSearchParams();
@@ -18894,7 +18980,16 @@
     });
     return candidates[0];
   }
-  function tepAlertRowHtml(a) {
+  /** `detail` (optional, from tepFetchAlertDetail) is passed through to
+   *  tepAlertTestUrl — without it, a Traffic Insights alert (whose link
+   *  needs detail.details[], never present on the list data alone) renders
+   *  agent-less as a plain (non-link) row; toggleAlertsPopover's eager
+   *  per-row detail fetch re-renders this row's outerHTML with `detail`
+   *  once it resolves, upgrading it to a real link in place. data-alert-id
+   *  is set regardless of whether a link exists yet, so hover/click
+   *  delegation (and that later outerHTML lookup) still work on the
+   *  not-yet-linked row. */
+  function tepAlertRowHtml(a, detail) {
     const rule = a && a._embedded && a._embedded.rule;
     const test = a && a._embedded && a._embedded.test;
     const name = (rule && rule.name) || 'Alert';
@@ -18908,12 +19003,13 @@
     // no agent can be resolved for this alert at all. A plain left click is
     // intercepted (see toggleAlertsPopover's click handler) to locate the
     // alerting agent on the map instead.
-    const url = tepAlertTestUrl(a);
+    const url = tepAlertTestUrl(a, detail);
     const tag = url ? 'a' : 'div';
-    const hrefAttr = url
-      ? ` href="${tepEscapeHtmlText(url)}" data-alert-id="${tepEscapeHtmlText(String(a.id))}" target="_blank" rel="noopener noreferrer" title="Click to locate the alerting agent on the map — Ctrl/Cmd-click to open ${tepEscapeHtmlText(testName || 'the test')} directly"`
-      : '';
-    return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}>`
+    const isTrafficInsights = rule && rule.type === 'TrafficInsightsFlow';
+    const title = isTrafficInsights ? 'Click to open in Traffic Insights'
+      : `Click to locate the alerting agent on the map — Ctrl/Cmd-click to open ${tepEscapeHtmlText(testName || 'the test')} directly`;
+    const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer" title="${title}"` : '';
+    return `<${tag} class="tep-saas-breakdown-row" data-alert-id="${tepEscapeHtmlText(String(a.id))}"${hrefAttr}>`
       + `<span class="tep-saas-breakdown-title">`
       + (sev ? `<b style="color:${sevColor};">${tepEscapeHtmlText(sev)}</b> ` : '')
       + `${tepEscapeHtmlText(name)}${testName ? ' · ' + tepEscapeHtmlText(testName) : ''}</span>`
@@ -18927,7 +19023,7 @@
     pop.className = 'tep-saas-breakdown-pop';
     pop.innerHTML = `<div class="tep-saas-breakdown-head"><a class="tep-combo-title-link" href="${window.location.origin}/alerts/list?tab=active" target="_blank" rel="noopener noreferrer" title="Open the Active Alerts page">Active alerts</a>`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click to locate on the map</span></div>'
-      + `<div class="tep-saas-breakdown-list">${tepAlertsData.rows.map(tepAlertRowHtml).join('')}</div>`;
+      + `<div class="tep-saas-breakdown-list">${tepAlertsData.rows.map((a) => tepAlertRowHtml(a)).join('')}</div>`;
     document.documentElement.appendChild(pop);
     tepAlertsPopoverEl = pop;
     // Eagerly resolve every agent named in each alert's details[] array (not
@@ -18936,6 +19032,10 @@
     // confirm which kind each entry is), so hover/click can use the map
     // without an extra fetch first. Active-alerts-only (not the whole
     // historical list), so this is a small, bounded one-time cost on open.
+    // Excludes type:"app" entries (Traffic Insights' shape — CONFIRMED via
+    // live capture — names an application, not an agent) from the agent-id
+    // list, so those alerts skip the map-locate attempt entirely (no real
+    // agent to find) and just fall through to opening their link directly.
     const alertDetailCache = new Map(); // alertId -> detail | null
     const alertAgentIds = new Map();    // alertId -> String agentId[] (all involved agents)
     Promise.all(tepAlertsData.rows.map((a) => {
@@ -18943,9 +19043,18 @@
       return tepFetchAlertDetail(id).then((detail) => {
         alertDetailCache.set(id, detail);
         const ids = detail && Array.isArray(detail.details)
-          ? detail.details.filter((d) => d && d.id != null).map((d) => String(d.id))
+          ? detail.details.filter((d) => d && d.id != null && d.type !== 'app').map((d) => String(d.id))
           : [];
         alertAgentIds.set(id, ids);
+        // The list response never carries details[] (see tepFetchAlertDetail's
+        // own comment), so a row needing it for its link — Traffic Insights
+        // alerts, right now — renders link-less at first paint. Upgrade it in
+        // place now that detail has resolved, if a link was actually missing.
+        const rowEl = pop.querySelector(`.tep-saas-breakdown-row[data-alert-id="${CSS.escape(id)}"]`);
+        if (rowEl && rowEl.tagName !== 'A') {
+          const url = tepAlertTestUrl(a, detail);
+          if (url) rowEl.outerHTML = tepAlertRowHtml(a, detail);
+        }
       }).catch(() => { alertDetailCache.set(id, null); alertAgentIds.set(id, []); });
     }));
     // Text for the hover card's dedicated alert row (see tepDashTipRow).
@@ -19027,7 +19136,7 @@
         ? Promise.resolve({ agentId: cachedIds[0] || null, ids: cachedIds, detail: alertDetailCache.get(alertId) })
         : tepFetchAlertDetail(alertId).then((detail) => {
           const ids = detail && Array.isArray(detail.details)
-            ? detail.details.filter((d) => d && d.id != null).map((d) => String(d.id))
+            ? detail.details.filter((d) => d && d.id != null && d.type !== 'app').map((d) => String(d.id))
             : [];
           return { agentId: ids[0] || null, ids, detail };
         });
@@ -19745,6 +19854,29 @@
       try { constrainStyles.update(''); } catch (_) { /* */ }
     }
   }
+  /** Polls `agents` (the same array the Enterprise Agents widget's own
+   *  number comes from — tepAgentWidgetStats reads it directly, no fetch of
+   *  its own) until it's actually non-empty, then reframes the fullscreen
+   *  map once — a literal "wait for the widget to show a real number, then
+   *  center + zoom", decoupled entirely from loadDashboardMapAgents's own
+   *  promise chain (which wasn't reliably triggering this in practice: most
+   *  of the time `agents` is already cached from the portal's own auth-time
+   *  load, so no fetch — and therefore no completion signal — ever ran).
+   *  Gives up silently after ~10s (e.g. a genuinely agent-less account, or
+   *  the load failing outright) rather than polling forever. */
+  function waitForEnterpriseAgentsThenFrame(ov) {
+    const startedAt = Date.now();
+    const tick = () => {
+      if (dashMapFullEl !== ov) return; // closed before this ever resolved
+      if (agents.length) {
+        renderDashboardAgentMap(ov.querySelector('#tep-dashmap-mapbody'), { full: true });
+        return;
+      }
+      if (Date.now() - startedAt > 10000) return;
+      setTimeout(tick, 150);
+    };
+    tick();
+  }
   function openDashMapFullscreen() {
     if (dashMapFullEl) return;
     tepPlayRadarSweep(0.5);
@@ -19824,15 +19956,12 @@
         if (el) { dashFullHidden.push([el, el.style.display]); el.style.display = 'none'; }
       }
     }, TEP_TOGGLE_ANIM_MS);
-    // No more blind settle timer here — the fit-to-markers reframe is now
-    // triggered directly off loadDashboardMapAgents's own loadAgents()/
-    // loadEndpointAgents() calls (see refreshDashMapViews there), each firing
-    // the instant ITS data actually resolves instead of guessing a fixed
-    // delay. Enterprise agents are usually already cached from the portal's
-    // own auth-time load (see loadAgents's own comment), so that reframe
-    // typically happens near-instantly; Endpoint agents (always a real fetch)
-    // then refine the fit again whenever they land, without holding up the
-    // first one or leaving a stale flat view if the network is slow.
+    // No blind settle timer here — just wait for the Enterprise Agents
+    // widget to actually have a real number (agents.length > 0, same data
+    // tepAgentWidgetStats reads for it), then reframe. Simple polling
+    // instead of trying to thread a reframe through loadDashboardMapAgents's
+    // own promise chain, which wasn't reliably firing this in practice.
+    waitForEnterpriseAgentsThenFrame(ov);
     ov.querySelector('#tep-dashmap-min').addEventListener('click', closeDashMapFullscreen);
     ov.querySelector('#tep-dashmap-zoom-in').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.in(); });
     ov.querySelector('#tep-dashmap-zoom-out').addEventListener('click', () => { if (dashMapZoomHook) dashMapZoomHook.out(); });
