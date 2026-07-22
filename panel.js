@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.51';
+  const TEP_VERSION = '3.52';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1622,10 +1622,17 @@
     #te-panel-root.tep-panel-extend { width: 100vw; }
     #te-panel-root * { box-sizing: border-box; }
 
-    /* Resize gutter */
+    /* Resize gutter — the hit area itself stays a slim 8px (easy to grab
+       without eating into page content), with a small rounded "grip" chip
+       at the vertical center: a 6-dot icon, same visual language as the
+       standard drag-handle glyph used everywhere from OS window controls
+       to sortable lists — instantly reads as draggable at a glance, no
+       hover required. Built as an inline SVG data-URI (not a webfont icon
+       — this file has no font dependency, and needs none here) layered
+       under the chip's translucent pill background. */
     #tep-resize-handle {
-      position: fixed; top: 0; width: 6px; height: 100vh;
-      cursor: col-resize; z-index: 2147483648;
+      position: fixed; top: 0; width: 8px; height: 100vh;
+      cursor: col-resize; z-index: 2147483647;
       background: transparent;
     }
     #tep-resize-handle::after {
@@ -1633,35 +1640,26 @@
       position: absolute;
       left: 50%;
       top: 50%;
-      width: 3px;
-      height: 56px;
+      width: 10px;
+      height: 82px;
       transform: translate(-50%, -50%);
-      border-radius: 999px;
-      opacity: 0.55;
-      background: repeating-linear-gradient(
-        to bottom,
-        rgba(148, 163, 184, 0.0) 0px,
-        rgba(148, 163, 184, 0.0) 6px,
-        rgba(148, 163, 184, 0.75) 6px,
-        rgba(148, 163, 184, 0.75) 10px
-      );
-      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.55);
+      border-radius: 8px;
+      background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='9' cy='6' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='15' cy='6' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='9' cy='12' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='15' cy='12' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='9' cy='18' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='15' cy='18' r='1.6' fill='%23cbd5e1'/%3E%3C/svg%3E") center / 7px no-repeat,
+        rgba(15, 23, 42, 0.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
       pointer-events: none;
+      transition: background .15s, border-color .15s;
     }
     #tep-resize-handle:hover::after,
     #tep-resize-handle.active::after {
-      opacity: 0.9;
-      background: repeating-linear-gradient(
-        to bottom,
-        rgba(59, 130, 246, 0.0) 0px,
-        rgba(59, 130, 246, 0.0) 6px,
-        rgba(59, 130, 246, 0.95) 6px,
-        rgba(59, 130, 246, 0.95) 10px
-      );
-      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.65);
-    }
-    #tep-resize-handle:hover, #tep-resize-handle.active {
-      background: #3b82f6;
+      background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='9' cy='6' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='15' cy='6' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='9' cy='12' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='15' cy='12' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='9' cy='18' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='15' cy='18' r='1.6' fill='%23bfdbfe'/%3E%3C/svg%3E") center / 7px no-repeat,
+        rgba(59, 130, 246, 0.3);
+      border-color: rgba(96, 165, 250, 0.85);
     }
 
     /* Header — fixed at exactly 56px, TE's own title bar height (same value
@@ -1677,6 +1675,25 @@
       font-size: 11px;
       font-weight: 600;
       color: #64748b;
+      margin-left: 6px;
+      letter-spacing: 0.02em;
+    }
+    /* One-time "just updated" state (see tepShowUpdatedBadge) — bright
+       orange highlight on the version number itself, plus a short-lived
+       "Update Complete!" label beside it. Only appears the one session an
+       update is actually detected; never again after that same version has
+       been acknowledged (see TEP_LAST_VERSION_KEY). */
+    .tep-title-version--updated {
+      color: #431407;
+      background: #f97316;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-weight: 800;
+    }
+    .tep-update-complete-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: #fb923c;
       margin-left: 6px;
       letter-spacing: 0.02em;
     }
@@ -3661,10 +3678,25 @@
 
   const mainStyles = tepInjectCSS(STYLES);
 
-  // Last TEP_VERSION seen on this origin — lets a fresh load detect (and
-  // toast) that it's actually newer than what was here before, since the
-  // bootstrap bookmarklet itself can never signal that on its own.
+  // Last TEP_VERSION seen on this origin — lets a fresh load detect that
+  // it's actually newer than what was here before, since the bootstrap
+  // bookmarklet itself can never signal that on its own.
   const TEP_LAST_VERSION_KEY = 'tep-last-version';
+  // Set true for this session only, the one time a genuine version change
+  // is detected (see the localStorage check further down) — every
+  // .tep-title-version render checks this via tepTitleVersionHtml() so the
+  // "just updated" decoration shows up consistently even though the header
+  // gets rebuilt from scratch in a dozen places (view tab switches, dark
+  // mode toggles, etc.), not just at initial mount.
+  let tepShowUpdatedBadge = false;
+  /** Shared markup for the version number beside "TE Optics" in the header
+   *  — every h2.innerHTML rebuild in this file calls this instead of
+   *  inlining the span, so the one-time "Update Complete!" decoration
+   *  (tepShowUpdatedBadge) shows up everywhere consistently. */
+  function tepTitleVersionHtml() {
+    if (!tepShowUpdatedBadge) return `<span class="tep-title-version">v${TEP_VERSION}</span>`;
+    return `<span class="tep-title-version tep-title-version--updated">v${TEP_VERSION}</span><span class="tep-update-complete-badge">Update Complete!</span>`;
+  }
   // Push TE page content to the left
   const TEP_WIDTH_KEY = 'tep-panel-width';
   let panelWidth = parseInt(localStorage.getItem(TEP_WIDTH_KEY), 10) || 576;
@@ -3692,7 +3724,7 @@
     <div class="tep-header" id="tep-drag-handle">
       <h2>
         <span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span>
-        <span class="tep-title-version">v${TEP_VERSION}</span>
+        ${tepTitleVersionHtml()}
       </h2>
       <button class="tep-dark-toggle" id="tep-dark-toggle" style="display:none;" aria-hidden="true" tabindex="-1"></button>
       <button class="tep-dark-reset" id="tep-dark-reset" title="Reset / turn off dark mode" style="display:none;">&#9728;</button>
@@ -4509,16 +4541,16 @@
   // both style changes into one paint with no visible motion.
   root.classList.add('tep-offscreen');
   document.documentElement.appendChild(root);
+  // Re-append (moves, doesn't clone) resizeHandle to AFTER root — same
+  // z-index as root (2147483647, the max valid value; CONFIRMED via user
+  // report that the handle was rendering UNDER the panel, only the half
+  // sticking out into the page's own area still visible), so with equal
+  // z-index, paint order among siblings falls back to DOM tree order and
+  // root — appended first among the two — would otherwise always win.
+  document.documentElement.appendChild(resizeHandle);
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       root.classList.remove('tep-offscreen');
-      // TE Optics has just loaded (this is the bookmarklet's first run on
-      // this page) — same radar-sweep cue as entering/leaving the
-      // fullscreen map. Deferred to this rAF (not called inline above) so
-      // it runs after the script has finished its own top-to-bottom pass —
-      // called synchronously here, `let tepAudioCtx` (declared much further
-      // down, near tepEnsureAudioCtx) wouldn't be initialized yet.
-      tepPlayRadarSweep(0.5);
       // The bookmarklet itself can never change once someone's dragged it —
       // only what it fetches (this file) can. So the one thing we CAN surface
       // here is "the code you just got is different from last time", via a
@@ -4527,13 +4559,33 @@
       // never the same-version toggle path above, which returns early).
       // Silently no-ops on a brand-new install (nothing to compare against
       // yet) and on any localStorage failure (private/incognito mode, etc.).
+      // Checked BEFORE the mount sound below so that sound can differ for
+      // this one detection.
+      let tepJustUpdated = false;
       try {
         const lastVersion = localStorage.getItem(TEP_LAST_VERSION_KEY);
         if (lastVersion && lastVersion !== TEP_VERSION) {
-          toast(`TE Optics updated to ${TEP_VERSION}`, 'ok');
+          tepJustUpdated = true;
+          tepShowUpdatedBadge = true;
+          // The header's already been rendered once (synchronously, before
+          // this rAF, using tepShowUpdatedBadge's initial `false`) — patch
+          // that existing span in place instead of waiting for some other
+          // trigger (a tab switch, dark mode toggle) to happen to rebuild
+          // the header and pick the flag up.
+          const versionEl = root.querySelector('.tep-title-version');
+          if (versionEl) versionEl.outerHTML = tepTitleVersionHtml();
         }
         localStorage.setItem(TEP_LAST_VERSION_KEY, TEP_VERSION);
       } catch (_) { /* localStorage unavailable — skip silently */ }
+      // TE Optics has just loaded (this is the bookmarklet's first run on
+      // this page) — same radar-sweep cue as entering/leaving the
+      // fullscreen map, UNLESS an update was just detected above, in which
+      // case tepPlayUpdateWhoosh replaces it just this once. Deferred to
+      // this rAF (not called inline above) so it runs after the script has
+      // finished its own top-to-bottom pass — called synchronously here,
+      // `let tepAudioCtx` (declared much further down, near
+      // tepEnsureAudioCtx) wouldn't be initialized yet.
+      if (tepJustUpdated) tepPlayUpdateWhoosh(0.5); else tepPlayRadarSweep(0.5);
     });
   });
 
@@ -4567,27 +4619,27 @@
 
     if (isManageAlertsPage() && pAlerts) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
       }
       pAlerts.classList.add('active');
     } else if (isManageTagsPage() && pTags) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
       }
       pTags.classList.add('active');
     } else if (isDashboardToolsPage()) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
       }
       pDash.classList.add('active');
     } else if (isEndpointToolsPage() && pEndpoint) {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
       }
       pEndpoint.classList.add('active');
     } else {
       if (h2) {
-        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+        h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
       }
       pManage.classList.add('active');
     }
@@ -4621,7 +4673,7 @@
     const target = mode === 'endpoint' ? pEndpoint : pManage;
     if (target) target.classList.add('active');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
     }
     const enterpriseBtn = root.querySelector('#tep-mode-enterprise');
     const endpointBtn = root.querySelector('#tep-mode-endpoint');
@@ -4652,7 +4704,7 @@
     tepFromEndpointTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> ${tepTitleVersionHtml()}`;
     }
     void loadTests();
     updateManageUnitsTotal();
@@ -4670,7 +4722,7 @@
     tepFromDashTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
     }
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
@@ -4690,7 +4742,7 @@
     tepFromDashTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> ${tepTitleVersionHtml()}`;
     }
     void loadTests();
     updateManageUnitsTotal();
@@ -4708,7 +4760,7 @@
     tepFromEndpointTests = false;
     const h2 = root.querySelector('.tep-header h2');
     if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> <span class="tep-title-version">v${TEP_VERSION}</span>`;
+      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
     }
     updateManageUnitsTotal();
     applyDefaultAuthenticatedStatus();
@@ -21787,6 +21839,47 @@
       g.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
       src.connect(filter); filter.connect(pan); pan.connect(g); g.connect(ctx.destination);
       src.start(now); src.stop(now + 0.7);
+    } catch (_) { /* */ }
+  }
+  /** Filtered noise sweep (500→2200Hz bandpass) resolving into a single
+   *  sine chime near the end — replaces tepPlayRadarSweep's normal mount
+   *  cue for the ONE session an update is actually detected (see
+   *  tepShowUpdatedBadge), so that specific open reads as "something
+   *  changed" rather than the routine open/close whoosh. `volumeScale`
+   *  scales peak gain, same convention as tepPlayDigitalBlip. */
+  function tepPlayUpdateWhoosh(volumeScale) {
+    const ctx = tepEnsureAudioCtx();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const vol = volumeScale != null ? volumeScale : 1;
+      const master = ctx.createGain();
+      master.gain.value = 0.22 * vol;
+      master.connect(ctx.destination);
+
+      const src = ctx.createBufferSource();
+      src.buffer = tepGetNoiseBuffer(ctx);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.value = 2;
+      filter.frequency.setValueAtTime(500, now);
+      filter.frequency.linearRampToValueAtTime(2200, now + 0.35);
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.5, now + 0.15);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+      src.connect(filter); filter.connect(noiseGain); noiseGain.connect(master);
+      src.start(now); src.stop(now + 0.45);
+
+      const chime = ctx.createOscillator();
+      chime.type = 'sine';
+      chime.frequency.setValueAtTime(1046, now + 0.32);
+      const chimeGain = ctx.createGain();
+      chimeGain.gain.setValueAtTime(0.0001, now + 0.32);
+      chimeGain.gain.exponentialRampToValueAtTime(0.5, now + 0.335);
+      chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.82);
+      chime.connect(chimeGain); chimeGain.connect(master);
+      chime.start(now + 0.32); chime.stop(now + 0.84);
     } catch (_) { /* */ }
   }
   /** Two-note soft descending pop — fired the instant LIVE TEST is clicked,
