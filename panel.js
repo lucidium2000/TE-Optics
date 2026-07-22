@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.53';
+  const TEP_VERSION = '3.54';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3626,6 +3626,8 @@
     // liveTestRunning check), and re-confirming that would just be an
     // annoying extra step in the way of stopping it.
     if (!liveTestRunning) {
+      tepEnsureAudioCtx();
+      tepPlayPadSwellLow(0.3);
       void tepConfirmModal('Are you sure you want to test all agents?').then((ok) => {
         if (ok) liveTestBeginRun();
       });
@@ -13880,32 +13882,6 @@
     })(obj, 0);
     return found;
   }
-  /** Same matching as epAgentPickField, but returns the KEY that actually
-   *  matched (its real casing, not the lowercased candidate) instead of its
-   *  value — diagnostic only, so a misreported metric can be traced to the
-   *  exact field name straight from the log, without needing a fresh live
-   *  capture every time. */
-  function epAgentPickFieldKey(obj, candidates) {
-    if (!obj || typeof obj !== 'object') return null;
-    const wants = candidates.map((c) => c.toLowerCase());
-    for (const [k, v] of Object.entries(obj)) {
-      if (wants.includes(k.toLowerCase()) && v != null && typeof v !== 'object' && String(v) !== '') return k;
-    }
-    let found = null;
-    (function walk(o, depth) {
-      if (found !== null || !o || typeof o !== 'object' || depth > 4) return;
-      for (const [k, v] of Object.entries(o)) {
-        if (found !== null) return;
-        if (wants.includes(k.toLowerCase()) && v != null && typeof v !== 'object' && String(v) !== '') { found = k; return; }
-      }
-      for (const v of Object.values(o)) {
-        if (found !== null) return;
-        if (v && typeof v === 'object') walk(v, depth + 1);
-      }
-    })(obj, 0);
-    return found;
-  }
-
   function epAgentPickArray(obj, candidates) {
     if (!obj || typeof obj !== 'object') return null;
     const wants = candidates.map((c) => c.toLowerCase());
@@ -14454,7 +14430,7 @@
     const pointerHtml = showPointer
       ? '<span class="tep-test-page-pointer" title="This agent matches the one on the current ThousandEyes page (URL id) — points to the app content on the left" aria-hidden="true">&#8592;</span>'
       : '';
-    // WiFi gets colored by its own signal score (epAgentPickWifiScore) when
+    // WiFi gets colored by its own signal quality (epAgentWifiQuality) when
     // available, same as the map hover card — falls back to the flat green
     // it always had when no score was found.
     const agentWifiScoreColor = agent.connKind === 'wifi' && agent.wifiScore != null ? tepWifiScoreColor(agent.wifiScore).fill : null;
@@ -15622,7 +15598,7 @@
     // agent's segment-visualisation enrichment resolves (triggered lazily
     // by showTip() the first time its hover card opens; same mechanism the
     // sidebar Endpoint Agents list already uses). Nothing shows until then.
-    // WiFi gets colored by its own signal score (epAgentPickWifiScore) when
+    // WiFi gets colored by its own signal quality (epAgentWifiQuality) when
     // available — its own, more lenient banded scale (tepWifiScoreColor),
     // not the generic health gradient — falling back to the flat blue it
     // always had when no score was found.
@@ -16384,6 +16360,22 @@
       }
       agent._enriched = true;
       agent._enriching = false;
+      // `it` is the SAME object as cluster.items[idx] — but it's a snapshot
+      // buildDashboardMapAgents copied BEFORE this fetch ever started, so
+      // mutating `agent` (the allEndpointAgents source, above) does NOT
+      // retroactively update it. Without copying the freshly-enriched
+      // fields across here too, the tip.innerHTML re-render below would
+      // still render whatever `it` had at snapshot time (usually all
+      // null) — CONFIRMED via user report: WiFi (connKind/wifiScore) never
+      // appeared at all, since nothing else populates those fields on `it`.
+      it.cpu = agent.cpu || null;
+      it.ram = agent.ram || null;
+      it.disk = agent.disk || null;
+      it.battery = agent.battery || null;
+      it.batteryHealthPct = agent.batteryHealthPct;
+      it.connKind = agent.connKind || null;
+      it.wifiScore = agent.wifiScore != null ? agent.wifiScore : null;
+      it.vpn = agent.vpn === true;
       if (tip._cluster === cluster && tip.style.display !== 'none') {
         tip.innerHTML = tepDashTooltipHtml(cluster);
         if (marker && marker.isConnected) positionTip(marker);
@@ -18739,9 +18731,10 @@
       const hrefAttr = url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '';
       return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
     }).join('');
-    // Network sits to the left, beside HTTP, instead of stacked below it —
-    // see .tep-agenttests-cols. Only widen the popover when both columns
-    // actually exist; a single metric still reads fine at the normal width.
+    // HTTP always sits to the left, beside Network, instead of stacked below
+    // it — see .tep-agenttests-cols. Only widen the popover when both
+    // columns actually exist; a single metric still reads fine at the
+    // normal width.
     const netCol = showNet
       ? `<div class="tep-agenttests-col"><div class="tep-saas-breakdown-section-head">Network<span class="tep-saas-breakdown-hint">(${tepEscapeHtmlText(netWindowNote)})</span></div>`
         + `<div class="tep-saas-breakdown-list">${rowsHtml(netRows, true)}</div></div>`
@@ -18751,9 +18744,8 @@
         + `<div class="tep-saas-breakdown-list">${rowsHtml(httpRows, false)}</div></div>`
       : '';
     pop.classList.toggle('tep-agenttests-pop--cols', showHttp && showNet);
-    pop.innerHTML = `<div class="tep-saas-breakdown-head">${headRowHtml}`
-      + `<span class="tep-saas-breakdown-hint">worst score first · click a row to open the test</span></div>`
-      + `<div class="tep-agenttests-cols">${netCol}${httpCol}</div>`;
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${headRowHtml}</div>`
+      + `<div class="tep-agenttests-cols">${httpCol}${netCol}</div>`;
     positionPop(); // real content likely changed height vs the loading placeholder
   }
 
@@ -20670,51 +20662,33 @@
     return kind;
   }
 
-  /** Best-effort WiFi connection quality, 0-100 (higher = better) — NOT
-   *  independently confirmed to exist in the segment-visualisation response
-   *  the way connKind detection is; no live capture has surfaced a scored
-   *  WiFi metric yet, only the connection-type fields epAgentDetectConnKind
-   *  already uses. Tries an already-0-100 score/percent field first (same
-   *  epAgentPickPercentMetric technique as cpu/ram/disk/battery); falls back
-   *  to an RSSI-style dBm reading (roughly -30 = excellent to -90 =
-   *  unusable, the far more common raw shape for a WiFi signal value) mapped
-   *  onto that same 0-100 scale. Returns null if neither is found — callers
-   *  must treat that as "no data" (keep the existing flat wifi color), not
-   *  "bad signal".
+  /** WiFi connection quality, 0-100 (higher = better) — CONFIRMED via live
+   *  capture: segment-visualisation's gateway.wirelessProfile.quality is a
+   *  direct 0-100 score straight from the agent's own OS-level WiFi API
+   *  (macOS's own signal-quality reading in the captured example), no
+   *  inversion or unit conversion needed. connection.wirelessProfile.quality
+   *  carries the identical value in that same capture (mirrored, not a
+   *  separate metric) and is only used as a fallback should gateway's ever
+   *  be missing.
    *
-   *  History: originally treated every candidate field as higher=better.
-   *  A user reported good signal showing red, so every field got flipped
-   *  (100 - pct) uniformly — which then made a DIFFERENT set of agents read
-   *  way LOWER than expected, i.e. the uniform flip over-corrected agents
-   *  that were never wrong. Conclusion: different agents/platforms expose
-   *  different fields here, not all with the same polarity. Now split into
-   *  two tiers — WIFI_PCT_KEYS_DIRECT (explicitly "quality"/"strength"
-   *  named, near-universal higher=better telemetry convention, trusted
-   *  as-is and checked first) and WIFI_PCT_KEYS_INVERTED (just
-   *  connectionScore — generic/ambiguous enough that it could easily be a
-   *  "connection PROBLEM score" instead, only tried once no direct field is
-   *  present). Still an unconfirmed guess — the per-agent log line in
-   *  applySegmentMetricsToAgent below names the exact matched field and its
-   *  raw value for every wifi agent (capped), so if a specific agent still
-   *  looks wrong, its log line is what to paste back for a real fix. */
-  const WIFI_PCT_KEYS_DIRECT = [
-    'wifiScore', 'wifiSignalScore', 'wifiQualityScore',
-    'signalQuality', 'signalQualityPercent', 'wifiQuality', 'linkQuality',
-    'signalStrengthPercent', 'wifiSignalStrengthPercent',
-  ];
-  const WIFI_PCT_KEYS_INVERTED = ['connectionScore'];
-  const WIFI_RSSI_KEYS = ['rssi', 'wifiRssi', 'signalStrength', 'wifiSignalStrength', 'signalLevel', 'wifiSignalLevel', 'signalDbm'];
-  function epAgentPickWifiScore(raw) {
-    if (!raw || typeof raw !== 'object') return null;
-    const direct = epAgentPickPercentMetric(raw, WIFI_PCT_KEYS_DIRECT);
-    if (direct != null) return Math.round(parseFloat(direct));
-    const inverted = epAgentPickPercentMetric(raw, WIFI_PCT_KEYS_INVERTED);
-    if (inverted != null) return Math.round(100 - parseFloat(inverted));
-    const rssiRaw = epAgentPickField(raw, WIFI_RSSI_KEYS);
-    const rssi = Number(rssiRaw);
-    if (Number.isFinite(rssi) && rssi < 0 && rssi >= -100) {
-      const clamped = Math.max(-90, Math.min(-30, rssi));
-      return Math.round(((clamped + 90) / 60) * 100);
+   *  Replaces earlier generic-field-name guessing (a deep search for ANY
+   *  field named e.g. "quality"/"connectionScore" anywhere in the
+   *  response) — that was the actual source of "highly inaccurate" WiFi
+   *  colors a user reported: this same response has SEVERAL unrelated
+   *  fields also named "quality" at different nesting levels
+   *  (agentScore.quality, gatewayScore.quality, connectionScore.quality —
+   *  the last a STRING like "GREAT", not a percent), any of which the old
+   *  deep search could have matched instead of the real wireless one. */
+  function epAgentWifiQuality(data) {
+    const gw = data && data.gateway && data.gateway.wirelessProfile;
+    if (gw && gw.quality != null) {
+      const q = Number(gw.quality);
+      if (Number.isFinite(q)) return Math.round(q);
+    }
+    const cw = data && data.connection && data.connection.wirelessProfile;
+    if (cw && cw.quality != null) {
+      const q = Number(cw.quality);
+      if (Number.isFinite(q)) return Math.round(q);
     }
     return null;
   }
@@ -20739,25 +20713,13 @@
     const kind = epAgentDetectConnKind(conn) || epAgentDetectConnKind(agentNode);
     if (kind) agent.connKind = kind;
     if (kind === 'wifi') {
-      const wifiScore = epAgentPickWifiScore(conn) != null ? epAgentPickWifiScore(conn) : epAgentPickWifiScore(agentNode);
+      const wifiScore = epAgentWifiQuality(data);
       if (wifiScore != null) agent.wifiScore = wifiScore;
       if (epWifiScoreLoggedCount < EP_WIFI_SCORE_LOG_CAP) {
         epWifiScoreLoggedCount++;
-        // Names the exact field + raw value this agent's score came from —
-        // whichever of conn/agentNode actually supplied it, checked in the
-        // same direct-then-inverted-then-rssi order epAgentPickWifiScore
-        // itself uses. If a specific agent's color still looks wrong, this
-        // line (searchable by agent name) is the ground truth to paste back.
-        const src = (epAgentPickPercentMetric(conn, WIFI_PCT_KEYS_DIRECT) != null || epAgentPickPercentMetric(conn, WIFI_PCT_KEYS_INVERTED) != null || epAgentPickField(conn, WIFI_RSSI_KEYS) != null)
-          ? conn : agentNode;
-        const matchedKey = epAgentPickFieldKey(src, WIFI_PCT_KEYS_DIRECT)
-          || epAgentPickFieldKey(src, WIFI_PCT_KEYS_INVERTED)
-          || epAgentPickFieldKey(src, WIFI_RSSI_KEYS);
-        const matchedRaw = matchedKey ? epAgentPickField(src, [matchedKey]) : null;
-        const inverted = matchedKey && WIFI_PCT_KEYS_INVERTED.some((k) => k.toLowerCase() === matchedKey.toLowerCase());
         log(wifiScore != null
-          ? `WiFi score: ${agent.name || agent.id} → ${wifiScore}% (field "${matchedKey}" = ${matchedRaw}${inverted ? ', inverted' : ''}) — flag this line if the color looks wrong for THIS agent`
-          : `WiFi score: no known field found on a wifi-connected agent (${agent.name || agent.id}) — see the "Segment connection keys" log line above for the real field names to add`, 'tep-log-info');
+          ? `WiFi quality: ${agent.name || agent.id} → ${wifiScore}% (gateway.wirelessProfile.quality)`
+          : `WiFi quality: no wirelessProfile.quality found on a wifi-connected agent (${agent.name || agent.id})`, 'tep-log-info');
       }
     }
     // VPN on the last sample: the segment response lists active tunnels under `vpns`.
@@ -21911,6 +21873,30 @@
         g.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.1);
         osc.connect(g); g.connect(ctx.destination);
         osc.start(now + delay); osc.stop(now + delay + 0.12);
+      });
+    } catch (_) { /* */ }
+  }
+  /** Warm two-note pad swell, an octave lower than its original pitch (was
+   *  392/523Hz, now 196/261.6Hz) — played the instant LIVE TEST's "Are you
+   *  sure you want to test all agents?" confirm modal appears, a deeper,
+   *  more deliberate tone to match asking before a fleet-wide action.
+   *  `volumeScale` scales peak gain, same convention as tepPlayDigitalBlip. */
+  function tepPlayPadSwellLow(volumeScale) {
+    const ctx = tepEnsureAudioCtx();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const vol = 0.22 * (volumeScale != null ? volumeScale : 1);
+      [[196, vol], [261.63, vol * 0.75]].forEach(([freq, peak]) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(peak, now + 0.25);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
+        osc.connect(g); g.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 1.65);
       });
     } catch (_) { /* */ }
   }
