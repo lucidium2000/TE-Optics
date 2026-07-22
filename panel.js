@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.54';
+  const TEP_VERSION = '3.55';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1879,6 +1879,11 @@
     /* Map search box (bottom-middle, fullscreen only): matches get a pulsing
        gold glow and jump to the front; everything else dims so hits pop. */
     .tep-agent-map-marker--searchdim { opacity: .25; }
+    /* LIVE TEST is running but this agent (or every member of this cluster)
+       hasn't reported a latency round back yet — darken it so "no data
+       yet" reads as visually distinct from an agent that's already
+       reported and is just colored by its (possibly fine) result. */
+    .tep-agent-map-marker--pending { opacity: .45; }
     .tep-agent-map-marker--searchhit {
       z-index: 5;
       animation: tep-search-hit-pulse 1s ease-in-out infinite;
@@ -2376,6 +2381,7 @@
     }
     .tep-agentkind-badge--cloud { background: rgba(59,130,246,.18); color: #93c5fd; }
     .tep-agentkind-badge--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
+    .tep-agentkind-badge--endpoint { background: rgba(167,139,250,.18); color: #c4b5fd; }
     .tep-agentkind-badge svg { fill: none; transition: fill .15s ease; }
     .tep-agentkind-count { line-height: 1; }
     /* "Cloud" wording only shows up alongside the count while its row is
@@ -13569,7 +13575,106 @@
     return Math.floor(nowSec / ENDPOINT_VIEW_ROUND_BIN_SEC) * ENDPOINT_VIEW_ROUND_BIN_SEC;
   }
 
-  function buildEndpointTestViewUrl(t) {
+  // lz-string's URI-safe alphabet + its _compress core — CONFIRMED via live
+  // capture: diffing a real /endpoint/views/ URL opened with one agent
+  // (LUCID11PC) in focus against the same test's unscoped URL showed one
+  // added param, `filters=<blob>`; running lz-string's own
+  // decompressFromEncodedURIComponent on that blob revealed
+  // {"filters":{"machineId":["<agent's guid>"]}} — that's the mechanism the
+  // endpoint views page itself uses to focus a single agent. Ported
+  // (compress direction only — nothing here ever needs to decompress) from
+  // lz-string's MIT-licensed source rather than pulling in the whole
+  // library for one write-only call; verified byte-for-byte against the
+  // real captured blob before wiring it in below.
+  const TEP_LZ_URI_SAFE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$';
+  function tepLzCompressToEncodedURIComponent(uncompressed) {
+    if (uncompressed == null) return '';
+    const getCharFromInt = (a) => TEP_LZ_URI_SAFE_ALPHABET.charAt(a);
+    const bitsPerChar = 6;
+    let i, value;
+    const context_dictionary = {};
+    let context_dictionaryToCreate = {};
+    let context_c = '', context_wc = '', context_w = '';
+    let context_enlargeIn = 2, context_dictSize = 3, context_numBits = 2;
+    const context_data = [];
+    let context_data_val = 0, context_data_position = 0;
+    const pushBit = () => {
+      if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+      else context_data_position++;
+    };
+    // Raw bit writer, no dictionary side effects — shared by the char/code
+    // emitters below AND the end-of-stream marker, which (per the original)
+    // must NOT trigger the enlargeIn/numBits bump those two do.
+    const writeBits = (val, numBits) => {
+      let v = val;
+      for (i = 0; i < numBits; i++) { context_data_val = (context_data_val << 1) | (v & 1); pushBit(); v = v >> 1; }
+    };
+    const bumpEnlarge = () => {
+      context_enlargeIn--;
+      if (context_enlargeIn == 0) { context_enlargeIn = Math.pow(2, context_numBits); context_numBits++; }
+    };
+    const emitChar = (charCode) => {
+      // 0-marker (numBits zero-bits) then the char itself, 8 bits if <256;
+      // else a marker whose first bit is 1 (rest 0) + 16 bits — lz-string's
+      // own scheme for a never-before-seen char.
+      if (charCode < 256) {
+        writeBits(0, context_numBits);
+        writeBits(charCode, 8);
+      } else {
+        let v = 1;
+        for (i = 0; i < context_numBits; i++) { context_data_val = (context_data_val << 1) | v; pushBit(); v = 0; }
+        writeBits(charCode, 16);
+      }
+    };
+    // A newly-seen char consumes TWO dictionary-growth "budget" ticks (the
+    // char's own entry, plus the wc pair below); an already-known char
+    // reusing an existing code consumes only one (just the wc pair) — this
+    // asymmetry is exactly what the original's inner-vs-outer enlargeIn
+    // decrements encode, easy to flatten into a bug by treating both emit
+    // paths as "one bump each" (tried that first — round-trip broke on
+    // anything past the first couple of distinct chars).
+    const emitW = (w) => {
+      if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, w)) {
+        emitChar(w.charCodeAt(0));
+        bumpEnlarge();
+        delete context_dictionaryToCreate[w];
+      } else {
+        writeBits(context_dictionary[w], context_numBits);
+      }
+      bumpEnlarge();
+    };
+    for (let ii = 0; ii < uncompressed.length; ii += 1) {
+      context_c = uncompressed.charAt(ii);
+      if (!Object.prototype.hasOwnProperty.call(context_dictionary, context_c)) {
+        context_dictionary[context_c] = context_dictSize++;
+        context_dictionaryToCreate[context_c] = true;
+      }
+      context_wc = context_w + context_c;
+      if (Object.prototype.hasOwnProperty.call(context_dictionary, context_wc)) {
+        context_w = context_wc;
+      } else {
+        emitW(context_w);
+        context_dictionary[context_wc] = context_dictSize++;
+        context_w = String(context_c);
+      }
+    }
+    if (context_w !== '') emitW(context_w);
+    writeBits(2, context_numBits); // end-of-stream marker — no enlargeIn bump after this, per the original
+    while (true) { // flush the final partial char
+      context_data_val = (context_data_val << 1);
+      if (context_data_position == bitsPerChar - 1) { context_data.push(getCharFromInt(context_data_val)); break; }
+      else context_data_position++;
+    }
+    return context_data.join('');
+  }
+  /** The one query param that scopes an /endpoint/views/ link to a single
+   *  agent instead of every agent on the test — see the confirmation note
+   *  on tepLzCompressToEncodedURIComponent above. */
+  function tepEndpointFilterParam(agentId) {
+    return tepLzCompressToEncodedURIComponent(JSON.stringify({ filters: { machineId: [String(agentId)] } }));
+  }
+
+  function buildEndpointTestViewUrl(t, agentId) {
     const tid = getEndpointTestId(t);
     if (tid == null || tid === '') return '#';
     const { scenarioId, metric } = getEndpointViewScenario(t);
@@ -13579,6 +13684,7 @@
       scenarioId,
       testId: String(tid)
     });
+    if (agentId != null && agentId !== '') params.set('filters', tepEndpointFilterParam(agentId));
     return `/endpoint/views/?${params.toString()}`;
   }
 
@@ -14973,14 +15079,15 @@
   // fetch (NAS-MEAN averaged over timeSpanConfig.last). Used to be a
   // Network-Health-only 1h/24h toggle next to that widget's title, with SaaS
   // Health silently hardcoded to 24h and never exposed at all — this unifies
-  // both under one control. Endpoint agents' per-test HTTP breakdown
-  // (segment-visualisation, see tepFetchHttpTestsForEndpointAgent) is
-  // deliberately NOT wired to this: that API is a single live round snapshot
-  // with no confirmed windowed/averaging equivalent, so it always shows the
-  // live round regardless of this dropdown. (A rotated vertical slider, then
-  // a horizontal one, both preceded this — both proved fiddly to use, hence
-  // the plain dropdown.) Order below is just the dropdown's top-to-bottom
-  // list order — 24h first (the default), Live last.
+  // both under one control. Endpoint agents' per-test HTTP/Network
+  // breakdowns (tepFetchEndpointTestBreakdownCore) follow this same window
+  // too — they used to be stuck on a single live-round snapshot
+  // (segment-visualisation) with no windowed equivalent, before switching to
+  // the same whole-fleet per-test fetch the widgets themselves use. (A
+  // rotated vertical slider, then a horizontal one, both preceded this —
+  // both proved fiddly to use, hence the plain dropdown.) Order below is
+  // just the dropdown's top-to-bottom list order — 24h first (the default),
+  // Live last.
   const DASH_METRICS_WINDOWS = [
     { sec: 86400, label: '24h' },
     { sec: 43200, label: '12h' },
@@ -15699,9 +15806,9 @@
       ${userSeenHtml}
       <div class="tep-map-tip-meta"><span>${tepEscapeHtmlText(it.location || '—')}</span>${geoMapLink}${loss}</div>
       ${ipHtml}
-      ${ispHtml}
       ${metricsHtml}
       ${alertMetricRowHtml || metricRowHtml}
+      ${ispHtml}
       ${destHtml}
     </div>`;
   }
@@ -15973,11 +16080,18 @@
       const listHoverHit = listHoverMatches.length > 0;
       const highlightActive = !!dashMapSearchQuery || !!dashMapTestHighlight || !!dashMapAlertPreviewHighlight
         || !!dashMapAgentsListHoverHighlight;
+      // Once LIVE TEST has actually started, an agent (or every member of a
+      // cluster) with no latency reading YET hasn't reported back a round
+      // — darken it so "no data yet" reads as visually distinct from an
+      // agent that has reported and is just colored by its (possibly fine)
+      // result. Clears itself the moment ANY member reports in.
+      const noLiveReportYet = liveTestRunning && !items.some((it) => Number.isFinite(it.latencyMs));
       m.className = 'tep-agent-map-marker tep-dash-map-marker'
         + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
         + (anyOnline ? ' tep-agent-map-marker--online' : '')
         + (isSrc ? ' tep-livetest-src' : '')
-        + (highlightActive ? ((searchHit || testHit || alertHit || listHoverHit) ? ' tep-agent-map-marker--searchhit' : ' tep-agent-map-marker--searchdim') : '');
+        + (highlightActive ? ((searchHit || testHit || alertHit || listHoverHit) ? ' tep-agent-map-marker--searchhit' : ' tep-agent-map-marker--searchdim') : '')
+        + (noLiveReportYet ? ' tep-agent-map-marker--pending' : '');
       const latVals = items.map((it) => it.latencyMs).filter((v) => Number.isFinite(v));
       const latAvg = latVals.length ? Math.round(latVals.reduce((s, v) => s + v, 0) / latVals.length) : null;
       const lossVals = items.map((it) => it.lossPct).filter((v) => Number.isFinite(v));
@@ -17514,14 +17628,30 @@
         // filter), that "off" state here IS a real mode: 'combined' colors
         // by both SaaS and Network Health together (see tepColorScoreForItem).
         else if (radio.name === 'tep-dashmap-color-source') { dashMapColorSource = 'combined'; hideAgentTestsPopover(); }
-        else dashMapAgentTypeFilter = null;
+        else {
+          dashMapAgentTypeFilter = null;
+          // Endpoint agents just dropped out of (or into) the SaaS/Network
+          // Health blend (see tepFetchAllHttpAvailability/
+          // tepFetchAllNetworkHealth's dashMapAgentTypeFilter gate) — force
+          // a refetch so the widgets reflect it immediately instead of
+          // waiting for the next periodic refresh.
+          void fillSaasHealthWidget(true);
+          void fillNetworkHealthWidget(true);
+        }
         applyFilterChange();
       });
       container.addEventListener('change', (e) => {
         const radio = e.target.closest('input[type="radio"]');
         if (!radio) return;
-        if (radio.id === 'tep-dashmap-filter-ent') dashMapAgentTypeFilter = 'enterprise';
-        else if (radio.id === 'tep-dashmap-filter-ep') dashMapAgentTypeFilter = 'endpoint';
+        if (radio.id === 'tep-dashmap-filter-ent') {
+          dashMapAgentTypeFilter = 'enterprise';
+          void fillSaasHealthWidget(true);
+          void fillNetworkHealthWidget(true);
+        } else if (radio.id === 'tep-dashmap-filter-ep') {
+          dashMapAgentTypeFilter = 'endpoint';
+          void fillSaasHealthWidget(true);
+          void fillNetworkHealthWidget(true);
+        }
         else if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = radio.dataset.value || null;
         else if (radio.id === 'tep-dashmap-color-saas') { dashMapColorSource = 'saas'; hideAgentTestsPopover(); }
         else if (radio.id === 'tep-dashmap-color-network') { dashMapColorSource = 'network'; hideAgentTestsPopover(); }
@@ -17719,33 +17849,69 @@
 
   async function tepFetchAllHttpAvailability(force) {
     const raw = await tepFetchHttpAvailabilityRaw(force).catch(() => null);
-    if (!raw) return null;
     const byTest = new Map(); // testId → [v, v, ...]
-    for (const p of raw.points) {
-      if (!p || !p.aggIds) continue;
-      const testId = p.aggIds['NAS-TEST'];
-      const v = Number(p.v);
-      if (testId == null || !Number.isFinite(v)) continue;
-      if (!byTest.has(testId)) byTest.set(testId, []);
-      byTest.get(testId).push(v);
+    if (raw) {
+      for (const p of raw.points) {
+        if (!p || !p.aggIds) continue;
+        const testId = p.aggIds['NAS-TEST'];
+        const v = Number(p.v);
+        if (testId == null || !Number.isFinite(v)) continue;
+        if (!byTest.has(testId)) byTest.set(testId, []);
+        byTest.get(testId).push(v);
+      }
     }
-    if (!byTest.size) return null;
+    // The map's own Enterprise/Endpoint Agents filter controls what this
+    // widget reflects, mirroring what's actually plotted on the map:
+    //  - Combined/default (both types on the map): enterprise AND endpoint
+    //    tests both show, as real per-test rows mixed together — no
+    //    aggregation into a single line.
+    //  - Enterprise-only: enterprise tests only, no endpoint data at all.
+    //  - Endpoint-only: endpoint tests only, no enterprise data at all.
+    const includeEnterprise = dashMapAgentTypeFilter !== 'endpoint';
+    const includeEndpoint = dashMapAgentTypeFilter !== 'enterprise';
     const breakdown = [];
-    for (const [testId, vals] of byTest) {
-      const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
-      breakdown.push({ title: raw.testNames[testId] || `Test ${testId}`, value: avg, testId: String(testId) });
+    let testCount = 0;
+    if (includeEnterprise) {
+      for (const [testId, vals] of byTest) {
+        const avg = vals.reduce((s, x) => s + x, 0) / vals.length;
+        breakdown.push({ title: raw.testNames[testId] || `Test ${testId}`, value: avg, testId: String(testId) });
+        testCount++;
+      }
     }
+    // Endpoint agents' own per-test HTTP availability (see
+    // tepFetchEndpointTestBreakdownCore's comment for how this two-
+    // dimensional grouping was discovered) — one row per endpoint test,
+    // averaged across every machine that ran it, functioning exactly like
+    // an enterprise test row (hover highlights its agents, click opens the
+    // test). Reuses whatever cache is already warm; costs nothing extra
+    // network-wise beyond the one dedicated per-test call.
+    let epCount = 0;
+    if (includeEndpoint) {
+      const epRaw = await tepFetchEndpointHttpTestBreakdown(force).catch(() => null);
+      if (epRaw && epRaw.byTest.size) {
+        for (const [testId, t] of epRaw.byTest) {
+          if (!t.vals.length) continue;
+          const avg = t.vals.reduce((s, x) => s + x, 0) / t.vals.length;
+          breakdown.push({
+            title: t.name || `Endpoint test ${testId}`, value: avg, testId: String(testId),
+            isEndpoint: true, agentIds: t.agentIds, agentCount: t.agentIds.size, round: epRaw.round,
+          });
+          epCount++;
+        }
+      }
+    }
+    if (!breakdown.length) return null;
     breakdown.sort((a, b) => a.value - b.value); // worst first, matches other breakdown popovers
     const avg = breakdown.reduce((s, r) => s + r.value, 0) / breakdown.length;
-    log(`SaaS widget: averaged ${breakdown.length} HTTP test(s) directly (no dashboard) → ${avg.toFixed(2)}%`, 'tep-log-ok');
-    return { avg, count: breakdown.length, breakdown };
+    log(`SaaS widget: averaged ${testCount} HTTP test(s) + ${epCount} endpoint test(s) → ${avg.toFixed(2)}%`, 'tep-log-ok');
+    return { avg, count: breakdown.length, testCount, epCount, breakdown };
   }
 
   // ENTERPRISE AGENTS ONLY — CONFIRMED via live capture that endpoint agents
   // never show up in the NAS-AGENT dimension for this metric (their
   // HTTP-test results don't flow through the dashboard-widget aggregation
   // system at all), so this always returned an empty list for them. Endpoint
-  // agents use tepFetchHttpTestsForEndpointAgent below instead — a totally
+  // agents use tepFetchEndpointHttpRowsForAgent instead — a totally
   // different, per-agent API. Keyed by UPPER-CASED agent display name
   // (names.aggregatesMap['NAS-AGENT']), not the raw NAS-AGENT id — that id's
   // scheme isn't independently confirmed to match the portal's agentId, and
@@ -17804,106 +17970,46 @@
     return byTest;
   }
 
-  // Endpoint agents' HTTP tests, by application score — the counterpart to
-  // tepFetchHttpAvailabilityByAgent above, but per-agent via segment-visualisation
-  // (same endpoint the CPU/RAM/battery/connection enrichment already uses —
-  // see ENDPOINT_SEGMENT_PATH further down) instead of the dashboard-wide
-  // NAS-AGENT metric, which CONFIRMED never carries endpoint agents. The
-  // response's `applications` array covers every application-adjacent test
-  // (including plain NETWORK pings at app infrastructure, e.g. a Webex
-  // calling server) — cross-referenced against `testsInUse` and filtered to
-  // testType === 'HTTP' so this only surfaces actual HTTP Server tests, per
-  // the live-captured shape confirmed via manual curl against
-  // /namespace/endpoint-api/single-agent-view-service/v1/segment-visualisation.
-  // Shared with applySegmentMetricsToAgent (further down) — that's the SAME
-  // response, already fetched for the CPU/RAM/battery/connection enrichment
-  // (hover card + sidebar list), so it parses these rows onto agent.httpTests
-  // too instead of a second, separate request duplicating this one.
-  function epParseHttpTestRowsFromSegmentData(data) {
-    const apps = (data && Array.isArray(data.applications)) ? data.applications : [];
-    const testsInUse = {};
-    if (data && Array.isArray(data.testsInUse)) {
-      for (const t of data.testsInUse) { if (t && t.testId != null) testsInUse[String(t.testId)] = t; }
-    }
-    const rows = [];
-    for (const app of apps) {
-      const t = app && app.test;
-      if (!t || t.testId == null) continue;
-      const meta = testsInUse[String(t.testId)];
-      if (!meta || meta.testType !== 'HTTP') continue; // exclude NETWORK-type app-infra tests
-      const score = Number(t.avgApplicationScore);
-      if (!Number.isFinite(score)) continue;
-      // Endpoint test results live at /endpoint/views/, not the enterprise
-      // /view/tests/ path the SaaS-by-agent rows below link to — meta has the
-      // same shape buildEndpointTestViewUrl already expects (testId/testType/
-      // testCategory), so reuse it instead of guessing at the URL scheme here.
-      rows.push({ title: meta.name || `Test ${t.testId}`, value: score, testId: String(t.testId), url: buildEndpointTestViewUrl(meta) });
-    }
-    rows.sort((a, b) => a.value - b.value); // worst application score first
-    return rows;
-  }
-  const tepEpHttpTestsCache = new Map(); // agentId -> { ts, rows: [{title,value,testId}] }
-  const TEP_EP_HTTP_TESTS_CACHE_MS = 2 * 60 * 1000;
-  async function tepFetchHttpTestsForEndpointAgent(agentId) {
-    // If this agent's segment-visualisation enrichment already ran (hover
-    // card open, or the sidebar list scrolled it into view), agent.httpTests
-    // was parsed from that SAME response already — reuse it instead of firing
-    // a second identical request.
-    const enrichedAgent = allEndpointAgents.find((x) => String(x.id) === String(agentId));
-    if (enrichedAgent && enrichedAgent._enriched && Array.isArray(enrichedAgent.httpTests)) {
-      return enrichedAgent.httpTests;
-    }
-    const cached = tepEpHttpTestsCache.get(agentId);
-    if (cached && (Date.now() - cached.ts) < TEP_EP_HTTP_TESTS_CACHE_MS) return cached.rows;
-    const round = Math.floor((Date.now() / 1000 - 600) / 300) * 300;
-    let resp;
-    try {
-      resp = await ajax(ENDPOINT_SEGMENT_PATH, {
-        method: 'POST',
-        body: JSON.stringify({ roundIdSeconds: round, agentId, testIds: [] })
-      });
-    } catch (e) {
-      log(`Endpoint HTTP tests: fetch error for ${agentId} — ${e.message}`, 'tep-log-info');
-      return null;
-    }
-    if (!resp || !resp.ok) {
-      log(`Endpoint HTTP tests: fetch for ${agentId} → ${resp ? resp.status : 'error'}`, 'tep-log-info');
-      return null;
-    }
-    const text = await resp.text().catch(() => '');
-    let data;
-    try { data = JSON.parse(text); } catch (_) { log('Endpoint HTTP tests: non-JSON response', 'tep-log-info'); return null; }
-    const rows = epParseHttpTestRowsFromSegmentData(data);
-    tepEpHttpTestsCache.set(agentId, { ts: Date.now(), rows });
-    log(`Endpoint HTTP tests: ${rows.length} HTTP test(s) for agent ${agentId}`, 'tep-log-ok');
-    return rows;
-  }
 
   const TEP_DASH_DATA_STREAM_PATH = '/namespace/dash-api/dash/data-stream';
   /** dash-api/dash/data-stream's response is NOT a single JSON blob — CONFIRMED
-   *  via live capture it's 3 line-delimited segments: a JSON store-descriptor
-   *  line, then CSV rows (a header line naming each column, e.g.
-   *  "r,n,EYEBROW_MACHINE_ID,v,m", followed by one data line per row), then a
-   *  trailing JSON line holding names.aggregatesMap for any id-like column.
+   *  via live capture it's usually 3 line-delimited segments: a JSON
+   *  store-descriptor line, then CSV rows (a header line naming each column,
+   *  e.g. "r,n,EYEBROW_MACHINE_ID,v,m", followed by one data line per row),
+   *  then a trailing JSON line holding names.aggregatesMap for any id-like
+   *  column. For a two-dimensional grouping (EYEBROW_MACHINE_ID +
+   *  EYEBROW_TEST — see tepFetchEndpointTestBreakdownCore) this can send
+   *  MULTIPLE such JSON lines (a `__bg=1` streamed response, resolved
+   *  incrementally as more test names come in) — CONFIRMED via live capture
+   *  a naive "last one wins" read left some rows' test names blank even
+   *  though an earlier chunk had resolved them. Every JSON-starting line
+   *  after line 0 is merged (per dimension, per id) instead of only keeping
+   *  the last one, so a name resolved in an earlier chunk survives even if
+   *  a later chunk's blob doesn't happen to repeat it.
    *  Returns { headerCols, dataLines, names } or null. */
   function tepParseDataStreamText(text) {
     const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) return null;
-    let namesLine = null;
     let headerCols = null;
     const dataLines = [];
+    const names = {};
     for (let i = 1; i < lines.length; i++) { // line 0 is the store descriptor — skip it
       const l = lines[i];
-      if (l.startsWith('{')) { namesLine = l; continue; }
+      if (l.startsWith('{')) {
+        try {
+          const chunk = JSON.parse(l);
+          const map = (chunk.names && chunk.names.aggregatesMap) || null;
+          if (map) {
+            for (const dim of Object.keys(map)) {
+              if (!names[dim]) names[dim] = {};
+              Object.assign(names[dim], map[dim]);
+            }
+          }
+        } catch (_) { /* not a names chunk we can parse — skip */ }
+        continue;
+      }
       if (!headerCols) { headerCols = l.split(','); continue; }
       dataLines.push(l.split(','));
-    }
-    let names = {};
-    if (namesLine) {
-      try {
-        const parsed = JSON.parse(namesLine);
-        names = (parsed.names && parsed.names.aggregatesMap) || {};
-      } catch (_) { /* leave names empty */ }
     }
     return { headerCols, dataLines, names };
   }
@@ -17911,9 +18017,7 @@
   const TEP_EP_APP_SCORE_CACHE_MS = 2 * 60 * 1000;
   /** ALL endpoint agents' OVERALL HTTP application score (every HTTP-adjacent
    *  test blended into one number per agent), for a real Data Window
-   *  (1h/4h/12h/24h) — the windowed counterpart to
-   *  tepFetchHttpTestsForEndpointAgent's per-test "Live" breakdown, which has
-   *  no windowed equivalent. Uses metric ENDPOINT_TEST_HTTP_APPLICATION_SCORE
+   *  (1h/4h/12h/24h). Uses metric ENDPOINT_TEST_HTTP_APPLICATION_SCORE
    *  against the ENDPOINT_AGENTS data source, grouped by EYEBROW_MACHINE_ID —
    *  CONFIRMED via live capture to work with a synthetic dashboardId/widgetId
    *  (same "no real dashboard needed" behavior as the enterprise NAS
@@ -17921,14 +18025,10 @@
    *  generalFilter's values are already [] = "all agents" — one fetch here
    *  covers the whole fleet's map coloring instead of one request per agent).
    *  Feeds ONLY the Application Health score on the hover card/marker color —
-   *  the per-agent tests popover always shows the live round instead (see
-   *  tepFetchHttpTestsForEndpointAgent), since that's real per-test data
-   *  where this is only ever a single blended number. UNLIKE the
-   *  enterprise NAS fetches, there is NO confirmed way to also break this down
-   *  by test: the real per-test drill-down endpoint (dash-api/dash/drill-down)
-   *  CONFIRMED via live capture to 404 without an actual saved dashboard
-   *  widget to drill into — not usable here. So this deliberately returns one
-   *  blended number per agent, not a per-test list. */
+   *  the per-agent tests popover has its own real per-test breakdown now
+   *  (tepFetchEndpointHttpRowsForAgent, via tepFetchEndpointTestBreakdownCore),
+   *  this one stays a single blended number since it's purely for map-marker
+   *  coloring, not for listing individual tests. */
   async function tepFetchAllEndpointAgentAppScores(force) {
     const windowSec = tepMetricsWindowSec();
     if (!force && tepAllEpAppScoresCache && tepAllEpAppScoresCache.windowSec === windowSec
@@ -18047,12 +18147,245 @@
     log(`Endpoint network score: ${byAgent.size} agent(s)`, 'tep-log-ok');
     return byAgent;
   }
-  /** One endpoint agent's network-path score — thin wrapper around
-   *  tepFetchAllEndpointAgentNetScores for the per-agent popover. */
-  async function tepFetchEndpointAgentNetScore(agentId) {
-    const byAgent = await tepFetchAllEndpointAgentNetScores().catch(() => null);
-    if (!byAgent) return null;
-    return byAgent.has(agentId) ? byAgent.get(agentId) : null;
+
+  const TEP_EP_TEST_NAMES_CACHE_MS = 10 * 60 * 1000;
+  let tepEpTestNamesCache = null; // { ts, byId: Map<string testId, string name> }
+  /** testId → real test name, straight from the Endpoint Test Settings
+   *  page's own test list — CONFIRMED via live capture this is
+   *  dashboard-independent (unlike names.aggregatesMap.EYEBROW_TEST from
+   *  the colorGrid data-stream call below, which comes back completely
+   *  empty for our synthetic widget context). Used purely as a name
+   *  lookup to backfill whatever the per-test breakdown fetch couldn't
+   *  resolve on its own. Cached longer than the metrics themselves (test
+   *  configs rarely change) and paginated via totalCount since the search
+   *  endpoint only returns one page (pageSize) at a time. */
+  async function tepFetchEndpointTestConfigNames(force) {
+    if (!force && tepEpTestNamesCache && (Date.now() - tepEpTestNamesCache.ts) < TEP_EP_TEST_NAMES_CACHE_MS) {
+      return tepEpTestNamesCache.byId;
+    }
+    const byId = new Map();
+    const pageSize = 100;
+    let pageIndex = 0;
+    try {
+      for (;;) {
+        const resp = await ajax('/namespace/endpoint-api/test-configs-service/v1/test-configs/search', {
+          method: 'POST',
+          body: JSON.stringify({ filters: [], deleted: false, searchTerms: '', sortKey: 'LAST_MODIFIED', sortDirection: 'DESC', pageIndex, pageSize }),
+        });
+        if (!resp || !resp.ok) { log(`Endpoint test names: fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info'); break; }
+        const json = await resp.json().catch(() => null);
+        const configs = (json && Array.isArray(json.testConfigs)) ? json.testConfigs : [];
+        for (const c of configs) {
+          const tc = c && c.testConfig;
+          if (tc && tc.testId != null && tc.name) byId.set(String(tc.testId), tc.name);
+        }
+        const total = json && Number.isFinite(json.totalCount) ? json.totalCount : configs.length;
+        pageIndex++;
+        if (!configs.length || byId.size >= total || pageIndex > 50) break;
+      }
+    } catch (e) {
+      log(`Endpoint test names: fetch error — ${e.message}`, 'tep-log-info');
+    }
+    tepEpTestNamesCache = { ts: Date.now(), byId };
+    log(`Endpoint test names: ${byId.size} test(s) from test-configs-service`, 'tep-log-ok');
+    return byId;
+  }
+
+  const TEP_EP_BY_TEST_CACHE_MS = 2 * 60 * 1000;
+  /** Endpoint agents' PER-TEST breakdown — CONFIRMED via live capture against
+   *  a real dashboard's "Color Grid" widget: unlike every other
+   *  ENDPOINT_AGENTS metric call in this file (tepFetchAllEndpointAgentAppScores/
+   *  NetScores above — one blended number per agent, no per-test dimension),
+   *  passing `cards: 'EYEBROW_MACHINE_ID'` + `groupCardsBy: 'EYEBROW_TEST'`
+   *  with `widgetType: 'colorGrid'` returns one row per (machine, test) PAIR,
+   *  with real test names in names.aggregatesMap.EYEBROW_TEST — a genuine
+   *  per-test breakdown, batched for the whole fleet in one call (not one
+   *  request per agent, not the Live-round-only segment endpoint). This
+   *  exact request shape is what unlocks endpoint tests showing as real rows
+   *  in the SaaS/Network Health breakdowns instead of one blended agent
+   *  score. NOT confirmed whether `multi-metric-table` would also accept
+   *  the two-dimensional grouping — colorGrid is the one live-verified. */
+  async function tepFetchEndpointTestBreakdownCore(metric) {
+    const windowSec = tepMetricsWindowSec();
+    const body = {
+      isToAggregateOnTime: true, aggregationType: 'MEAN', metric,
+      filters: {}, generalFilters: {},
+      cards: 'EYEBROW_MACHINE_ID', groupCardsBy: 'EYEBROW_TEST',
+      dashboardId: null,
+      dataSourceFilters: {
+        dataSourceId: 'ENDPOINT_AGENTS',
+        filters: [
+          { filterId: 'EYEBROW_MACHINE_ID', metricIds: [metric], values: [], generalFilter: { filterDimensionId: 'EYEBROW_MACHINE_ID', operator: 'IN', values: [] } },
+          { filterId: 'EYEBROW_AGENT_TAG', metricIds: [metric], values: [], generalFilter: { filterDimensionId: 'EYEBROW_AGENT_TAG', operator: 'IN', values: [] } },
+        ],
+      },
+      parentWidgetId: null,
+      shouldConvertAlertStoreToStore: true,
+      timeSpanConfig: { now: Date.now(), last: windowSec, useGlobalTimespan: false },
+      widgetId: 'tep-ep-bytest', widgetType: 'colorGrid',
+    };
+    const url = `${TEP_DASH_DATA_STREAM_PATH}?widgetId=tep-ep-bytest&metricId=${metric}&__bg=1`;
+    let resp;
+    try {
+      resp = await ajax(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      log(`Endpoint per-test (${metric}): fetch error — ${e.message}`, 'tep-log-info');
+      return null;
+    }
+    if (!resp || !resp.ok) {
+      log(`Endpoint per-test (${metric}): fetch → ${resp ? resp.status : 'error'}`, 'tep-log-info');
+      return null;
+    }
+    const text = await resp.text().catch(() => '');
+    const parsed = tepParseDataStreamText(text);
+    if (!parsed || !parsed.headerCols) { log(`Endpoint per-test (${metric}): unparseable response`, 'tep-log-info'); return null; }
+    const machineCol = parsed.headerCols.indexOf('EYEBROW_MACHINE_ID');
+    const testCol = parsed.headerCols.indexOf('EYEBROW_TEST');
+    const valCol = parsed.headerCols.indexOf('v');
+    if (machineCol === -1 || testCol === -1 || valCol === -1) { log(`Endpoint per-test (${metric}): unexpected columns`, 'tep-log-info'); return null; }
+    const testNames = (parsed.names && parsed.names['EYEBROW_TEST']) || {};
+    const byTest = new Map();
+    // byAgent is the exact same rows, just indexed the other way — free
+    // (same parse, same response, no extra request) and is what lets the
+    // map's per-agent hover popover show real per-test rows too, instead of
+    // a separate per-agent segment-visualisation call per hovered agent —
+    // see tepFetchEndpointHttpRowsForAgent/tepFetchEndpointNetRowsForAgent.
+    const byAgent = new Map();
+    for (const row of parsed.dataLines) {
+      const agentId = row[machineCol], testId = row[testCol], v = Number(row[valCol]);
+      if (!agentId || !testId || !Number.isFinite(v)) continue;
+      if (!byTest.has(testId)) byTest.set(testId, { name: testNames[testId] || null, vals: [], agentIds: new Set() });
+      const t = byTest.get(testId);
+      t.vals.push(v);
+      t.agentIds.add(agentId);
+      if (!byAgent.has(agentId)) byAgent.set(agentId, []);
+      byAgent.get(agentId).push({ testId, value: v });
+    }
+    // The window's end-round (needed to build a working click-through link
+    // to the endpoint test's own /endpoint/views/ page) isn't in the CSV
+    // body — CONFIRMED via live capture it's only in line 0's echoed store
+    // config (config.endRound); tepParseDataStreamText deliberately skips
+    // line 0 (documented there as the "store descriptor"), so it's parsed
+    // separately here rather than changing that shared parser for every
+    // other caller.
+    let endRound = null;
+    try { endRound = JSON.parse(String(text).split('\n')[0]).config.endRound; } catch (_) { /* fall through */ }
+    // names.aggregatesMap.EYEBROW_TEST comes back completely empty for our
+    // synthetic (non-dashboard-backed) widget context — CONFIRMED via user
+    // report — so backfill from the Endpoint Test Settings page's own
+    // dashboard-independent test list (tepFetchEndpointTestConfigNames)
+    // instead of showing a bare "Endpoint test <id>" fallback.
+    const unnamed = [...byTest.entries()].filter(([, t]) => !t.name).map(([id]) => id);
+    if (unnamed.length) {
+      const configNames = await tepFetchEndpointTestConfigNames().catch(() => null);
+      if (configNames) {
+        for (const id of unnamed) {
+          const t = byTest.get(id);
+          const nm = configNames.get(String(id));
+          if (nm) t.name = nm;
+        }
+      }
+    }
+    const stillUnnamed = [...byTest.entries()].filter(([, t]) => !t.name).map(([id]) => id);
+    if (stillUnnamed.length) {
+      log(`Endpoint per-test (${metric}): ${stillUnnamed.length}/${byTest.size} test(s) still unnamed after config lookup (ids: ${stillUnnamed.join(',')})`, 'tep-log-info');
+    }
+    log(`Endpoint per-test (${metric}): ${byTest.size} test(s)`, 'tep-log-ok');
+    return { byTest, byAgent, round: Number.isFinite(endRound) ? endRound : Math.floor(Date.now() / 1000 / 60) * 60 };
+  }
+  let tepEpHttpByTestCache = null; // { ts, windowSec, byTest, round }
+  async function tepFetchEndpointHttpTestBreakdown(force) {
+    const windowSec = tepMetricsWindowSec();
+    if (!force && tepEpHttpByTestCache && tepEpHttpByTestCache.windowSec === windowSec
+        && (Date.now() - tepEpHttpByTestCache.ts) < TEP_EP_BY_TEST_CACHE_MS) {
+      return tepEpHttpByTestCache;
+    }
+    const result = await tepFetchEndpointTestBreakdownCore('EYEBROW_TEST_HTTP_AVAILABILITY');
+    if (!result) return null;
+    tepEpHttpByTestCache = { ts: Date.now(), windowSec, ...result };
+    return tepEpHttpByTestCache;
+  }
+  let tepEpNetLatByTestCache = null;
+  async function tepFetchEndpointNetLatencyByTest(force) {
+    const windowSec = tepMetricsWindowSec();
+    if (!force && tepEpNetLatByTestCache && tepEpNetLatByTestCache.windowSec === windowSec
+        && (Date.now() - tepEpNetLatByTestCache.ts) < TEP_EP_BY_TEST_CACHE_MS) {
+      return tepEpNetLatByTestCache;
+    }
+    const result = await tepFetchEndpointTestBreakdownCore('EYEBROW_TEST_NET_LATENCY');
+    if (!result) return null;
+    tepEpNetLatByTestCache = { ts: Date.now(), windowSec, ...result };
+    return tepEpNetLatByTestCache;
+  }
+  let tepEpNetLossByTestCache = null;
+  async function tepFetchEndpointNetLossByTest(force) {
+    const windowSec = tepMetricsWindowSec();
+    if (!force && tepEpNetLossByTestCache && tepEpNetLossByTestCache.windowSec === windowSec
+        && (Date.now() - tepEpNetLossByTestCache.ts) < TEP_EP_BY_TEST_CACHE_MS) {
+      return tepEpNetLossByTestCache;
+    }
+    const result = await tepFetchEndpointTestBreakdownCore('EYEBROW_TEST_NET_LOSS');
+    if (!result) return null;
+    tepEpNetLossByTestCache = { ts: Date.now(), windowSec, ...result };
+    return tepEpNetLossByTestCache;
+  }
+
+  /** Per-agent HTTP test rows for the map's agent hover popover — derived
+   *  from the SAME whole-fleet per-test breakdown the SaaS Health widget
+   *  uses (tepFetchEndpointHttpTestBreakdown's byAgent index), instead of a
+   *  dedicated per-agent segment-visualisation call (the old
+   *  tepFetchHttpTestsForEndpointAgent/epParseHttpTestRowsFromSegmentData,
+   *  now removed). Trades that source's "live round, avgApplicationScore"
+   *  for "Data-Window-averaged, real HTTP availability %" — accepted per
+   *  user request — and this fetch is shared with the SaaS Health widget
+   *  itself (and every other agent's hover), so hovering many agents costs
+   *  nothing extra once it's warm, instead of one segment-visualisation
+   *  POST per distinct agent. */
+  async function tepFetchEndpointHttpRowsForAgent(agentId, force) {
+    const bd = await tepFetchEndpointHttpTestBreakdown(force).catch(() => null);
+    if (!bd || !bd.byAgent) return null;
+    const list = bd.byAgent.get(String(agentId));
+    if (!list || !list.length) return null;
+    const rows = list.map(({ testId, value }) => {
+      const t = bd.byTest.get(testId);
+      const title = (t && t.name) || `Endpoint test ${testId}`;
+      const url = `${window.location.origin}/endpoint/views/?metric=availability&scenarioId=eyebrowHttp&roundId=${encodeURIComponent(bd.round)}&testId=${encodeURIComponent(testId)}&filters=${encodeURIComponent(tepEndpointFilterParam(agentId))}`;
+      return { title, value, testId: String(testId), url };
+    });
+    rows.sort((a, b) => a.value - b.value); // worst availability first
+    return rows;
+  }
+  /** Per-agent Network test rows, scored via the shared tepNetworkTestScore
+   *  (same methodology as the Network Health widget) — a genuine upgrade,
+   *  not just a swap: the old tepFetchEndpointAgentNetScore only ever had
+   *  ONE blended "Overall Network Score" per agent, because there was no
+   *  per-test source at the single-agent level at all. Derived the same
+   *  free way as the HTTP rows above, from tepFetchEndpointNetLatencyByTest/
+   *  NetLossByTest's byAgent indices. */
+  async function tepFetchEndpointNetRowsForAgent(agentId, force) {
+    const [latBd, lossBd] = await Promise.all([
+      tepFetchEndpointNetLatencyByTest(force).catch(() => null),
+      tepFetchEndpointNetLossByTest(force).catch(() => null),
+    ]);
+    const latList = (latBd && latBd.byAgent && latBd.byAgent.get(String(agentId))) || [];
+    const lossList = (lossBd && lossBd.byAgent && lossBd.byAgent.get(String(agentId))) || [];
+    if (!latList.length && !lossList.length) return null;
+    const latByTest = new Map(latList.map((r) => [r.testId, r.value]));
+    const lossByTest = new Map(lossList.map((r) => [r.testId, r.value]));
+    const testIds = new Set([...latByTest.keys(), ...lossByTest.keys()]);
+    const round = (latBd && latBd.round) || (lossBd && lossBd.round);
+    const rows = [];
+    for (const testId of testIds) {
+      const avgLat = latByTest.has(testId) ? latByTest.get(testId) : null;
+      const avgLoss = lossByTest.has(testId) ? lossByTest.get(testId) : null;
+      const { score } = tepNetworkTestScore(avgLat, avgLoss);
+      const t = (latBd && latBd.byTest.get(testId)) || (lossBd && lossBd.byTest.get(testId));
+      const title = (t && t.name) || `Endpoint test ${testId}`;
+      const url = `${window.location.origin}/endpoint/views/?metric=latency&scenarioId=eyebrowNetworkTest&roundId=${encodeURIComponent(round)}&testId=${encodeURIComponent(testId)}&filters=${encodeURIComponent(tepEndpointFilterParam(agentId))}`;
+      rows.push({ title, value: score, testId: String(testId), url });
+    }
+    rows.sort((a, b) => a.value - b.value); // worst score first
+    return rows;
   }
 
   // Shared fetch behind tepFetchNasMetricAllTests (per-test average),
@@ -18129,6 +18462,22 @@
     }
     return { byTest, names: raw.testNames };
   }
+  /** Shared latency/loss → score/severity formula — same methodology for
+   *  enterprise Network Health rows, endpoint per-test widget rows, AND
+   *  (now) the map's per-agent hover popover, so all three surfaces agree
+   *  on what a given latency+loss combo means instead of drifting via
+   *  copy-paste. Lenient on latency (severity dampened 50%), unforgiving on
+   *  loss ("loss is king" — every 10 points of loss is a flat 25-point
+   *  score dent). */
+  function tepNetworkTestScore(avgLat, avgLoss) {
+    const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
+    const latSevLenient = latSevRaw * 0.5;
+    const latencyScore = (1 - latSevLenient) * 100;
+    const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
+    const score = Math.max(0, Math.round(latencyScore - lossPenalty));
+    const sev = 1 - score / 100;
+    return { score, sev };
+  }
   /** Network Health: every Network-category test's loss+latency, averaged per
    *  test across its agents. Deliberately NOT the same blend as ISP Health —
    *  latency drives a lenient baseline score (severity dampened 20%, up from
@@ -18146,33 +18495,78 @@
       tepFetchNasMetricAllTests('NAS-NET_LATENCY', force),
       tepFetchNasMetricAllTests('NAS-NET_LOSS', force),
     ]);
-    if (!lat && !loss) return null;
+    // No early return here even when enterprise/cloud data is completely
+    // absent (both null, or no test ids at all) — CONFIRMED via user
+    // report this was silently skipping the endpoint blend below entirely:
+    // an account with zero enterprise Network tests but real endpoint
+    // agents was showing "health fetch returned no data" instead of an
+    // endpoint-only average. Falls through to an empty breakdown instead,
+    // which the endpoint blend can still add rows to.
     const testIds = new Set([...(lat ? lat.byTest.keys() : []), ...(loss ? loss.byTest.keys() : [])]);
-    if (!testIds.size) return null;
     const names = { ...((loss && loss.names) || {}), ...((lat && lat.names) || {}) };
+    // The map's own Enterprise/Endpoint Agents filter controls what this
+    // widget reflects, mirroring what's actually plotted on the map:
+    //  - Combined/default (both types on the map): enterprise AND endpoint
+    //    tests both show, as real per-test rows mixed together — no
+    //    aggregation into a single line.
+    //  - Enterprise-only: enterprise tests only, no endpoint data at all.
+    //  - Endpoint-only: endpoint tests only, no enterprise data at all.
+    const includeEnterprise = dashMapAgentTypeFilter !== 'endpoint';
+    const includeEndpoint = dashMapAgentTypeFilter !== 'enterprise';
     const breakdown = [];
-    for (const testId of testIds) {
-      const latVals = lat && lat.byTest.get(testId);
-      const lossVals = loss && loss.byTest.get(testId);
-      const avgLat = latVals && latVals.length ? latVals.reduce((s, x) => s + x, 0) / latVals.length : null;
-      const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
-      if (avgLat == null && avgLoss == null) continue;
-      const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-      const latSevLenient = latSevRaw * 0.5; // more lenient still, per user request — was 0.65 (0.8 before that)
-      const latencyScore = (1 - latSevLenient) * 100;
-      const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0; // a little stricter, per user request — 10% loss is now a 25-point dent (was 20)
-      const score = Math.max(0, Math.round(latencyScore - lossPenalty));
-      const sev = 1 - score / 100;
-      breakdown.push({
-        title: names[testId] || `Test ${testId}`, sev, score,
-        testId: String(testId), avgLat, avgLoss,
-      });
+    let testCount = 0;
+    if (includeEnterprise) {
+      for (const testId of testIds) {
+        const latVals = lat && lat.byTest.get(testId);
+        const lossVals = loss && loss.byTest.get(testId);
+        const avgLat = latVals && latVals.length ? latVals.reduce((s, x) => s + x, 0) / latVals.length : null;
+        const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
+        if (avgLat == null && avgLoss == null) continue;
+        const { score, sev } = tepNetworkTestScore(avgLat, avgLoss);
+        breakdown.push({
+          title: names[testId] || `Test ${testId}`, sev, score,
+          testId: String(testId), avgLat, avgLoss,
+        });
+        testCount++;
+      }
+    }
+    // Endpoint agents' own per-test Network latency/loss (see
+    // tepFetchEndpointTestBreakdownCore's comment for how this two-
+    // dimensional grouping was discovered) — one row per endpoint test,
+    // scored with the EXACT same latency/loss formula as enterprise tests
+    // just above, so both are computed by identical methodology rather
+    // than trusting a separate ThousandEyes-computed score of unconfirmed
+    // weighting. Functions exactly like an enterprise test row (hover
+    // highlights its agents, click opens the test).
+    let epCount = 0;
+    if (includeEndpoint) {
+      const [epLat, epLoss] = await Promise.all([
+        tepFetchEndpointNetLatencyByTest(force).catch(() => null),
+        tepFetchEndpointNetLossByTest(force).catch(() => null),
+      ]);
+      const epTestIds = new Set([...(epLat ? epLat.byTest.keys() : []), ...(epLoss ? epLoss.byTest.keys() : [])]);
+      for (const testId of epTestIds) {
+        const latT = epLat && epLat.byTest.get(testId);
+        const lossT = epLoss && epLoss.byTest.get(testId);
+        const avgLat = latT && latT.vals.length ? latT.vals.reduce((s, x) => s + x, 0) / latT.vals.length : null;
+        const avgLoss = lossT && lossT.vals.length ? lossT.vals.reduce((s, x) => s + x, 0) / lossT.vals.length : null;
+        if (avgLat == null && avgLoss == null) continue;
+        const { score, sev } = tepNetworkTestScore(avgLat, avgLoss);
+        const agentIds = new Set([...(latT ? latT.agentIds : []), ...(lossT ? lossT.agentIds : [])]);
+        const name = (latT && latT.name) || (lossT && lossT.name) || `Endpoint test ${testId}`;
+        breakdown.push({
+          title: name, sev, score, testId: String(testId), avgLat, avgLoss,
+          isEndpoint: true, agentIds, agentCount: agentIds.size,
+          round: (epLat && epLat.round) || (epLoss && epLoss.round),
+        });
+        epCount++;
+      }
     }
     if (!breakdown.length) return null;
     breakdown.sort((a, b) => b.sev - a.sev); // worst first
     const avgSev = breakdown.reduce((s, r) => s + r.sev, 0) / breakdown.length;
-    log(`Network Health: averaged ${breakdown.length} Network test(s) directly (no dashboard) → ${Math.round((1 - avgSev) * 100)} health`, 'tep-log-ok');
-    return { avgSev, count: breakdown.length, breakdown };
+    log(`Network Health: averaged ${testCount} Network test(s) + ${epCount} endpoint test(s) → ${Math.round((1 - avgSev) * 100)} health`, 'tep-log-ok');
+    return { avgSev, count: breakdown.length, testCount, epCount, breakdown };
   }
 
   // ENTERPRISE AGENTS ONLY — same NAS-AGENT-never-carries-endpoint-agents
@@ -18350,6 +18744,10 @@
   // way instead of the widget title icon's flat currentColor fill.
   const TEP_CLOUD_ONLY_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9z"/></svg>';
   const TEP_ENTERPRISE_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="3.2" width="14" height="8" rx="1.8"/><line x1="3" y1="7.2" x2="13" y2="7.2"/></svg>';
+  // Same head/shoulders silhouette as tepUserIconInner (the map marker's own
+  // endpoint-agent shape), redrawn stroke-only to match TEP_ENTERPRISE_ICON_SVG/
+  // TEP_CLOUD_ONLY_ICON_SVG's flat currentColor style for a breakdown row badge.
+  const TEP_ENDPOINT_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20.5a8 8 0 0 1 16 0"/><circle cx="12" cy="7.5" r="4.2"/></svg>';
   /** UPPER-CASED display names of every currently-known Enterprise Agent
    *  (from the `agents` roster this panel already loads for the Enterprise
    *  Agents widget/map markers — no extra fetch). Used to split a
@@ -18375,7 +18773,13 @@
   function tepMarkBreakdownRowAgentBadges(pop, byTestAgents) {
     if (!pop || !byTestAgents) return;
     const entNames = tepEnterpriseAgentNameSet();
-    pop.querySelectorAll('.tep-saas-breakdown-row[data-test-id]').forEach((row) => {
+    // Endpoint test rows carry their own badge already (built inline from
+    // r.agentCount, no fetch needed — see the row template) and never
+    // appear in byTestAgents (an enterprise-only NAS-AGENT map), so this
+    // selector explicitly skips them rather than relying on that lookup
+    // simply missing — a small guard against a coincidental testId
+    // collision between the two independent id spaces.
+    pop.querySelectorAll('.tep-saas-breakdown-row[data-test-id]:not([data-endpoint])').forEach((row) => {
       const names = byTestAgents.get(row.dataset.testId);
       if (!names || !names.size) return;
       const titleEl = row.querySelector('.tep-saas-breakdown-title');
@@ -18475,9 +18879,16 @@
     tepSaasPopoverEl = null;
     document.removeEventListener('click', tepSaasPopoverOutsideClick, true);
     document.removeEventListener('keydown', tepSaasPopoverEscHandler, true);
-    // A hovered row's map highlight shouldn't survive the popover closing.
+    // A hovered row's map highlight shouldn't survive the popover closing —
+    // covers both the enterprise (name-based) and endpoint (agentId-based)
+    // test-row hover mechanisms.
     if (dashMapTestHighlight) {
       dashMapTestHighlight = null;
+      if (dashMapSearchHook) dashMapSearchHook.refresh();
+    }
+    if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
+      dashMapAgentsListHoverHighlight = null;
+      renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
       if (dashMapSearchHook) dashMapSearchHook.refresh();
     }
   }
@@ -18486,15 +18897,27 @@
   }
   function tepSaasPopoverEscHandler(e) { if (e.key === 'Escape') hideSaasBreakdownPopover(); }
   /** Toggle the "what's behind this average" breakdown for the SaaS Health
-   *  widget — one row per HTTP Server test, worst-first, each linking straight
-   *  to that test's own results (/view/tests/?testId=…), same URL shape as
-   *  every other test deep-link this panel builds. Hovering a row highlights
-   *  every agent running that test on the map (tepFetchHttpAgentsByTest),
-   *  same dim/highlight treatment the map's own search box uses. */
+   *  widget — one row per HTTP Server test (enterprise/cloud AND, now,
+   *  endpoint — see tepFetchEndpointTestBreakdownCore), worst-first, each
+   *  linking straight to that test's own results. Enterprise rows link to
+   *  /view/tests/?testId=…; endpoint rows link to the CONFIRMED (via live
+   *  capture) /endpoint/views/?metric=availability&scenarioId=eyebrowHttp
+   *  URL instead — same real-link, no-JS-needed navigation either way, just
+   *  a different URL shape per row kind. Hovering an enterprise row
+   *  highlights its agents by name (tepFetchHttpAgentsByTest,
+   *  dashMapTestHighlight); hovering an endpoint row highlights its agents
+   *  by id (r.agentIds, already resolved synchronously — no extra fetch —
+   *  via dashMapAgentsListHoverHighlight, the same mechanism the map's own
+   *  agent-list popovers use). */
   function toggleSaasBreakdownPopover(anchorEl) {
     if (tepSaasPopoverEl) { hideSaasBreakdownPopover(); return; }
     if (!tepSaasBreakdownData || !tepSaasBreakdownData.rows || !tepSaasBreakdownData.rows.length || !anchorEl) return;
-    const { rows } = tepSaasBreakdownData;
+    const { rows, epCount } = tepSaasBreakdownData;
+    // testId → Set<agentId>, built directly from the rows we already have
+    // (each endpoint row carries its own agentIds from the fetch) — no
+    // separate async lookup needed, unlike the enterprise name-based path.
+    const byTestAgentIds = new Map();
+    for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
     const pop = document.createElement('div');
     pop.className = 'tep-saas-breakdown-pop';
     const rowsHtml = rows.map((r) => {
@@ -18503,13 +18926,24 @@
       // instead of the old 99%/95% buckets, so a row's colour matches the ring.
       const f = Math.max(0, Math.min(1, (100 - p) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
       const c = tepHealthColorFrac(f);
-      const url = r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null;
-      const tag = url ? 'a' : 'div';
+      // A test row can span multiple agents (that's the whole point of
+      // this widget-level breakdown), so it only gets scoped to a single
+      // agent's focus when exactly one agent actually ran it — otherwise
+      // the link stays the generic all-agents test view, same as before.
+      const singleAgentId = (r.isEndpoint && r.agentIds && r.agentIds.size === 1) ? [...r.agentIds][0] : null;
+      const url = r.isEndpoint
+        ? (r.testId ? `${window.location.origin}/endpoint/views/?metric=availability&scenarioId=eyebrowHttp&roundId=${encodeURIComponent(r.round)}&testId=${encodeURIComponent(r.testId)}${singleAgentId != null ? `&filters=${encodeURIComponent(tepEndpointFilterParam(singleAgentId))}` : ''}` : null)
+        : (r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null);
       const hrefAttr = (url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '')
-        + (r.testId ? ` data-test-id="${tepEscapeHtmlText(String(r.testId))}"` : '');
-      return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${tag}>`;
+        + (r.testId ? ` data-test-id="${tepEscapeHtmlText(String(r.testId))}"` : '')
+        + (r.isEndpoint ? ' data-endpoint="1"' : '');
+      const epBadge = r.isEndpoint
+        ? ` <span class="tep-agentkind-badge tep-agentkind-badge--endpoint" title="${tepEscapeHtmlText(String(r.agentCount))} endpoint agent${r.agentCount === 1 ? '' : 's'} ran this test">${TEP_ENDPOINT_ICON_SVG}<span class="tep-agentkind-count">${r.agentCount}</span></span>`
+        : '';
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${epBadge}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${url ? 'a' : 'div'}>`;
     }).join('');
-    pop.innerHTML = '<div class="tep-saas-breakdown-head">HTTP tests behind this average'
+    const headTitle = epCount ? 'Tests behind this average' : 'HTTP tests behind this average';
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${headTitle}`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test</span></div>'
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     // Mounted on <html>, not <body> — same reason as the rest of this panel's
@@ -18526,7 +18960,17 @@
     tepFetchHttpAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
     pop.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
-      if (!row || !row.dataset.testId || !byTestAgents) return;
+      if (!row || !row.dataset.testId) return;
+      if (row.dataset.endpoint) {
+        if (dashMapAgentsListHoverLocked) return;
+        const agentIds = byTestAgentIds.get(row.dataset.testId);
+        if (!agentIds || !agentIds.size) return;
+        dashMapAgentsListHoverHighlight = agentIds;
+        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        return;
+      }
+      if (!byTestAgents) return;
       const names = byTestAgents.get(row.dataset.testId);
       if (!names || !names.size) return;
       dashMapTestHighlight = names;
@@ -18537,6 +18981,14 @@
       if (!row) return;
       const to = e.relatedTarget;
       if (to && row.contains(to)) return; // moved within the same row
+      if (row.dataset.endpoint) {
+        if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
+          dashMapAgentsListHoverHighlight = null;
+          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+          if (dashMapSearchHook) dashMapSearchHook.refresh();
+        }
+        return;
+      }
       if (dashMapTestHighlight) {
         dashMapTestHighlight = null;
         if (dashMapSearchHook) dashMapSearchHook.refresh();
@@ -18601,9 +19053,10 @@
    *  need a fresh request. Enterprise agents use
    *  tepFetchHttpAvailabilityByAgent/tepFetchNetworkTestsByAgent
    *  (dashboard-wide, real per-test breakdowns); endpoint agents use
-   *  tepFetchHttpTestsForEndpointAgent (per-agent, live-round per-test
-   *  breakdown) for HTTP, and tepFetchEndpointAgentNetScore (one blended
-   *  number — no confirmed per-test source) for Network. */
+   *  tepFetchEndpointHttpRowsForAgent/tepFetchEndpointNetRowsForAgent —
+   *  same whole-fleet per-test breakdown the SaaS/Network Health widgets
+   *  use (tepFetchEndpointTestBreakdownCore), just indexed by agent instead
+   *  of by test, so real per-test rows for BOTH metrics, not just HTTP. */
   async function toggleAgentTestsPopover(anchorEl, it, onlyMetric) {
     const agentName = (it && it.name) || 'Agent';
     if (tepAgentTestsPopoverEl && tepAgentTestsPopoverAgent === agentName
@@ -18650,16 +19103,12 @@
     // above for why this no longer follows dashMapColorSource.
     let httpRows, netRows;
     if (it && it.kind === 'endpoint' && it.agentId != null) {
-      const agentUrl = (it.url && it.url !== '#') ? it.url : null;
-      const [hRows, netScore] = await Promise.all([
-        tepFetchHttpTestsForEndpointAgent(it.agentId).catch(() => null),
-        tepFetchEndpointAgentNetScore(it.agentId).catch(() => null),
+      const [hRows, nRows] = await Promise.all([
+        tepFetchEndpointHttpRowsForAgent(it.agentId).catch(() => null),
+        tepFetchEndpointNetRowsForAgent(it.agentId).catch(() => null),
       ]);
       httpRows = hRows;
-      // No confirmed per-test breakdown for endpoint Network (drill-down
-      // 404s without a real saved widget) — one blended row instead, same
-      // limitation tepFetchAllEndpointAgentNetScores documents.
-      netRows = netScore != null ? [{ title: 'Overall Network Score', value: netScore, testId: null, url: agentUrl }] : null;
+      netRows = nRows;
     } else {
       const key = String(agentName).toUpperCase();
       const [httpByAgent, netByAgent] = await Promise.all([
@@ -18707,23 +19156,25 @@
       positionPop();
       return;
     }
-    // Endpoint agents: HTTP always shows "live round" (segment-visualisation
-    // has no windowed equivalent), Network always shows the windowed
-    // blended-score note (no live-round source for it at all — see
-    // tepFetchAllEndpointAgentNetScores). Enterprise always follows the Data
-    // Window slider with a real per-test breakdown, for either metric.
-    const isEndpoint = it && it.kind === 'endpoint';
-    const httpWindowNote = isEndpoint ? 'live round' : tepMetricsWindowPhrase();
-    const netWindowNote = isEndpoint ? `${tepMetricsWindowPhrase()}, overall score only` : tepMetricsWindowPhrase();
+    // Both endpoint and enterprise agents now follow the Data Window slider
+    // with a real per-test breakdown for either metric — endpoint HTTP/
+    // Network used to have their own special-cased notes here ("live
+    // round" / "overall score only") back when they came from
+    // segment-visualisation and a single blended score respectively; now
+    // that both are derived from the same whole-fleet per-test fetch the
+    // SaaS/Network Health widgets use, there's nothing special left to say.
+    const httpWindowNote = tepMetricsWindowPhrase();
+    const netWindowNote = tepMetricsWindowPhrase();
     const rowsHtml = (rows, isNet) => rows.map((r) => {
       const p = Math.max(0, Math.min(100, Number(r.value) || 0));
       const f = Math.max(0, Math.min(1, (100 - p) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
       const c = tepHealthColorFrac(f);
       // Endpoint rows already carry a precomputed r.url (different URL scheme
-      // entirely — see tepFetchHttpTestsForEndpointAgent). Enterprise rows
-      // don't, since they're shared cache entries covering every agent that
-      // ran the test; filter to THIS popover's agent here instead of baking
-      // one agent's id into the shared row.
+      // entirely, agent-scoped via tepEndpointFilterParam — see
+      // tepFetchEndpointHttpRowsForAgent/tepFetchEndpointNetRowsForAgent).
+      // Enterprise rows don't, since they're shared cache entries covering
+      // every agent that ran the test; filter to THIS popover's agent here
+      // instead of baking one agent's id into the shared row.
       const url = r.url || (isNet
         ? buildEnterpriseNetworkTestAgentUrl(r.testId, it && it.agentId)
         : buildEnterpriseHttpTestAgentUrl(r.testId, it && it.agentId));
@@ -18758,9 +19209,16 @@
     tepNetworkPopoverEl = null;
     document.removeEventListener('click', tepNetworkPopoverOutsideClick, true);
     document.removeEventListener('keydown', tepNetworkPopoverEscHandler, true);
-    // A hovered row's map highlight shouldn't survive the popover closing.
+    // A hovered row's map highlight shouldn't survive the popover closing —
+    // covers both the enterprise (name-based) and endpoint (agentId-based)
+    // test-row hover mechanisms.
     if (dashMapTestHighlight) {
       dashMapTestHighlight = null;
+      if (dashMapSearchHook) dashMapSearchHook.refresh();
+    }
+    if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
+      dashMapAgentsListHoverHighlight = null;
+      renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
       if (dashMapSearchHook) dashMapSearchHook.refresh();
     }
   }
@@ -18769,17 +19227,24 @@
   }
   function tepNetworkPopoverEscHandler(e) { if (e.key === 'Escape') hideNetworkBreakdownPopover(); }
   /** Toggle the "what's behind this average" breakdown for the Network Health
-   *  widget — one row per Network-category test, worst-first, coloured by
-   *  severity (tepSeverityColor) rather than SaaS's uptime-style 99%/95%
-   *  cutoffs, since a health SCORE isn't an availability percent (see
-   *  tepSeverityRingHtml). Each row links to that test's own results.
-   *  Hovering a row highlights every agent running that test on the map
-   *  (tepFetchNetworkAgentsByTest), same treatment the SaaS Health popover
-   *  and the map's own search box use. */
+   *  widget — one row per Network-category test (enterprise/cloud AND, now,
+   *  endpoint — see tepFetchEndpointTestBreakdownCore), worst-first,
+   *  coloured by severity (tepSeverityColor) rather than SaaS's uptime-style
+   *  99%/95% cutoffs, since a health SCORE isn't an availability percent
+   *  (see tepSeverityRingHtml). Enterprise rows link to
+   *  /view/tests/?testId=…; endpoint rows link to the CONFIRMED (via live
+   *  capture) /endpoint/views/?metric=latency&scenarioId=eyebrowNetworkTest
+   *  URL instead. Hovering an enterprise row highlights its agents by name
+   *  (tepFetchNetworkAgentsByTest, dashMapTestHighlight); hovering an
+   *  endpoint row highlights its agents by id (r.agentIds, already resolved
+   *  synchronously — via dashMapAgentsListHoverHighlight, same mechanism
+   *  the map's own agent-list popovers use). */
   function toggleNetworkBreakdownPopover(anchorEl) {
     if (tepNetworkPopoverEl) { hideNetworkBreakdownPopover(); return; }
     if (!tepNetworkBreakdownData || !tepNetworkBreakdownData.rows || !tepNetworkBreakdownData.rows.length || !anchorEl) return;
-    const { rows } = tepNetworkBreakdownData;
+    const { rows, epCount } = tepNetworkBreakdownData;
+    const byTestAgentIds = new Map();
+    for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
     const pop = document.createElement('div');
     pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide';
     const rowsHtml = rows.map((r) => {
@@ -18788,17 +19253,27 @@
       // row's colour matches what the ring above it is already showing.
       const sevRaw = Math.max(0, Math.min(1, Number(r.sev) || 0));
       const c = tepSeverityColor(Math.min(1, sevRaw / ((100 - TEP_HEALTH_RED_FLOOR_PCT) / 100)));
-      const url = r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null;
-      const tag = url ? 'a' : 'div';
+      // Same single-agent-only scoping as the SaaS Health popover above —
+      // a test row spanning multiple agents stays the generic all-agents
+      // link; only a row with exactly one agent gets focused.
+      const singleAgentId = (r.isEndpoint && r.agentIds && r.agentIds.size === 1) ? [...r.agentIds][0] : null;
+      const url = r.isEndpoint
+        ? (r.testId ? `${window.location.origin}/endpoint/views/?metric=latency&scenarioId=eyebrowNetworkTest&roundId=${encodeURIComponent(r.round)}&testId=${encodeURIComponent(r.testId)}${singleAgentId != null ? `&filters=${encodeURIComponent(tepEndpointFilterParam(singleAgentId))}` : ''}` : null)
+        : (r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null);
       const hrefAttr = (url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '')
-        + (r.testId ? ` data-test-id="${tepEscapeHtmlText(String(r.testId))}"` : '');
+        + (r.testId ? ` data-test-id="${tepEscapeHtmlText(String(r.testId))}"` : '')
+        + (r.isEndpoint ? ' data-endpoint="1"' : '');
+      const epBadge = r.isEndpoint
+        ? ` <span class="tep-agentkind-badge tep-agentkind-badge--endpoint" title="${tepEscapeHtmlText(String(r.agentCount))} endpoint agent${r.agentCount === 1 ? '' : 's'} ran this test">${TEP_ENDPOINT_ICON_SVG}<span class="tep-agentkind-count">${r.agentCount}</span></span>`
+        : '';
       const detail = [
         Number.isFinite(r.avgLat) ? `${Math.round(r.avgLat)}ms` : null,
         Number.isFinite(r.avgLoss) && r.avgLoss > 0 ? `${Math.round(r.avgLoss * 10) / 10}% loss` : null,
       ].filter(Boolean).join(' · ');
-      return `<${tag} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:#64748b;font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}</span><b style="color:${c.fill}">${r.score}</b></${tag}>`;
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:#64748b;font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
     }).join('');
-    pop.innerHTML = '<div class="tep-saas-breakdown-head">Network tests behind this average'
+    const headTitle = epCount ? 'Tests behind this average' : 'Network tests behind this average';
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${headTitle}`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test</span></div>'
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     document.documentElement.appendChild(pop);
@@ -18807,7 +19282,17 @@
     tepFetchNetworkAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
     pop.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
-      if (!row || !row.dataset.testId || !byTestAgents) return;
+      if (!row || !row.dataset.testId) return;
+      if (row.dataset.endpoint) {
+        if (dashMapAgentsListHoverLocked) return;
+        const agentIds = byTestAgentIds.get(row.dataset.testId);
+        if (!agentIds || !agentIds.size) return;
+        dashMapAgentsListHoverHighlight = agentIds;
+        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        return;
+      }
+      if (!byTestAgents) return;
       const names = byTestAgents.get(row.dataset.testId);
       if (!names || !names.size) return;
       dashMapTestHighlight = names;
@@ -18818,6 +19303,14 @@
       if (!row) return;
       const to = e.relatedTarget;
       if (to && row.contains(to)) return; // moved within the same row
+      if (row.dataset.endpoint) {
+        if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
+          dashMapAgentsListHoverHighlight = null;
+          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+          if (dashMapSearchHook) dashMapSearchHook.refresh();
+        }
+        return;
+      }
       if (dashMapTestHighlight) {
         dashMapTestHighlight = null;
         if (dashMapSearchHook) dashMapSearchHook.refresh();
@@ -19582,13 +20075,18 @@
     try {
       const fetched = await tepFetchAllNetworkHealth(force);
       if (fetched && fetched.count) {
-        tepNetworkBreakdownData = { rows: fetched.breakdown };
+        tepNetworkBreakdownData = { rows: fetched.breakdown, epCount: fetched.epCount };
         const score = Math.round((1 - fetched.avgSev) * 100);
-        const tip = `Average across ${fetched.count} Network test(s) over ${tepMetricsWindowPhrase()} — click to see each one`;
+        const countLabel = fetched.testCount && fetched.epCount
+          ? `${fetched.testCount} Network test${fetched.testCount === 1 ? '' : 's'} + ${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
+          : fetched.epCount
+            ? `${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
+            : `${fetched.count} Network test${fetched.count === 1 ? '' : 's'}`;
+        const tip = `Average across ${countLabel} over ${tepMetricsWindowPhrase()} — click to see each one`;
         netEl.className = 'tep-w-saas-clickable';
         netEl.innerHTML = '<div class="tep-saas-health">'
           + `<div><div class="tep-dash-widget-main">${score}<small> health</small></div>`
-          + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} Network test${fetched.count === 1 ? '' : 's'}</div></div>`
+          + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${countLabel}</div></div>`
           + tepSeverityRingHtml(fetched.avgSev, '', (100 - TEP_HEALTH_RED_FLOOR_PCT) / 100, !tepNetworkRingAnimated)
           + '</div>';
         tepGrowRingsIn(netEl);
@@ -19620,12 +20118,17 @@
     try {
       const fetched = await tepFetchAllHttpAvailability(force);
       if (fetched && fetched.count) {
-        tepSaasBreakdownData = { rows: fetched.breakdown };
-        const tip = `Average across ${fetched.count} HTTP Server test(s) over ${tepMetricsWindowPhrase()} — click to see each one`;
+        tepSaasBreakdownData = { rows: fetched.breakdown, epCount: fetched.epCount };
+        const countLabel = fetched.testCount && fetched.epCount
+          ? `${fetched.testCount} HTTP test${fetched.testCount === 1 ? '' : 's'} + ${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
+          : fetched.epCount
+            ? `${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
+            : `${fetched.count} HTTP test${fetched.count === 1 ? '' : 's'}`;
+        const tip = `Average across ${countLabel} over ${tepMetricsWindowPhrase()} — click to see each one`;
         saasEl.className = 'tep-w-saas-clickable';
         saasEl.innerHTML = '<div class="tep-saas-health">'
           + `<div><div class="tep-dash-widget-main">${fetched.avg.toFixed(1)}<small>% avail</small></div>`
-          + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${fetched.count} HTTP test${fetched.count === 1 ? '' : 's'}</div></div>`
+          + `<div class="tep-dash-widget-sub" title="${tip}">avg of ${countLabel}</div></div>`
           + tepHealthRingHtml(fetched.avg, '', !tepSaasRingAnimated)
           + '</div>';
         tepGrowRingsIn(saasEl);
@@ -20725,14 +21228,6 @@
     // VPN on the last sample: the segment response lists active tunnels under `vpns`.
     if (Array.isArray(data.vpns)) agent.vpn = data.vpns.length > 0;
     else if (Array.isArray(data.vpn)) agent.vpn = data.vpn.length > 0;
-    // Individual HTTP test scores — same response, see
-    // epParseHttpTestRowsFromSegmentData's comment (near
-    // tepFetchHttpTestsForEndpointAgent) for why this rides along here
-    // instead of a separate fetch. Always the LATEST round, same as
-    // everything else applySegmentMetricsToAgent sets — not windowed by the
-    // Data Window dropdown (no confirmed per-test API for that; see
-    // tepFetchAllEndpointAgentAppScores' comment).
-    agent.httpTests = epParseHttpTestRowsFromSegmentData(data);
   }
 
   let endpointAgentObserver = null;
