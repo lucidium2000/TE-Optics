@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.55';
+  const TEP_VERSION = '3.56';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1836,7 +1836,10 @@
       position: absolute; transform: translate(-50%, -50%); line-height: 0;
       pointer-events: auto; cursor: pointer;
       filter: drop-shadow(0 0 3px rgba(249,115,22,.6));
-      transition: filter .15s;
+      /* opacity transition is what makes a LIVE TEST marker visibly "light
+         up" the instant it stops being --pending (see that class below)
+         instead of snapping straight to full brightness. */
+      transition: filter .15s, opacity .3s ease;
     }
     .tep-agent-map-marker svg { display: block; overflow: visible; }
     .tep-agent-map-marker svg circle { fill: #f97316; stroke: #ffedd5; stroke-width: 2; }
@@ -1879,10 +1882,13 @@
     /* Map search box (bottom-middle, fullscreen only): matches get a pulsing
        gold glow and jump to the front; everything else dims so hits pop. */
     .tep-agent-map-marker--searchdim { opacity: .25; }
-    /* LIVE TEST is running but this agent (or every member of this cluster)
-       hasn't reported a latency round back yet — darken it so "no data
-       yet" reads as visually distinct from an agent that's already
-       reported and is just colored by its (possibly fine) result. */
+    /* LIVE TEST session (running, or results still showing) and this agent
+       (or every member of this cluster) is neither confirmed part of the
+       run's roster nor has a latency round back yet — darken it so
+       "not part of this view" reads as visually distinct from an agent
+       that's confirmed running (even pending its first result) or has
+       already reported and is just colored by its result. See
+       liveTestConfirmedAgentIds. */
     .tep-agent-map-marker--pending { opacity: .45; }
     .tep-agent-map-marker--searchhit {
       z-index: 5;
@@ -3666,7 +3672,7 @@
   liveTestClearBtn.textContent = 'Clear results';
   liveTestClearBtn.title = 'Clear LIVE TEST results and return the map to its pre-test view';
   liveTestClearBtn.style.cssText = 'position:fixed;bottom:58px;right:20px;z-index:2147483647;display:none;' +
-    'width:80px;text-align:center;font-size:10px;font-weight:600;letter-spacing:.2px;color:#94a3b8;' +
+    'width:80px;text-align:center;font-size:11px;font-weight:600;letter-spacing:.2px;color:#94a3b8;' +
     'text-decoration:underline;cursor:pointer;user-select:none;font-family:inherit;transition:color .15s;';
   liveTestClearBtn.addEventListener('mouseenter', () => { liveTestClearBtn.style.color = '#e2e8f0'; });
   liveTestClearBtn.addEventListener('mouseleave', () => { liveTestClearBtn.style.color = '#94a3b8'; });
@@ -16080,12 +16086,22 @@
       const listHoverHit = listHoverMatches.length > 0;
       const highlightActive = !!dashMapSearchQuery || !!dashMapTestHighlight || !!dashMapAlertPreviewHighlight
         || !!dashMapAgentsListHoverHighlight;
-      // Once LIVE TEST has actually started, an agent (or every member of a
-      // cluster) with no latency reading YET hasn't reported back a round
-      // — darken it so "no data yet" reads as visually distinct from an
-      // agent that has reported and is just colored by its (possibly fine)
-      // result. Clears itself the moment ANY member reports in.
-      const noLiveReportYet = liveTestRunning && !items.some((it) => Number.isFinite(it.latencyMs));
+      // liveMapSession (not just liveTestRunning) — CONFIRMED via user
+      // request this dim state should persist after the run finishes too,
+      // clearing only on a genuine Clear Results. An item counts as "lit"
+      // the moment EITHER it has an actual latency reading OR it's
+      // confirmed part of this run's roster at all (liveTestConfirmedAgentIds
+      // — set at test CREATION, before any round data exists) — an agent
+      // that's confirmed running but simply hasn't posted a result yet (or
+      // never does) shouldn't read as irrelevant just because paintMarker
+      // only checked for a latency number. Only an agent that's online on
+      // the map but was NOT actually included in this run (the roster is
+      // capped/spread-selected — see LIVE_TEST_MAX_PER_KIND) stays dimmed
+      // for the whole session, which is the one case this is meant to keep
+      // visually distinct.
+      const liveTestConfirmed = liveMapSession ? liveTestConfirmedAgentIds() : null;
+      const noLiveReportYet = liveMapSession && !items.some((it) =>
+        Number.isFinite(it.latencyMs) || (liveTestConfirmed && it.agentId != null && liveTestConfirmed.has(String(it.agentId))));
       m.className = 'tep-agent-map-marker tep-dash-map-marker'
         + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
         + (anyOnline ? ' tep-agent-map-marker--online' : '')
@@ -20063,6 +20079,41 @@
   let tepNetworkRingAnimated = false;
   let tepSaasRingAnimated = false;
 
+  /** Splits a SaaS/Network Health breakdown's rows by AGENT type instead of
+   *  test type — CONFIRMED via user request: "avg of 42 HTTP tests + 5
+   *  endpoint tests" told you nothing about the Enterprise/Cloud split
+   *  hiding inside that "42". Enterprise/Cloud classification reuses
+   *  countEnterpriseAndCloudByAgentIdList against each row's test config
+   *  (looked up in allTests by id) — same binary "has an Enterprise agent,
+   *  or not" rule that function already applies at the agent level, just
+   *  applied per TEST here so the three buckets sum exactly to the
+   *  breakdown's total (no double-counting a mixed-agent test). A test not
+   *  found in allTests (not yet loaded) falls into Cloud, matching that
+   *  function's own default for anything it can't identify. */
+  function tepSplitBreakdownByAgentType(breakdown) {
+    let ent = 0, cloud = 0, ep = 0;
+    const byId = new Map(allTests.map((t) => [String(t.testId || t.id), t]));
+    for (const r of breakdown) {
+      if (r.isEndpoint) { ep++; continue; }
+      const t = byId.get(String(r.testId));
+      const counts = t ? countEnterpriseAndCloudByAgentIdList(getTestAgentIds(t)) : null;
+      if (counts && counts.ent > 0) ent++; else cloud++;
+    }
+    return { ent, cloud, ep };
+  }
+  /** "4 Enterprise, 3 Cloud + 7 endpoint tests" — comma-joins every non-zero
+   *  bucket, swaps the final comma for " + ", and appends one shared
+   *  "test(s)" suffix instead of repeating it per bucket. */
+  function tepAgentTypeCountLabel(breakdown, totalCount) {
+    const { ent, cloud, ep } = tepSplitBreakdownByAgentType(breakdown);
+    const segs = [];
+    if (ent) segs.push(`${ent} Enterprise`);
+    if (cloud) segs.push(`${cloud} Cloud`);
+    if (ep) segs.push(`${ep} endpoint`);
+    if (!segs.length) return `${totalCount} test${totalCount === 1 ? '' : 's'}`;
+    return segs.join(', ').replace(/, ([^,]*)$/, ' + $1') + ` test${totalCount === 1 ? '' : 's'}`;
+  }
+
   /** Fetch + render just the Network Health tile — split out from
    *  fillDashWidgetsAsync so the Data Window slider can refresh it alone
    *  without re-fetching Alerts/Events/SaaS too. */
@@ -20077,11 +20128,7 @@
       if (fetched && fetched.count) {
         tepNetworkBreakdownData = { rows: fetched.breakdown, epCount: fetched.epCount };
         const score = Math.round((1 - fetched.avgSev) * 100);
-        const countLabel = fetched.testCount && fetched.epCount
-          ? `${fetched.testCount} Network test${fetched.testCount === 1 ? '' : 's'} + ${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
-          : fetched.epCount
-            ? `${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
-            : `${fetched.count} Network test${fetched.count === 1 ? '' : 's'}`;
+        const countLabel = tepAgentTypeCountLabel(fetched.breakdown, fetched.count);
         const tip = `Average across ${countLabel} over ${tepMetricsWindowPhrase()} — click to see each one`;
         netEl.className = 'tep-w-saas-clickable';
         netEl.innerHTML = '<div class="tep-saas-health">'
@@ -20119,11 +20166,7 @@
       const fetched = await tepFetchAllHttpAvailability(force);
       if (fetched && fetched.count) {
         tepSaasBreakdownData = { rows: fetched.breakdown, epCount: fetched.epCount };
-        const countLabel = fetched.testCount && fetched.epCount
-          ? `${fetched.testCount} HTTP test${fetched.testCount === 1 ? '' : 's'} + ${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
-          : fetched.epCount
-            ? `${fetched.epCount} endpoint test${fetched.epCount === 1 ? '' : 's'}`
-            : `${fetched.count} HTTP test${fetched.count === 1 ? '' : 's'}`;
+        const countLabel = tepAgentTypeCountLabel(fetched.breakdown, fetched.count);
         const tip = `Average across ${countLabel} over ${tepMetricsWindowPhrase()} — click to see each one`;
         saasEl.className = 'tep-w-saas-clickable';
         saasEl.innerHTML = '<div class="tep-saas-health">'
@@ -22096,6 +22139,28 @@
     if (agentId == null) return null;
     const e = liveTestLatency.get(String(agentId));
     return e && Number.isFinite(e.ms) ? e.ms : null;
+  }
+  /** Every agentId ThousandEyes actually confirmed as part of the current
+   *  LIVE TEST run — from the roster submitted at test CREATION
+   *  (results.entAgentIds/epAgentIds), not from round results. CONFIRMED
+   *  via user request this distinction matters: an agent can be online
+   *  (shown on the map) but excluded from this specific run entirely (the
+   *  roster is capped/spread-selected, see LIVE_TEST_MAX_PER_KIND) — that
+   *  one should stay dimmed all session, same as before. But an agent that
+   *  IS part of the roster and simply hasn't posted a round yet (or never
+   *  does, e.g. it has its own connectivity issue) shouldn't read as "not
+   *  relevant to this view" just because paintMarker only ever checked for
+   *  a latency reading — it's confirmed running, so it lights up
+   *  immediately regardless of whether a result ever comes back. Small and
+   *  capped (LIVE_TEST_MAX_PER_KIND per kind) — rebuilding this Set on
+   *  every call is cheap enough not to bother memoizing. */
+  function liveTestConfirmedAgentIds() {
+    const r = liveTestResultsCache;
+    if (!r) return null;
+    const set = new Set();
+    for (const id of (r.entAgentIds || [])) set.add(String(id));
+    for (const id of (r.epAgentIds || [])) set.add(String(id));
+    return set;
   }
   function liveTestLossFor(agentId) {
     if (agentId == null) return null;
