@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.58';
+  const TEP_VERSION = '3.59';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2875,6 +2875,11 @@
       background: rgba(var(--tep-slate-900-rgb),.97); border: 1px solid var(--tep-slate-600); border-radius: 8px;
       box-shadow: 0 8px 22px rgba(0,0,0,.55); padding: 10px 12.5px;
       font-size: 11px; line-height: 1.35; color: var(--tep-slate-300);
+      /* Fades in when its content actually SWITCHES to a different marker
+         (see showTip's isSwitch branch) — a plain instant content swap read
+         as a jarring flash; this softens it. A fresh first-open sets
+         opacity straight to 1, no transition needed there. */
+      transition: opacity .15s ease;
     }
     /* Speech-bubble tail pointing at the marker the tip spawned from — a
        rotated square, half hidden behind the bubble's own edge, so only a
@@ -17032,6 +17037,20 @@
     }
     let hideTimer = null;
     let mouseOverWrap = false; // tracks true pointer presence over marker/card, independent of the popover hold below
+    // Which marker the tip is CURRENTLY showing (null when hidden) — lets the
+    // mouseover handler tell "still on the same marker" apart from "landed
+    // on a different one", which is what the switch-linger below needs.
+    let currentTipMarker = null;
+    // Debounces SWITCHING an already-open tip to a different marker — see
+    // the mouseover listener below. Not used for the very first open (that
+    // still shows instantly) or for re-entering the marker already showing.
+    let pendingSwitchTimer = null;
+    let pendingSwitchMarker = null;
+    const TEP_HOVER_SWITCH_DELAY_MS = 200;
+    function clearPendingSwitch() {
+      if (pendingSwitchTimer) { clearTimeout(pendingSwitchTimer); pendingSwitchTimer = null; }
+      pendingSwitchMarker = null;
+    }
     function cancelHide() { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } }
     function scheduleHide() {
       cancelHide();
@@ -17130,21 +17149,31 @@
       }
     }
     function showTip(marker) {
+      // Was a DIFFERENT marker's tip already showing? Only that case gets
+      // the fade-in below — a fresh first open should appear instantly, not
+      // fade up from nothing.
+      const isSwitch = !!currentTipMarker && currentTipMarker !== marker && tip.style.display !== 'none';
+      currentTipMarker = marker;
+      clearPendingSwitch();
       // Google (8.8.8.8) destination nodes carry a rich PoP card instead of a cluster.
       if (marker._gcard) {
         cancelHide();
+        if (isSwitch) tip.style.opacity = '0';
         tip._cluster = null;
         tip.innerHTML = marker._gcard;
         tip.style.display = 'block';
         positionTip(marker);
+        if (isSwitch) requestAnimationFrame(() => { tip.style.opacity = '1'; }); else tip.style.opacity = '1';
         return;
       }
       if (!marker._cluster) return;
       cancelHide();
+      if (isSwitch) tip.style.opacity = '0';
       tip._cluster = marker._cluster;
       tip.innerHTML = tepDashTooltipHtml(marker._cluster);
       tip.style.display = 'block';
       positionTip(marker);
+      if (isSwitch) requestAnimationFrame(() => { tip.style.opacity = '1'; }); else tip.style.opacity = '1';
       // A programmatic focus (dashMapFocusHook) bolds its row via
       // dashMapFocusAgentKey (read inside tepDashTooltipHtml/tepDashTipRow) —
       // scroll it into view too, since a large cluster's list scrolls and the
@@ -17176,6 +17205,8 @@
     // armPopoverAutoClose re-evaluates the hide once the submenu closes.
     function hideTip() {
       cancelHide();
+      clearPendingSwitch();
+      currentTipMarker = null;
       tip.style.display = 'none';
       tip._cluster = null;
       dashMapFocusAgentKey = null;
@@ -17357,13 +17388,54 @@
     }
     wrap.addEventListener('mouseover', (e) => {
       const m = e.target.closest('.tep-agent-map-marker');
-      // Real hover always wins over a lingering programmatic focus — never
-      // bold a stale row from a previous ISP-popover jump in an unrelated
-      // cluster the user is now genuinely hovering.
-      if (m) { dashMapFocusAgentKey = null; mouseOverWrap = true; showTip(m); return; }
+      if (m) {
+        // Real hover always wins over a lingering programmatic focus — never
+        // bold a stale row from a previous ISP-popover jump in an unrelated
+        // cluster the user is now genuinely hovering.
+        dashMapFocusAgentKey = null;
+        mouseOverWrap = true;
+        if (m === currentTipMarker) {
+          // Re-entering the marker whose tip is already showing (e.g. the
+          // cursor wobbled back onto it) — just cancel any pending hide,
+          // nothing to switch.
+          cancelHide();
+          clearPendingSwitch();
+          return;
+        }
+        if (!tip._cluster || tip.style.display === 'none') {
+          // Nothing shown yet — open immediately, no reason to delay a
+          // genuinely first hover.
+          clearPendingSwitch();
+          showTip(m);
+          return;
+        }
+        // A different tooltip is already open — CONFIRMED via user report:
+        // reaching for something INSIDE that tooltip (it usually sits above
+        // or beside its marker) often means crossing over other nearby
+        // markers on the way there, and swapping content on every single
+        // one made it nearly impossible to ever actually land on the card.
+        // Keep the CURRENT tooltip up and only switch to this new marker if
+        // the cursor is still genuinely resting on it after a short linger
+        // — a quick pass-through never lasts that long.
+        cancelHide();
+        if (pendingSwitchMarker !== m) {
+          clearPendingSwitch();
+          pendingSwitchMarker = m;
+          pendingSwitchTimer = setTimeout(() => {
+            pendingSwitchTimer = null;
+            pendingSwitchMarker = null;
+            showTip(m);
+          }, TEP_HOVER_SWITCH_DELAY_MS);
+        }
+        return;
+      }
       if (e.target.closest('.tep-agent-map-tip')) {
         mouseOverWrap = true;
         cancelHide();
+        // Reaching the tip itself means whatever marker was mid-linger
+        // wasn't the real target — drop it instead of letting a stale
+        // timer swap the card out from under the cursor later.
+        clearPendingSwitch();
         // Per-row lazy enrichment (connKind/WiFi/VPN/disk) for a hovered
         // agent inside an open multi-agent cluster tooltip — see showTip's
         // own comment for why the cluster as a whole no longer eager-
@@ -17393,7 +17465,12 @@
       const to = e.relatedTarget;
       const stay = to && to.closest && (to.closest('.tep-agent-map-marker') || to.closest('.tep-agent-map-tip'));
       mouseOverWrap = !!stay;
-      if (!stay) scheduleHide();
+      // Landing on a marker or the tip is handled by mouseover (either
+      // starts a new linger or lands on the tip itself) — only a genuine
+      // exit to blank space needs to drop a pending switch here, so a
+      // lingering timer never fires later for a marker the cursor already
+      // left.
+      if (!stay) { clearPendingSwitch(); scheduleHide(); }
     });
     // Click (not hover) drives the popover — anywhere in the row except the
     // name (settings/agent view), the map/location link (Google Maps), or
@@ -18070,7 +18147,7 @@
     tepSetDashMapLegendCounts('…', '…');
     const jobs = [];
     // Endpoint agents are not fetched elsewhere on the dashboard page → load here.
-    if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().catch(() => {}));
+    if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents({ skipEnrichment: !endpointAgentsAutoLoaded }).catch(() => {}));
     // Enterprise agents normally come from the portal load at auth time — but
     // CONFIRMED that load is skipped entirely on the Endpoint Tools and Manage
     // Alerts pages (see the page-mode branches around session init), so
@@ -18125,11 +18202,18 @@
    *  own map re-render as a side effect (via refreshDashMapViews, with no
    *  preserveZoom — it auto-fits), so the user's pan/zoom is snapshotted and
    *  restored around it here, same as the ISP/type filter radios do, so a
-   *  silent background refresh never yanks their view back to the auto-fit. */
+   *  silent background refresh never yanks their view back to the auto-fit.
+   *  loadEndpointAgents' tag-service fetch (skipEnrichment) is skipped here
+   *  unless the sidebar Endpoint Agents list has actually been opened this
+   *  session (endpointAgentsAutoLoaded) — tags only ever render there
+   *  (filter/grouping), never on the map itself. CPU/RAM/battery are NOT
+   *  skipped — the map's own hover card reads those directly too (see
+   *  loadEndpointAgents' own comment for the earlier attempt that broke
+   *  that). */
   async function dashFullPeriodicRefresh() {
     void fillDashWidgetsAsync();
     const savedZoom = { s: epDashMapZoom.s, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
-    await Promise.all([loadAgents(), loadEndpointAgents(), refreshDashMapColorScores()]);
+    await Promise.all([loadAgents(), loadEndpointAgents({ skipEnrichment: !endpointAgentsAutoLoaded }), refreshDashMapColorScores()]);
     epDashMapZoom = savedZoom;
     if (dashMapFullEl) {
       renderDashWidgets(dashMapFullEl.querySelector('#tep-dashmap-widgets'));
@@ -21730,7 +21814,19 @@
     observeVisibleAgentCards(listEl);
   }
 
-  async function loadEndpointAgents() {
+  /** opts.skipEnrichment (default false) skips ONLY the tag map fetch — tags
+   *  genuinely never render anywhere outside the sidebar Endpoint Agents
+   *  list (its filter/grouping), so callers that only need the roster for
+   *  the map can skip that one safely. CPU/RAM/battery are NOT covered by
+   *  this flag despite an earlier attempt to gate them the same way —
+   *  CONFIRMED via user report that broke the map hover card: it reads
+   *  those straight off the agent object (see the comment right above
+   *  enrichEndpointAgentForTip's own call in showTip — "CPU/RAM/battery
+   *  don't need this [per-hover fetch] at all" because they're expected to
+   *  already be populated fleet-wide by the time any hover happens), so
+   *  they always fetch here regardless of opts. */
+  async function loadEndpointAgents(opts) {
+    const skipEnrichment = !!(opts && opts.skipEnrichment);
     const listEl = $('#tep-ep-agents-list');
     const countEl = $('#tep-ep-agents-count');
     if (listEl) listEl.innerHTML = '<span class="tep-log-info">Loading endpoint agents…</span>';
@@ -21741,10 +21837,12 @@
     try {
       const [elements, tagMap] = await Promise.all([
         fetchEndpointAgentsViaSearch(),
-        fetchEndpointAgentTagMap().catch((e) => {
-          log(`Endpoint agent tags load failed: ${e.message}`, 'tep-log-info');
-          return { byId: new Map(), byLegacyId: new Map(), labels: new Set(), ok: false };
-        })
+        skipEnrichment
+          ? Promise.resolve({ byId: new Map(), byLegacyId: new Map(), labels: new Set(), ok: false, skipped: true })
+          : fetchEndpointAgentTagMap().catch((e) => {
+              log(`Endpoint agent tags load failed: ${e.message}`, 'tep-log-info');
+              return { byId: new Map(), byLegacyId: new Map(), labels: new Set(), ok: false };
+            })
       ]);
       // Hide deleted/recoverable (soft-deleted) agents — the search includes them.
       const liveElements = elements.filter((el) => !epAgentIsDeleted(el));
@@ -21782,7 +21880,10 @@
         agent.labels = Array.from(merged);
         if (agent.labels.length) tagged++;
       }
-      if (tagMap.ok) {
+      if (tagMap.skipped) {
+        // Nothing to report — this load intentionally skipped the tag
+        // fetch (see skipEnrichment above), not a real "no data" result.
+      } else if (tagMap.ok) {
         log(`Endpoint agent tags: ${tagMap.agentTagCount} endpoint-agent tag(s), ${tagMap.byId.size} resolved static member id(s), ${tagMap.byLegacyId.size} legacyId-mapped tag(s), ${tagged}/${allEndpointAgents.length} agent(s) tagged`, 'tep-log-info');
         if (tagMap.agentTagCount > 0 && tagged === 0) {
           log('Endpoint agent tags: tags found but none matched — dynamic tags need a legacyId (older tags created before the labels→tags migration) to resolve via matchedLabels; brand-new tags with no legacyId can\'t be matched this way yet.', 'tep-log-info');
@@ -21796,8 +21897,12 @@
       // CPU/RAM + battery for the whole fleet — fetched in the background so
       // it doesn't delay the initial list paint; re-renders whatever's
       // currently showing (sidebar list and/or fullscreen map) once the
-      // numbers land. Battery is its own sweep (fetchEndpointAgentBatteryStatus)
-      // since the roster fetch (metadata/search) doesn't carry battery data.
+      // numbers land. Battery is its own sweep (fetchEndpointAgentBatteryStatus,
+      // a FULL PAGINATED settings/search sweep just to pull two numbers per
+      // agent) since the roster fetch (metadata/search) doesn't carry
+      // battery data. Always runs regardless of skipEnrichment — unlike
+      // tags, the fullscreen map's own hover card reads agent.cpu/ram/
+      // battery directly too (see showTip), not just the sidebar list.
       void (async () => {
         const [snap, batteryById] = await Promise.all([
           tepFetchAllEyebrowMetrics(),
@@ -24752,7 +24857,7 @@
 
     // Ensure agent + endpoint-test inventories are loaded.
     try { if (!agents || !agents.length) await loadAgents(); } catch (_) { /* */ }
-    try { if (!allEndpointAgents.length) await loadEndpointAgents(); } catch (_) { /* */ }
+    try { if (!allEndpointAgents.length) await loadEndpointAgents({ skipEnrichment: !endpointAgentsAutoLoaded }); } catch (_) { /* */ }
     try { if (!allEndpointTests.length) await loadEndpointTests(); } catch (_) { /* */ }
 
     let entIds = liveTestWantEnterprise ? onlineEnterpriseVAgentIdsForLiveTest() : [];
