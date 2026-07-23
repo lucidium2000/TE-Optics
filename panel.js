@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.59';
+  const TEP_VERSION = '3.60';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -8713,6 +8713,33 @@
         teInitData._currentAid = parseInt(urlAid, 10) || urlAid;
         log(`Account group from URL: ${urlAid}`, 'tep-log-info');
         return;
+      }
+    } catch { /* */ }
+
+    // 3. Fallback: TE's own "switch account group" flow redirects through
+    // /hero/account/login-into?aid=X&fwd=<destination> — the destination
+    // page (where this bookmarklet actually runs, e.g. /dashboard?
+    // dashboardId=...) never carries aid in its OWN url (see #2), but
+    // document.referrer still points at that hero/login-into page right
+    // after the redirect, with aid intact in ITS query string. CONFIRMED
+    // via a user-captured referrer (a third-party analytics beacon's own
+    // `dr` param) on a real account-group switch that #1/#2 both missed.
+    // Only trusted when the referrer is actually on thousandeyes.com, so an
+    // unrelated external referrer's own "aid" param (if any) can't be
+    // mistaken for this. Only useful right after that specific navigation —
+    // a later reload with a different referrer won't have it, same as any
+    // of these fallbacks when their signal just isn't present.
+    try {
+      if (document.referrer) {
+        const refUrl = new URL(document.referrer);
+        if (/(^|\.)thousandeyes\.com$/.test(refUrl.hostname)) {
+          const refAid = refUrl.searchParams.get('aid');
+          if (refAid) {
+            teInitData._currentAid = parseInt(refAid, 10) || refAid;
+            log(`Account group from referrer (account-switch redirect): ${refAid}`, 'tep-log-ok');
+            return;
+          }
+        }
       }
     } catch { /* */ }
 
