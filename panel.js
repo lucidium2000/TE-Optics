@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.57';
+  const TEP_VERSION = '3.58';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4054,28 +4054,50 @@
 
   const mainStyles = tepInjectCSS(STYLES);
 
-  // Panel color theme — 'dark' (default, current look) or 'light' (matches
-  // the native ThousandEyes app's own navy/white/blue look — CONFIRMED via
-  // user-provided screenshot). Applying is just toggling one attribute:
-  // every themeable color in STYLES already reads from the --tep-* custom
-  // properties defined there, which the :root[data-tep-theme="light"]
-  // block overrides — no re-injection of STYLES needed, the browser
-  // recomputes the cascade the instant the attribute changes. NOT the same
-  // control as .tep-title-brand's "dark mode" (that dims the underlying TE
-  // APP page itself — see applyDarkParams — a completely different,
-  // pre-existing feature this must not be confused with).
+  // Panel color theme — 'light' (default — matches the native ThousandEyes
+  // app's own navy/white/blue look, CONFIRMED via user-provided screenshot)
+  // or 'dark'. Applying is just toggling one attribute: every themeable
+  // color in STYLES already reads from the --tep-* custom properties
+  // defined there, which the :root[data-tep-theme="light"] block overrides
+  // — no re-injection of STYLES needed, the browser recomputes the cascade
+  // the instant the attribute changes. NOT the same control as
+  // .tep-title-brand's "dark mode" (that dims the underlying TE APP page
+  // itself — see applyDarkParams — a completely different, pre-existing
+  // feature this must not be confused with).
   const TEP_THEME_KEY = 'tep-theme';
+  // Set ONLY by an actual click on the toggle (see the listener below) —
+  // separate from TEP_THEME_KEY itself because applyTheme used to write
+  // TEP_THEME_KEY on every single load (including the very first one, well
+  // before anyone had ever touched the toggle), so a bare stored 'dark'
+  // could never be trusted as a deliberate choice — it was just the old
+  // default leaking into storage. CONFIRMED via user request: a brand-new
+  // user, and anyone who used an earlier build without ever touching the
+  // toggle, should land on light — dark only sticks once someone actually
+  // clicks their way to it.
+  const TEP_THEME_EXPLICIT_KEY = 'tep-theme-explicit';
   const TEP_SUN_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>';
   const TEP_MOON_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z"/></svg>';
-  let tepTheme = localStorage.getItem(TEP_THEME_KEY) === 'light' ? 'light' : 'dark';
+  let tepThemeExplicit = false;
+  try { tepThemeExplicit = localStorage.getItem(TEP_THEME_EXPLICIT_KEY) === '1'; } catch (_) { /* */ }
+  let tepTheme = tepThemeExplicit && localStorage.getItem(TEP_THEME_KEY) === 'dark' ? 'dark' : 'light';
   function tepThemeToggleLabel() {
     return tepTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme (matches the native ThousandEyes app)';
   }
-  function applyTheme(theme) {
+  // `explicit` (true only from the toggle's own click handler) is what
+  // actually persists the choice — the init call below passes nothing, so
+  // a plain page load/reload never overwrites TEP_THEME_EXPLICIT_KEY on its
+  // own and never re-pollutes storage with whatever the computed default
+  // happened to be.
+  function applyTheme(theme, explicit) {
     tepTheme = theme === 'light' ? 'light' : 'dark';
     if (tepTheme === 'light') document.documentElement.setAttribute('data-tep-theme', 'light');
     else document.documentElement.removeAttribute('data-tep-theme');
-    try { localStorage.setItem(TEP_THEME_KEY, tepTheme); } catch (_) { /* */ }
+    if (explicit) {
+      try {
+        localStorage.setItem(TEP_THEME_KEY, tepTheme);
+        localStorage.setItem(TEP_THEME_EXPLICIT_KEY, '1');
+      } catch (_) { /* */ }
+    }
     const btn = document.getElementById('tep-theme-toggle');
     if (btn) {
       btn.innerHTML = tepTheme === 'light' ? TEP_MOON_ICON_SVG : TEP_SUN_ICON_SVG;
@@ -25129,7 +25151,7 @@
 
   // Create panel listeners
   $('#tep-theme-toggle').addEventListener('click', () => {
-    applyTheme(tepTheme === 'light' ? 'dark' : 'light');
+    applyTheme(tepTheme === 'light' ? 'dark' : 'light', true);
   });
   $('#tep-close').addEventListener('click', () => {
     stopPersistentIntercept();
