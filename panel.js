@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.56';
+  const TEP_VERSION = '3.57';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -148,11 +148,6 @@
       return false;
     }
   }
-
-  /** On /dashboard, true when the user opened the standard tests (manage) view from dashboard tools. */
-  let tepFromDashTests = false;
-  /** On /endpoint, true when the user opened the standard tests (manage) view from endpoint tools. */
-  let tepFromEndpointTests = false;
 
   const TEP_DASH_CAPTURE = { entries: [], max: 24 };
   /** self-service/data widget responses the dashboard fetches (per-widget metric
@@ -1602,11 +1597,149 @@
   // Styles (scoped via #te-panel-root)
   // ---------------------------------------------------------------------------
   const STYLES = `
+
+    /* Theme variables — dark (default) values here, light overrides right
+       below. Toggle via document.documentElement's data-tep-theme attribute
+       (see tepApplyTheme). Only the ~20 core structural/accent colors that
+       actually needed to flip between themes are var()-ified here (page/
+       panel backgrounds, borders, body text, and pastel accent colors used
+       as foreground text on the dark background) — the many one-off badge
+       background+text color PAIRS elsewhere in this file are already
+       self-contained (a light-tinted bg with dark text, or vice versa) and
+       read fine in either theme unchanged, so they're deliberately left as
+       literal hex rather than converted. The panel's own header
+       (--tep-header-*) is a deliberate exception to the ramp-inversion
+       pattern below: it stays a navy-branded strip in BOTH themes (not
+       inverted) so it reads as "the app's own chrome" the way TE's real
+       navy top bar does, rather than flattening into another plain white
+       card. */
+    :root {
+      --tep-slate-900: #0f172a; --tep-slate-800: #1e293b; --tep-slate-700: #334155;
+      --tep-slate-600: #475569; --tep-slate-500: #64748b; --tep-slate-400: #94a3b8;
+      --tep-slate-300: #cbd5e1; --tep-slate-200: #e2e8f0; --tep-slate-100: #f1f5f9;
+      --tep-slate-50: #f8fafc;
+      --tep-orange: #f97316; --tep-orange-fg: #fdba74;
+      --tep-blue: #3b82f6; --tep-blue-soft: #93c5fd; --tep-blue-bright: #60a5fa;
+      --tep-sky: #38bdf8; --tep-red: #f87171; --tep-red-soft: #fca5a5;
+      --tep-green: #4ade80; --tep-yellow: #facc15;
+      /* Test-type badge pairs (AGENT→SERVER, HTTP SERVER, PAGE LOAD, DNS…) —
+         a dark tint + bright saturated text in dark mode reads fine, but
+         CONFIRMED via user report the same dark tint looked too heavy
+         sitting on a white card in light mode. Own tokens (not reusing
+         --tep-blue/--tep-green/etc.) so light mode can flip to the
+         opposite pairing — light pastel tint + dark saturated text —
+         without disturbing every OTHER use of those accent colors. */
+      --tep-badge-http-bg: #1e3a5f; --tep-badge-http-fg: #60a5fa;
+      --tep-badge-a2s-bg: #1a3f2e; --tep-badge-a2s-fg: #4ade80;
+      --tep-badge-page-bg: #3b1f5e; --tep-badge-page-fg: #c084fc;
+      --tep-badge-dns-bg: #3b3510; --tep-badge-dns-fg: #facc15;
+      /* Alert severity badges reuse the SAME dark-tint pattern — critical/
+         major share this bg-only pair (their fg already has a correct
+         light-mode value via --tep-red-soft/--tep-orange-fg, no new fg
+         token needed); minor/warning/info reuse the badge tokens above
+         outright since they're literally the same colors. */
+      --tep-badge-critical-bg: #4c1220; --tep-badge-major-bg: #4a1d0c;
+      /* Toast bg/border — same "own tokens" reasoning as the badge pairs
+         above: --tep-green/--tep-red flip to darker, light-mode-tuned
+         shades meant to sit on a near-white card, but the toast bg used to
+         stay hardcoded to this dark tint in BOTH themes — in light mode
+         that left dark-on-dark, near-unreadable text. CONFIRMED via user
+         screenshot ("Loaded N dashboard(s)" unreadable in light mode). */
+      --tep-toast-ok-bg: #064e3b; --tep-toast-ok-border: #065f46;
+      --tep-toast-err-bg: #450a0a; --tep-toast-err-border: #7f1d1d;
+      /* RGB-triplet siblings of slate-900/800, for the handful of rgba()
+         gradients/shadows (e.g. .tep-create-toggle's expanded state) that
+         need their own alpha — CSS can't pull a channel out of a #hex var,
+         so these exist purely to feed rgba(var(--tep-slate-900-rgb), .75). */
+      --tep-slate-900-rgb: 15,23,42; --tep-slate-800-rgb: 30,41,59;
+    }
+    /* Light theme — ramp-inverted neutrals (Tailwind slate-50..900 swap
+       roles) so backgrounds/text flip cleanly, plus hand-picked darker
+       equivalents for every pastel accent that was tuned to pop on a DARK
+       background (a pale color like #fdba74 or #93c5fd reads as barely-there
+       on white) — CONFIRMED via user-provided screenshot of the native TE
+       app's own light UI as the visual target for the neutral ramp + navy
+       header. */
+    :root[data-tep-theme="light"] {
+      --tep-slate-900: #f4f5f7; --tep-slate-800: #ffffff; --tep-slate-700: #e1e4e8;
+      --tep-slate-600: #c7ccd1; --tep-slate-500: #5f6b77; --tep-slate-400: #5a6672;
+      --tep-slate-300: #78838f; --tep-slate-200: #1f2933; --tep-slate-100: #12181f;
+      --tep-slate-50: #0b0f14;
+      --tep-orange: #b45309; --tep-orange-fg: #c2410c;
+      --tep-blue: #2563eb; --tep-blue-soft: #1d4ed8; --tep-blue-bright: #2563eb;
+      --tep-sky: #0369a1; --tep-red: #b91c1c; --tep-red-soft: #991b1b;
+      --tep-green: #15803d; --tep-yellow: #854d0e;
+      --tep-badge-http-bg: #dbeafe; --tep-badge-http-fg: #1d4ed8;
+      --tep-badge-a2s-bg: #dcfce7; --tep-badge-a2s-fg: #15803d;
+      --tep-badge-page-bg: #f3e8ff; --tep-badge-page-fg: #7e22ce;
+      --tep-badge-dns-bg: #fef9c3; --tep-badge-dns-fg: #854d0e;
+      --tep-badge-critical-bg: #fee2e2; --tep-badge-major-bg: #ffedd5;
+      --tep-toast-ok-bg: #dcfce7; --tep-toast-ok-border: #bbf7d0;
+      --tep-toast-err-bg: #fee2e2; --tep-toast-err-border: #fecaca;
+      --tep-slate-900-rgb: 244,245,247; --tep-slate-800-rgb: 255,255,255;
+    }
+    /* Two areas deliberately opt OUT of the light/dark toggle entirely,
+       regardless of :root[data-tep-theme] — CONFIRMED via user request.
+       Re-declaring the same custom properties at this scope overrides the
+       :root-level ones for every descendant that reads them (nearest
+       ancestor wins), so this is the whole fix — no need to hunt down each
+       individual icon/color usage inside either area.
+        - .tep-header: its OWN background/text (--tep-header-*) is pinned
+          here to the same navy in both themes, to sit flush against TE's
+          own always-navy top bar (visible immediately to the panel's left)
+          without a seam — CONFIRMED via user screenshot the two didn't
+          match: --tep-header-bg used to live in the two :root theme blocks
+          instead of here, and the DARK theme's copy was a plain slate-800
+          (#1e293b, no navy at all) rather than the light theme's navy
+          (#0b1f3a), so the header only accidentally matched TE's bar while
+          our own theme happened to be light. The icon BUTTONS inside it
+          (.tep-map-toggle etc.) were ALSO still reading the general
+          --tep-slate-* tokens, which DO flip with theme — in light mode
+          that meant dark-toned icons sitting on the always-dark header,
+          nearly invisible. Pinning the general tokens back to their dark
+          values here fixes that mismatch too.
+        - .tep-dashmap-full: the fullscreen map is a data visualization
+          (dark basemap + colored markers), not page chrome — flipping it
+          to a light background per the panel's own theme toggle doesn't
+          serve the map itself, so it always renders as if dark mode is on,
+          independent of what the rest of the panel is doing.
+        - .tep-fs-pop: the KPI widget popovers (SaaS/Network breakdown,
+          Alerts, ISP agents, Agents List), the cluster maximize view, and
+          the per-agent Tests popover WHEN opened from the fullscreen map —
+          these are all mounted on <html> rather than inside #te-panel-root
+          (see the comment at their appendChild calls), so being a CSS
+          descendant of .tep-dashmap-full never applied to them; without
+          their own copy of the same pinned dark values they fell back to
+          the panel's light-mode vars and rendered as light popovers
+          floating over an always-dark map. CONFIRMED via user screenshot.
+        - .tep-confirm-overlay: the "are you sure" confirm modal, only ever
+          triggered by the LIVE TEST button that itself only lives inside
+          the fullscreen map (see tepConfirmModal) — same <html>-mount
+          reasoning as .tep-fs-pop above, but always fullscreen so no
+          conditional class is needed. */
+    .tep-header, .tep-dashmap-full, .tep-fs-pop, .tep-confirm-overlay {
+      --tep-slate-900: #0f172a; --tep-slate-800: #1e293b; --tep-slate-700: #334155;
+      --tep-slate-600: #475569; --tep-slate-500: #64748b; --tep-slate-400: #94a3b8;
+      --tep-slate-300: #cbd5e1; --tep-slate-200: #e2e8f0; --tep-slate-100: #f1f5f9;
+      --tep-slate-50: #f8fafc;
+      --tep-orange: #f97316; --tep-orange-fg: #fdba74;
+      --tep-blue: #3b82f6; --tep-blue-soft: #93c5fd; --tep-blue-bright: #60a5fa;
+      --tep-sky: #38bdf8; --tep-red: #f87171; --tep-red-soft: #fca5a5;
+      --tep-green: #4ade80; --tep-yellow: #facc15;
+      --tep-header-bg: #0b1f3a; --tep-header-border: #14274e;
+      --tep-header-text: #ffffff; --tep-header-text-muted: #93a5c4;
+      --tep-badge-http-bg: #1e3a5f; --tep-badge-http-fg: #60a5fa;
+      --tep-badge-a2s-bg: #1a3f2e; --tep-badge-a2s-fg: #4ade80;
+      --tep-badge-page-bg: #3b1f5e; --tep-badge-page-fg: #c084fc;
+      --tep-badge-dns-bg: #3b3510; --tep-badge-dns-fg: #facc15;
+      --tep-badge-critical-bg: #4c1220; --tep-badge-major-bg: #4a1d0c;
+      --tep-slate-900-rgb: 15,23,42; --tep-slate-800-rgb: 30,41,59;
+    }
     #te-panel-root {
       position: fixed; top: 0; right: 0; z-index: 2147483647;
       width: var(--tep-width, 576px); height: 100vh;
-      background: #0f172a; color: #e2e8f0;
-      border-left: 1px solid #334155;
+      background: var(--tep-slate-900); color: var(--tep-slate-200);
+      border-left: 1px solid var(--tep-slate-700);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px; box-shadow: -4px 0 20px rgba(0,0,0,.4);
       display: flex; flex-direction: column; overflow: hidden;
@@ -1621,15 +1754,28 @@
     #te-panel-root.tep-offscreen { transform: translateX(100%); }
     #te-panel-root.tep-panel-extend { width: 100vw; }
     #te-panel-root * { box-sizing: border-box; }
+    /* Bare code tags (diagnostics hints, console-flag snippets) never had
+       their own background/color rule, so they fell through to whatever
+       the HOST PAGE's own global code styling happens to be — CONFIRMED
+       via user report this rendered as a stark white box behind the text,
+       fine on TE's own light app chrome but jarring against our dark
+       panel. Reset explicitly instead of inheriting page styles. */
+    #te-panel-root code {
+      background: var(--tep-slate-700); color: var(--tep-slate-200);
+      padding: 1px 4px; border-radius: 3px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
 
     /* Resize gutter — the hit area itself stays a slim 8px (easy to grab
        without eating into page content), with a small rounded "grip" chip
-       at the vertical center: a 6-dot icon, same visual language as the
-       standard drag-handle glyph used everywhere from OS window controls
-       to sortable lists — instantly reads as draggable at a glance, no
-       hover required. Built as an inline SVG data-URI (not a webfont icon
-       — this file has no font dependency, and needs none here) layered
-       under the chip's translucent pill background. */
+       at the vertical center: a 6-dot icon over a frosted-glass pill —
+       CONFIRMED via user request to bring this back (a plain-lines version
+       was tried instead, over lag/weight concerns, but wasn't wanted) —
+       lighter/more transparent than the original pass so the blur+tint
+       reads as a subtle frosted glass chip rather than a solid dark pill.
+       Background tint uses the slate-900 RGB triplet (not a literal
+       rgba(15,23,42,...)) so the frost itself is theme-aware — a dark
+       frosted chip in dark mode, a light frosted chip in light mode. */
     #tep-resize-handle {
       position: fixed; top: 0; width: 8px; height: 100vh;
       cursor: col-resize; z-index: 2147483647;
@@ -1646,11 +1792,11 @@
       border-radius: 8px;
       background:
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='9' cy='6' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='15' cy='6' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='9' cy='12' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='15' cy='12' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='9' cy='18' r='1.6' fill='%23cbd5e1'/%3E%3Ccircle cx='15' cy='18' r='1.6' fill='%23cbd5e1'/%3E%3C/svg%3E") center / 7px no-repeat,
-        rgba(15, 23, 42, 0.35);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      border: 1px solid rgba(148, 163, 184, 0.45);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        rgba(var(--tep-slate-900-rgb), 0.18);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
       pointer-events: none;
       transition: background .15s, border-color .15s;
     }
@@ -1658,8 +1804,8 @@
     #tep-resize-handle.active::after {
       background:
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='9' cy='6' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='15' cy='6' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='9' cy='12' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='15' cy='12' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='9' cy='18' r='1.6' fill='%23bfdbfe'/%3E%3Ccircle cx='15' cy='18' r='1.6' fill='%23bfdbfe'/%3E%3C/svg%3E") center / 7px no-repeat,
-        rgba(59, 130, 246, 0.3);
-      border-color: rgba(96, 165, 250, 0.85);
+        rgba(59, 130, 246, 0.18);
+      border-color: rgba(96, 165, 250, 0.7);
     }
 
     /* Header — fixed at exactly 56px, TE's own title bar height (same value
@@ -1667,14 +1813,19 @@
        bar, view tabs) then lines up flush with where TE's title bar ends. */
     .tep-header {
       display: flex; align-items: center; justify-content: space-between;
-      height: 56px; padding: 0 16px; background: #1e293b; border-bottom: 1px solid #334155;
+      height: 56px; padding: 0 16px; background: var(--tep-header-bg); border-bottom: 1px solid var(--tep-header-border);
       user-select: none; gap: 8px; flex-shrink: 0; box-sizing: border-box;
     }
-    .tep-header h2 { font-size: 15px; font-weight: 700; color: #f1f5f9; margin: 0; flex: 1; }
+    /* Wraps h2 + the dark-mode toggle so the button sits snug right after
+       the version number instead of drifting to the header's far edge —
+       this wrapper (not h2 itself) now takes the flex:1 role in .tep-header's
+       row, so mode-switch/close positioning is unaffected. */
+    .tep-header-title-row { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+    .tep-header h2 { font-size: 15px; font-weight: 700; color: var(--tep-header-text); margin: 0; }
     .tep-title-version {
       font-size: 11px;
       font-weight: 600;
-      color: #64748b;
+      color: var(--tep-header-text-muted);
       margin-left: 6px;
       letter-spacing: 0.02em;
     }
@@ -1685,7 +1836,7 @@
        been acknowledged (see TEP_LAST_VERSION_KEY). */
     .tep-title-version--updated {
       color: #431407;
-      background: #f97316;
+      background: var(--tep-orange);
       border-radius: 4px;
       padding: 1px 6px;
       font-weight: 800;
@@ -1698,22 +1849,22 @@
       letter-spacing: 0.02em;
     }
     .tep-dark-reset {
-      background: none; border: 1px solid #475569; color: #94a3b8; font-size: 14px;
+      background: none; border: 1px solid var(--tep-slate-600); color: var(--tep-slate-400); font-size: 14px;
       cursor: pointer; padding: 2px 8px; border-radius: 6px; line-height: 1;
       min-width: 32px; text-align: center; font-variant-numeric: tabular-nums;
       white-space: nowrap; margin-left: 4px;
     }
-    .tep-dark-reset:hover { color: #fca5a5; border-color: #fca5a5; }
+    .tep-dark-reset:hover { color: var(--tep-red-soft); border-color: var(--tep-red-soft); }
     /* "TE Optics" title text doubles as the dark-mode toggle: click cycles
        off → a fresh random variant → off → another fresh random variant. */
     .tep-title-brand { cursor: pointer; transition: color .15s; }
-    .tep-title-brand:hover, .tep-title-brand.active { color: #facc15; }
+    .tep-title-brand:hover, .tep-title-brand.active { color: var(--tep-yellow); }
 
     .tep-close {
-      background: none; border: none; color: #94a3b8; font-size: 20px;
+      background: none; border: none; color: var(--tep-slate-400); font-size: 20px;
       cursor: pointer; line-height: 1; padding: 0 4px;
     }
-    .tep-close:hover { color: #f87171; }
+    .tep-close:hover { color: var(--tep-red); }
 
     /* Body — relative so toasts can overlay without shifting layout */
     .tep-body { position: relative; padding: 16px; overflow-y: auto; flex: 1; }
@@ -1721,37 +1872,50 @@
     /* Status bar — left: session message, right: manage filter units total (TE orange, Units) */
     .tep-status {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      padding: 8px 12px; font-size: 12px; color: #94a3b8;
-      background: #1e293b; border-bottom: 1px solid #334155;
+      padding: 8px 12px; font-size: 12px; color: var(--tep-slate-400);
+      background: var(--tep-slate-800); border-bottom: 1px solid var(--tep-slate-700);
     }
     .tep-status-msg { flex: 1; min-width: 0; }
-    .tep-status.ok .tep-status-msg { color: #4ade80; }
-    .tep-status.err .tep-status-msg { color: #f87171; }
+    .tep-status.ok .tep-status-msg { color: var(--tep-green); }
+    .tep-status.err .tep-status-msg { color: var(--tep-red); }
     .tep-units, .tep-test-units {
-      color: #f97316; font-weight: 600;
+      color: var(--tep-orange); font-weight: 600;
     }
     .tep-test-card.tep-test-card--disabled .tep-units,
     .tep-test-card.tep-test-card--disabled .tep-test-units {
-      color: #64748b;
+      color: var(--tep-slate-500);
       font-weight: 600;
     }
     .tep-units-total { flex-shrink: 0; text-align: right; }
-    .tep-units-plan { color: #f8fafc; font-weight: 600; }
+    .tep-units-plan { color: var(--tep-slate-50); font-weight: 600; }
     /* Units are hidden until the top-right "Units" toggle is enabled. */
     .tep-units-toggle {
       flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: .02em;
-      color: #f97316; background: transparent; border: 1px solid #475569;
+      color: var(--tep-orange); background: transparent; border: 1px solid var(--tep-slate-600);
       border-radius: 4px; padding: 2px 9px; cursor: pointer; white-space: nowrap;
     }
-    .tep-units-toggle:hover { border-color: #f97316; }
-    .tep-units-toggle.active { border-color: #f97316; color: #fdba74; background: rgba(249,115,22,.12); }
+    .tep-units-toggle:hover { border-color: var(--tep-orange); }
+    .tep-units-toggle.active { border-color: var(--tep-orange); color: var(--tep-orange-fg); background: rgba(249,115,22,.12); }
+    /* Dark-mode toggle — moved out of the header's round icon row into the
+       thin status bar alongside it, so it needed its own flatter, shorter
+       treatment to sit comfortably in a row this size instead of the
+       header's 34px round buttons. */
+    .tep-theme-toggle-flat {
+      flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 22px; padding: 0; border-radius: 4px; cursor: pointer;
+      color: var(--tep-slate-300); background: transparent; border: 1px solid var(--tep-slate-600);
+      transition: color .15s, border-color .15s, background .15s;
+    }
+    .tep-theme-toggle-flat svg { width: 14px; height: 14px; display: block; }
+    .tep-theme-toggle-flat:hover { color: var(--tep-orange-fg); border-color: var(--tep-orange); background: rgba(249,115,22,.12); }
+    .tep-theme-toggle-flat:focus-visible { outline: 2px solid var(--tep-slate-500); outline-offset: 2px; }
     #te-panel-root:not(.tep-units-on) .tep-test-units { display: none; }
     #te-panel-root:not(.tep-units-on) .tep-create-units-est { display: none; }
     /* Endpoint Agents "Map view" compass toggle + world map overlay. */
     .tep-map-toggle {
       flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
       width: 34px; height: 34px; padding: 0; border-radius: 8px; cursor: pointer;
-      color: #fdba74; border: 1px solid #f97316;
+      color: var(--tep-orange-fg); border: 1px solid var(--tep-orange);
       background: linear-gradient(180deg, rgba(249,115,22,.20), rgba(249,115,22,.08));
       box-shadow: 0 0 0 2px rgba(249,115,22,.14), 0 1px 3px rgba(0,0,0,.45);
       transition: color .2s, border-color .2s, box-shadow .25s, background .25s, transform .15s;
@@ -1763,9 +1927,9 @@
       box-shadow: 0 0 0 3px rgba(249,115,22,.24), 0 2px 8px rgba(0,0,0,.5);
     }
     .tep-map-toggle:hover svg { transform: scale(1.12); }
-    .tep-map-toggle:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
+    .tep-map-toggle:focus-visible { outline: 2px solid var(--tep-orange); outline-offset: 2px; }
     .tep-map-toggle.active {
-      color: #fff7ed; border-color: #fdba74;
+      color: #fff7ed; border-color: var(--tep-orange-fg);
       background: radial-gradient(circle at 32% 28%, #fb923c, #c2410c 72%);
       box-shadow: 0 0 0 3px rgba(249,115,22,.32), 0 0 14px rgba(249,115,22,.5);
     }
@@ -1798,27 +1962,27 @@
        regular slate button scheme instead of the map toggle's orange accent,
        which stays reserved for the full-screen-map icon. */
     .tep-map-toggle--muted {
-      color: #cbd5e1; border-color: #475569;
-      background: #334155; box-shadow: none;
+      color: var(--tep-slate-300); border-color: var(--tep-slate-600);
+      background: var(--tep-slate-700); box-shadow: none;
     }
     .tep-map-toggle--muted:hover {
-      color: #f1f5f9; border-color: #64748b;
-      background: #475569; box-shadow: none;
+      color: var(--tep-slate-100); border-color: var(--tep-slate-500);
+      background: var(--tep-slate-600); box-shadow: none;
     }
-    .tep-map-toggle--muted:focus-visible { outline: 2px solid #64748b; outline-offset: 2px; }
+    .tep-map-toggle--muted:focus-visible { outline: 2px solid var(--tep-slate-500); outline-offset: 2px; }
     .tep-map-toggle--muted.active {
       color: #fff; border-color: #2563eb;
       background: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,.28);
     }
     .tep-map-toggle--muted.active:hover {
-      color: #fff; border-color: #3b82f6;
+      color: #fff; border-color: var(--tep-blue);
       background: #1d4ed8; box-shadow: 0 0 0 2px rgba(37,99,235,.32);
     }
     .tep-mode-switch { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
     .tep-agent-map-wrap {
       position: relative; width: 100%; aspect-ratio: 2000 / 1434;
-      border: 1px solid #334155; border-radius: 10px; margin: 4px 0 10px;
-      background-color: #0c1626; overflow: hidden;
+      border: 1px solid var(--tep-slate-700); border-radius: 10px; margin: 4px 0 10px;
+      background-color: var(--tep-slate-900); overflow: hidden;
       cursor: crosshair; touch-action: none;
     }
     .tep-agent-map-wrap--zoomed { cursor: grab; }
@@ -1842,7 +2006,7 @@
       transition: filter .15s, opacity .3s ease;
     }
     .tep-agent-map-marker svg { display: block; overflow: visible; }
-    .tep-agent-map-marker svg circle { fill: #f97316; stroke: #ffedd5; stroke-width: 2; }
+    .tep-agent-map-marker svg circle { fill: var(--tep-orange); stroke: #ffedd5; stroke-width: 2; }
     .tep-agent-map-marker:hover { filter: drop-shadow(0 0 6px rgba(249,115,22,.95)); }
     /* One-shot entrance for a marker holding an agent never shown before
        this session (see markersFadedIn) — opacity only, deliberately not
@@ -1908,17 +2072,17 @@
     .tep-agent-map-zoom button {
       width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
       font-size: 15px; font-weight: 700; line-height: 1; cursor: pointer;
-      color: #e2e8f0; background: rgba(30,41,59,.92); border: 1px solid #475569; border-radius: 6px;
+      color: var(--tep-slate-200); background: rgba(var(--tep-slate-800-rgb),.92); border: 1px solid var(--tep-slate-600); border-radius: 6px;
       box-shadow: 0 1px 3px rgba(0,0,0,.4);
     }
-    .tep-agent-map-zoom button:hover { border-color: #f97316; color: #fdba74; background: rgba(30,41,59,1); }
-    .tep-agent-map-legend { font-size: 11px; color: #64748b; margin: 0 0 8px; text-align: center; }
-    .tep-dash-map-legend-key { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 11px; color: #94a3b8; }
+    .tep-agent-map-zoom button:hover { border-color: var(--tep-orange); color: var(--tep-orange-fg); background: rgba(var(--tep-slate-800-rgb),1); }
+    .tep-agent-map-legend { font-size: 11px; color: var(--tep-slate-500); margin: 0 0 8px; text-align: center; }
+    .tep-dash-map-legend-key { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 11px; color: var(--tep-slate-400); }
     .tep-dash-legend-item { display: inline-flex; align-items: center; gap: 4px; }
     .tep-dash-legend-item svg { flex-shrink: 0; }
     .tep-dash-legend-swatch { width: 34px; height: 8px; border-radius: 4px; display: inline-block; }
     #tep-dash-map-host:empty { display: none; }
-    .tep-dash-map-empty { font-size: 12px; color: #94a3b8; padding: 10px 2px; }
+    .tep-dash-map-empty { font-size: 12px; color: var(--tep-slate-400); padding: 10px 2px; }
     .tep-dash-map-marker { filter: drop-shadow(0 0 3px rgba(0,0,0,.6)); }
     .tep-dash-map-marker:hover { filter: drop-shadow(0 0 6px rgba(255,255,255,.65)); }
     .tep-map-lat {
@@ -1935,7 +2099,7 @@
     /* Red dot used in the Alert Info row inside the agent hover card
        (tepDashTipRow's alertMetricRowHtml). */
     .tep-map-alert-badge-dot {
-      width: 6px; height: 6px; border-radius: 50%; background: #f87171; flex-shrink: 0;
+      width: 6px; height: 6px; border-radius: 50%; background: var(--tep-red); flex-shrink: 0;
       box-shadow: 0 0 4px rgba(248,113,113,.9);
     }
     /* Mini name label for the OTHER agents/clusters tied to a locked alert
@@ -1944,15 +2108,15 @@
     .tep-map-alert-mini {
       position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%);
       margin-bottom: 3px; padding: 0 4px; border-radius: 4px; white-space: nowrap;
-      font-size: 10px; font-weight: 800; line-height: 1.4; color: #fca5a5;
-      background: rgba(15,23,42,.85); box-shadow: 0 1px 3px rgba(0,0,0,.5); pointer-events: none;
+      font-size: 10px; font-weight: 800; line-height: 1.4; color: var(--tep-red-soft);
+      background: rgba(var(--tep-slate-900-rgb),.85); box-shadow: 0 1px 3px rgba(0,0,0,.5); pointer-events: none;
       max-width: 140px; overflow: hidden; text-overflow: ellipsis;
     }
     /* LIVE TEST: source pulse, animated flow line, and the 8.8.8.8 "G" target. */
     .tep-livetest-src::after {
       content: ''; position: absolute; left: 50%; top: 50%;
       width: 8px; height: 8px; transform: translate(-50%, -50%);
-      border-radius: 50%; border: 2px solid #38bdf8; pointer-events: none;
+      border-radius: 50%; border: 2px solid var(--tep-sky); pointer-events: none;
       animation: tep-livetest-pulse 1.4s ease-out infinite;
     }
     @keyframes tep-livetest-pulse {
@@ -2116,21 +2280,21 @@
     }
     .tep-gcard-g svg { display: block; }
     .tep-gcard-heties { min-width: 0; }
-    .tep-gcard-title { font-weight: 800; font-size: 12.5px; color: #e2e8f0; line-height: 1.2; }
-    .tep-gcard-ip { font-size: 11px; color: #93c5fd; font-variant-numeric: tabular-nums; }
+    .tep-gcard-title { font-weight: 800; font-size: 12.5px; color: var(--tep-slate-200); line-height: 1.2; }
+    .tep-gcard-ip { font-size: 11px; color: var(--tep-blue-soft); font-variant-numeric: tabular-nums; }
     .tep-gcard-row {
       display: flex; justify-content: space-between; gap: 10px; padding: 2px 2px;
-      font-size: 11px; color: #94a3b8;
+      font-size: 11px; color: var(--tep-slate-400);
     }
-    .tep-gcard-row b { color: #e2e8f0; font-weight: 700; text-align: right; }
+    .tep-gcard-row b { color: var(--tep-slate-200); font-weight: 700; text-align: right; }
     .tep-gcard-agents { margin-top: 7px; border-top: 1px solid rgba(148,163,184,.25); padding-top: 6px; }
-    .tep-gcard-subhead { font-size: 10.5px; font-weight: 800; color: #cbd5e1; margin-bottom: 3px; text-transform: uppercase; letter-spacing: .3px; }
+    .tep-gcard-subhead { font-size: 10.5px; font-weight: 800; color: var(--tep-slate-300); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .3px; }
     .tep-gcard-agent {
       display: flex; justify-content: space-between; gap: 10px; padding: 1px 2px;
-      font-size: 11px; color: #cbd5e1;
+      font-size: 11px; color: var(--tep-slate-300);
     }
     .tep-gcard-agent b { font-weight: 700; font-variant-numeric: tabular-nums; }
-    .tep-gcard-more { font-size: 10.5px; color: #64748b; padding: 2px; }
+    .tep-gcard-more { font-size: 10.5px; color: var(--tep-slate-500); padding: 2px; }
     /* Fullscreen dashboard map + KPI widget row */
     /* z-index above the dark-mode blend overlays (…645/…646) + isolate, so dark
        mode never blends/tints the map. Mounted on <html> for the same reason.
@@ -2143,7 +2307,7 @@
        extend) — together they read as the panel "becoming" the map instead
        of an instant hide/show swap. Reversed by closeDashMapFullscreen. */
     .tep-dashmap-full {
-      position: fixed; inset: 56px 0 0 0; z-index: 2147483647; isolation: isolate; background: #0b1220;
+      position: fixed; inset: 56px 0 0 0; z-index: 2147483647; isolation: isolate; background: var(--tep-slate-900);
       opacity: 0; transition: opacity .3s ease;
     }
     .tep-dashmap-full--in { opacity: 1; }
@@ -2190,30 +2354,30 @@
       position: absolute; top: 8px; right: 8px; z-index: 1;
       display: flex; align-items: center; justify-content: center; cursor: pointer;
     }
-    .tep-dash-widget-filter input { margin: 0; cursor: pointer; accent-color: #f97316; width: 13px; height: 13px; }
+    .tep-dash-widget-filter input { margin: 0; cursor: pointer; accent-color: var(--tep-orange); width: 13px; height: 13px; }
     .tep-dash-widget-title {
       font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      color: #94a3b8; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+      color: var(--tep-slate-400); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
     }
-    .tep-dash-widget-main { font-size: 24px; font-weight: 800; color: #f8fafc; line-height: 1.05; }
-    .tep-dash-widget-main small { font-size: 13px; font-weight: 600; color: #94a3b8; }
-    .tep-dash-widget-sub { font-size: 11px; color: #94a3b8; margin-top: 5px; }
-    .tep-dash-widget-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; background: #1e293b; }
+    .tep-dash-widget-main { font-size: 24px; font-weight: 800; color: var(--tep-slate-50); line-height: 1.05; }
+    .tep-dash-widget-main small { font-size: 13px; font-weight: 600; color: var(--tep-slate-400); }
+    .tep-dash-widget-sub { font-size: 11px; color: var(--tep-slate-400); margin-top: 5px; }
+    .tep-dash-widget-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; background: var(--tep-slate-800); }
     .tep-dash-widget-bar > span { display: block; height: 100%; }
-    .tep-dash-widget--alert .tep-dash-widget-main { color: #f87171; }
+    .tep-dash-widget--alert .tep-dash-widget-main { color: var(--tep-red); }
     a.tep-dash-widget--link { display: block; text-decoration: none; cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease; }
-    a.tep-dash-widget--link:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,.5); transform: translateY(-1px); }
+    a.tep-dash-widget--link:hover { border-color: var(--tep-blue); box-shadow: 0 6px 20px rgba(0,0,0,.5); transform: translateY(-1px); }
     a.tep-dash-widget--link .tep-dash-widget-title::after { content: '↗'; margin-left: auto; opacity: .65; font-size: 12px; }
-    .tep-dash-widget-pending { color: #64748b; font-style: italic; }
+    .tep-dash-widget-pending { color: var(--tep-slate-500); font-style: italic; }
     /* Circular health ring (SaaS Health widget) — arc length = availability %. */
     .tep-saas-health { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .tep-saas-health .tep-dash-widget-sub { margin-top: 3px; }
     .tep-w-saas-clickable { cursor: pointer; }
     .tep-isp-health { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .tep-isp-health .tep-dash-widget-sub { margin-top: 3px; }
-    .tep-w-saas-clickable:hover .tep-dash-widget-main { color: #fdba74; }
+    .tep-w-saas-clickable:hover .tep-dash-widget-main { color: var(--tep-orange-fg); }
     .tep-w-alerts-clickable { cursor: pointer; }
-    .tep-w-alerts-clickable:hover .tep-dash-widget-main { color: #fdba74; }
+    .tep-w-alerts-clickable:hover .tep-dash-widget-main { color: var(--tep-orange-fg); }
     /* Alerts' top-right "open the Alerts page" arrow — a real link, not the
        decorative ::after used by whole-card <a> widgets (Events), since the
        Alerts card body itself is now clickable (opens the active-alerts
@@ -2231,11 +2395,11 @@
        vertical divider (not full height) separates the two columns. */
     .tep-combo-row { display: flex; gap: 14px; }
     .tep-combo-col { flex: 1 1 0; min-width: 0; }
-    .tep-combo-divider { width: 1px; flex-shrink: 0; background: #334155; margin: 14px 0; }
+    .tep-combo-divider { width: 1px; flex-shrink: 0; background: var(--tep-slate-700); margin: 14px 0; }
     .tep-combo-title-link {
       color: inherit; text-decoration: none; transition: color .12s ease;
     }
-    .tep-combo-title-link:hover { color: #fdba74; }
+    .tep-combo-title-link:hover { color: var(--tep-orange-fg); }
     .tep-combo-col--events {
       text-align: right; color: inherit; text-decoration: none; display: block;
       transition: color .12s ease;
@@ -2245,8 +2409,8 @@
        the title needs its own justify-content to actually sit at the right
        edge. */
     .tep-combo-col--events .tep-dash-widget-title { justify-content: flex-end; }
-    .tep-combo-col--events:hover { color: #93c5fd; }
-    .tep-combo-col--events:hover .tep-dash-widget-main { color: #93c5fd; }
+    .tep-combo-col--events:hover { color: var(--tep-blue-soft); }
+    .tep-combo-col--events:hover .tep-dash-widget-main { color: var(--tep-blue-soft); }
     /* ISP Health stack: sits directly under the Enterprise Agents tile in the
        widget grid's first column, growing downward as each ISP qualifies.
        Deliberately position:absolute (anchored to col1 via top:100%) instead
@@ -2289,17 +2453,17 @@
     .tep-isp-widget .tep-dash-widget-main { font-size: 18px; }
     .tep-isp-widget .tep-health-ring { width: 38px; height: 38px; flex: 0 0 38px; }
     .tep-isp-widget--clickable { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
-    .tep-isp-widget--clickable:hover { border-color: #f97316; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+    .tep-isp-widget--clickable:hover { border-color: var(--tep-orange); box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     /* Enterprise/Endpoint Agents widgets — same click-through agent list as
        the ISP tiles. */
     .tep-dash-widget--clickable { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
-    .tep-dash-widget--clickable:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+    .tep-dash-widget--clickable:hover { border-color: var(--tep-blue); box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     @keyframes tep-isp-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .tep-isp-widget--in { animation: tep-isp-fadein .4s ease-out both; }
     .tep-saas-breakdown-pop {
       position: fixed; z-index: 2147483647; min-width: 220px; max-width: 320px;
       max-height: 320px; overflow-y: auto;
-      background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 10px;
+      background: var(--tep-slate-900); color: var(--tep-slate-200); border: 1px solid var(--tep-slate-700); border-radius: 10px;
       box-shadow: 0 12px 32px rgba(0,0,0,.55); padding: 10px 12px;
       font-size: 12px; line-height: 1.4;
       /* Thin, transparent-track scrollbar — same treatment as the ISP stack
@@ -2307,14 +2471,16 @@
          Shared by SaaS/Alerts/ISP-agent popovers, all this one class. */
       scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
     }
-    /* Network Health's own list — 10% wider than the shared 220-320px range. */
-    .tep-saas-breakdown-pop--wide { min-width: 242px; max-width: 352px; }
+    /* SaaS/Network/Alerts breakdowns — wider than the shared 220-320px range
+       used by the smaller agent-list popovers, so their fuller rows (names,
+       bars, timestamps) don't wrap awkwardly. */
+    .tep-saas-breakdown-pop--wide { min-width: 280px; max-width: 420px; }
     .tep-saas-breakdown-pop::-webkit-scrollbar { width: 6px; }
     .tep-saas-breakdown-pop::-webkit-scrollbar-track { background: transparent; }
     .tep-saas-breakdown-pop::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 3px; }
     .tep-saas-breakdown-pop::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
-    .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: #f1f5f9; }
-    .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: #64748b; margin-top: 2px; }
+    .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: var(--tep-slate-100); }
+    .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: var(--tep-slate-500); margin-top: 2px; }
     /* Centered confirm modal (tepConfirmModal) — used in place of the
        browser's native confirm(), which anchors near the top of the
        viewport instead of the middle. Same dark palette as the popovers
@@ -2324,18 +2490,18 @@
       display: flex; align-items: center; justify-content: center;
     }
     .tep-confirm-box {
-      background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 12px;
+      background: var(--tep-slate-900); color: var(--tep-slate-200); border: 1px solid var(--tep-slate-700); border-radius: 12px;
       box-shadow: 0 16px 40px rgba(0,0,0,.6); padding: 20px 22px; max-width: 340px;
       font-size: 13.5px; line-height: 1.5; text-align: center;
     }
-    .tep-confirm-msg { margin-bottom: 16px; color: #f1f5f9; font-weight: 600; }
+    .tep-confirm-msg { margin-bottom: 16px; color: var(--tep-slate-100); font-weight: 600; }
     .tep-confirm-btns { display: flex; gap: 10px; justify-content: center; }
     .tep-confirm-btn {
       border: none; border-radius: 8px; padding: 8px 18px; font-size: 12.5px; font-weight: 700;
       cursor: pointer; font-family: inherit;
     }
-    .tep-confirm-btn.tep-confirm-cancel { background: #1e293b; color: #cbd5e1; }
-    .tep-confirm-btn.tep-confirm-cancel:hover { background: #334155; }
+    .tep-confirm-btn.tep-confirm-cancel { background: var(--tep-slate-800); color: var(--tep-slate-300); }
+    .tep-confirm-btn.tep-confirm-cancel:hover { background: var(--tep-slate-700); }
     .tep-confirm-btn.tep-confirm-ok { background: #dc2626; color: #fff; }
     .tep-confirm-btn.tep-confirm-ok:hover { background: #ef4444; }
     /* Enterprise/Endpoint Agents popover's "lowest health first" / "alphabetical"
@@ -2344,14 +2510,14 @@
     .tep-saas-breakdown-sort-toggle {
       cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;
     }
-    .tep-saas-breakdown-sort-toggle:hover { color: #fdba74; }
+    .tep-saas-breakdown-sort-toggle:hover { color: var(--tep-orange-fg); }
     .tep-saas-breakdown-list { display: flex; flex-direction: column; gap: 2px; }
     /* HTTP/Network sub-section label inside the per-agent tests popover —
        shows both metric families together now regardless of which one is
        currently coloring the map. */
     .tep-saas-breakdown-section-head {
       font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-      color: #64748b; margin: 8px 0 3px;
+      color: var(--tep-slate-500); margin: 8px 0 3px;
     }
     .tep-saas-breakdown-section-head:first-of-type { margin-top: 0; }
     .tep-saas-breakdown-section-head .tep-saas-breakdown-hint { display: inline; margin: 0 0 0 4px; text-transform: none; letter-spacing: normal; font-size: 10px; }
@@ -2366,7 +2532,7 @@
        at the bottom of the popover. */
     .tep-agenttests-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .tep-agenttests-head-link {
-      font-size: 11px; font-weight: 600; color: #93c5fd; text-decoration: none;
+      font-size: 11px; font-weight: 600; color: var(--tep-blue-soft); text-decoration: none;
       white-space: nowrap; flex-shrink: 0;
     }
     .tep-agenttests-head-link:hover { color: #bfdbfe; text-decoration: underline; }
@@ -2385,7 +2551,7 @@
       border-radius: 999px; padding: 1px 6px 1px 5px; margin-left: 2px;
       font-size: 10px; font-weight: 700; transition: background .15s ease, color .15s ease;
     }
-    .tep-agentkind-badge--cloud { background: rgba(59,130,246,.18); color: #93c5fd; }
+    .tep-agentkind-badge--cloud { background: rgba(59,130,246,.18); color: var(--tep-blue-soft); }
     .tep-agentkind-badge--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
     .tep-agentkind-badge--endpoint { background: rgba(167,139,250,.18); color: #c4b5fd; }
     .tep-agentkind-badge svg { fill: none; transition: fill .15s ease; }
@@ -2409,7 +2575,7 @@
     a.tep-saas-breakdown-row:hover .tep-agentkind-badge--cloud .tep-agentkind-label { display: inline; }
     .tep-health-ring { position: relative; width: 52px; height: 52px; flex: 0 0 52px; }
     .tep-health-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
-    .tep-health-ring-track { fill: none; stroke: #1e293b; stroke-width: 3.5; }
+    .tep-health-ring-track { fill: none; stroke: var(--tep-slate-800); stroke-width: 3.5; }
     .tep-health-ring-fill { fill: none; stroke-width: 3.5; stroke-linecap: round; transition: stroke-dasharray .6s cubic-bezier(.2,.8,.2,1), stroke .3s ease; }
     .tep-health-ring-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; }
     .tep-dash-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -2419,9 +2585,9 @@
     .tep-dashmap-full-min {
       position: absolute; top: 14px; right: 14px; z-index: 6;
       width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
-      border-radius: 8px; cursor: pointer; color: #fdba74;
+      border-radius: 8px; cursor: pointer; color: var(--tep-orange-fg);
       background: linear-gradient(180deg, rgba(249,115,22,.20), rgba(249,115,22,.08));
-      border: 1px solid #f97316; box-shadow: 0 0 0 2px rgba(249,115,22,.14), 0 1px 3px rgba(0,0,0,.45);
+      border: 1px solid var(--tep-orange); box-shadow: 0 0 0 2px rgba(249,115,22,.14), 0 1px 3px rgba(0,0,0,.45);
     }
     .tep-dashmap-full-min:hover {
       color: #fff7ed; border-color: #fb923c;
@@ -2445,17 +2611,17 @@
     .tep-dashmap-full-zoom {
       flex: 0 0 auto;
       width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
-      border-radius: 9px; cursor: pointer; color: #e2e8f0; font-size: 18px; font-weight: 700; line-height: 1;
-      background: rgba(15,23,42,.92); border: 1px solid #475569; box-shadow: 0 2px 8px rgba(0,0,0,.5);
+      border-radius: 9px; cursor: pointer; color: var(--tep-slate-200); font-size: 18px; font-weight: 700; line-height: 1;
+      background: rgba(var(--tep-slate-900-rgb),.92); border: 1px solid var(--tep-slate-600); box-shadow: 0 2px 8px rgba(0,0,0,.5);
     }
-    .tep-dashmap-full-zoom:hover { border-color: #f97316; color: #fdba74; }
+    .tep-dashmap-full-zoom:hover { border-color: var(--tep-orange); color: var(--tep-orange-fg); }
     /* ~10% bigger than before (padding/radius/gap) per user request — see
        the matching input/icon/count sizing below and .tep-dashmap-full-zoom
        above (sized to match this bar's new height exactly). */
     .tep-dashmap-search {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 13px; border-radius: 22px;
-      background: rgba(15,23,42,.92);
+      background: rgba(var(--tep-slate-900-rgb),.92);
       /* Orange border/glow visible by default (not just on focus, below) —
          matches .tep-dashmap-full-min's always-orange treatment, so the
          search bar reads as the row's primary/inviting action next to the
@@ -2472,12 +2638,12 @@
     .tep-dash-map-search {
       display: flex; align-items: center; gap: 7px;
       margin-top: 8px; padding: 7px 12px; border-radius: 20px;
-      background: rgba(15,23,42,.92); border: 1px solid #475569; box-shadow: 0 2px 8px rgba(0,0,0,.5);
+      background: rgba(var(--tep-slate-900-rgb),.92); border: 1px solid var(--tep-slate-600); box-shadow: 0 2px 8px rgba(0,0,0,.5);
     }
     .tep-dashmap-search:focus-within, .tep-dash-map-search:focus-within {
-      border-color: #f97316; box-shadow: 0 0 0 2px rgba(249,115,22,.25), 0 2px 8px rgba(0,0,0,.5);
+      border-color: var(--tep-orange); box-shadow: 0 0 0 2px rgba(249,115,22,.25), 0 2px 8px rgba(0,0,0,.5);
     }
-    .tep-dashmap-search svg, .tep-dash-map-search svg { flex: 0 0 auto; color: #94a3b8; }
+    .tep-dashmap-search svg, .tep-dash-map-search svg { flex: 0 0 auto; color: var(--tep-slate-400); }
     .tep-dashmap-search input, .tep-dash-map-search input {
       /* !important because some TE pages (Endpoint views specifically) ship
          their own global text-input reset (border/box-shadow AND sizing —
@@ -2489,7 +2655,7 @@
       -webkit-appearance: none; appearance: none;
       padding: 0 !important; margin: 0 !important;
       box-sizing: content-box !important;
-      color: #e2e8f0; font-family: inherit;
+      color: var(--tep-slate-200); font-family: inherit;
     }
     /* Width +10% (240→264px) and font-size +2pt (13→15px), per user
        request — height/line-height follow the font up to keep the text
@@ -2503,18 +2669,18 @@
       flex: 1 1 auto; min-width: 0; width: 100%;
       height: 18px !important; line-height: 18px !important; font-size: 13px;
     }
-    .tep-dashmap-search input::placeholder, .tep-dash-map-search input::placeholder { color: #64748b; }
+    .tep-dashmap-search input::placeholder, .tep-dash-map-search input::placeholder { color: var(--tep-slate-500); }
     /* .tep-dashmap-search-count/-clear are shared classes (same markup,
        different ids) between the fullscreen and inline search bars — sized
        per-context below via the parent, same split as the input rule above,
        so only the fullscreen one picks up the +2pt/~10% bump. */
-    .tep-dashmap-search-count { flex: 0 0 auto; font-weight: 700; color: #94a3b8; white-space: nowrap; }
-    .tep-dashmap-search-count--none { color: #f87171; }
+    .tep-dashmap-search-count { flex: 0 0 auto; font-weight: 700; color: var(--tep-slate-400); white-space: nowrap; }
+    .tep-dashmap-search-count--none { color: var(--tep-red); }
     .tep-dashmap-search .tep-dashmap-search-count { font-size: 13px; }
     .tep-dash-map-search .tep-dashmap-search-count { font-size: 11px; }
     .tep-dashmap-search-clear {
       flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
-      border-radius: 50%; cursor: pointer; color: #94a3b8; background: rgba(148,163,184,.15);
+      border-radius: 50%; cursor: pointer; color: var(--tep-slate-400); background: rgba(148,163,184,.15);
       border: none; line-height: 1; padding: 0;
     }
     .tep-dashmap-search .tep-dashmap-search-clear { width: 20px; height: 20px; font-size: 11px; }
@@ -2547,7 +2713,7 @@
        to match its tick-dot/bold-label color) so the current setting never
        requires a hover to see. */
     .tep-dashmap-seenfilter-current {
-      font-size: 11px; font-weight: 800; color: #fdba74;
+      font-size: 11px; font-weight: 800; color: var(--tep-orange-fg);
       width: 108px; text-align: right;
     }
     .tep-dashmap-seenfilter-body {
@@ -2582,7 +2748,7 @@
     }
     .tep-dashmap-seenfilter-track input[type="range"]::-webkit-slider-runnable-track {
       height: 5px; border-radius: 2px;
-      background: linear-gradient(to right, #22c55e, #f97316);
+      background: linear-gradient(to right, #22c55e, var(--tep-orange));
     }
     .tep-dashmap-seenfilter-track input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
@@ -2591,7 +2757,7 @@
     }
     .tep-dashmap-seenfilter-track input[type="range"]::-moz-range-track {
       height: 5px; border-radius: 2px;
-      background: linear-gradient(to right, #22c55e, #f97316);
+      background: linear-gradient(to right, #22c55e, var(--tep-orange));
     }
     .tep-dashmap-seenfilter-track input[type="range"]::-moz-range-thumb {
       width: 17px; height: 17px; border-radius: 50%;
@@ -2611,9 +2777,9 @@
     .tep-dashmap-seenfilter-tickdot {
       position: absolute; left: 50%; transform: translate(-50%, -50%);
       width: 5px; height: 5px; border-radius: 50%;
-      background: #94a3b8;
+      background: var(--tep-slate-400);
     }
-    .tep-dashmap-seenfilter-tickdot--active { background: #4ade80; }
+    .tep-dashmap-seenfilter-tickdot--active { background: var(--tep-green); }
     /* Tick TEXT labels — always visible now (used to fade in only on
        hover/drag). Positioned to the LEFT of the (right-anchored, 20% wider)
        track. */
@@ -2622,10 +2788,10 @@
     }
     .tep-dashmap-seenfilter-tick {
       position: absolute; right: 29px; transform: translateY(-50%);
-      font-size: 9px; font-weight: 600; color: #64748b; white-space: nowrap;
+      font-size: 9px; font-weight: 600; color: var(--tep-slate-500); white-space: nowrap;
       text-align: right; transition: color .15s, font-weight .15s;
     }
-    .tep-dashmap-seenfilter-tick--active { color: #fdba74; font-weight: 800; }
+    .tep-dashmap-seenfilter-tick--active { color: var(--tep-orange-fg); font-weight: 800; }
     /* "Data Window" — a plain dropdown (the rotated-slider, then horizontal-
        slider versions both proved fiddly) on its own full-width row at the
        bottom of the widget grid, right below Alerts/Events. grid-column
@@ -2650,12 +2816,12 @@
       color: #fff; white-space: nowrap;
     }
     .tep-dashmap-hwindow-select {
-      font-size: 12px; font-weight: 600; color: #e2e8f0;
-      background: rgba(15,23,42,.6); border: 1px solid #475569; border-radius: 6px;
+      font-size: 12px; font-weight: 600; color: var(--tep-slate-200);
+      background: rgba(var(--tep-slate-900-rgb),.6); border: 1px solid var(--tep-slate-600); border-radius: 6px;
       padding: 3px 8px; cursor: pointer;
     }
-    .tep-dashmap-hwindow-select:hover { border-color: #60a5fa; }
-    .tep-dashmap-hwindow-select:focus { outline: 2px solid #60a5fa; outline-offset: 1px; }
+    .tep-dashmap-hwindow-select:hover { border-color: var(--tep-blue-bright); }
+    .tep-dashmap-hwindow-select:focus { outline: 2px solid var(--tep-blue-bright); outline-offset: 1px; }
     /* Manual "refresh health metrics now" button — sits to the RIGHT of the
        dropdown (not moved) via the same flex row (.tep-dashmap-hwindow-inner).
        Force-bypasses the SaaS/Network Health caches instead of waiting for
@@ -2663,10 +2829,10 @@
     .tep-dashmap-hwindow-refresh {
       display: inline-flex; align-items: center; justify-content: center;
       width: 24px; height: 24px; padding: 0;
-      color: #e2e8f0; background: rgba(15,23,42,.6); border: 1px solid #475569; border-radius: 6px;
+      color: var(--tep-slate-200); background: rgba(var(--tep-slate-900-rgb),.6); border: 1px solid var(--tep-slate-600); border-radius: 6px;
       cursor: pointer; flex-shrink: 0;
     }
-    .tep-dashmap-hwindow-refresh:hover { border-color: #60a5fa; color: #93c5fd; }
+    .tep-dashmap-hwindow-refresh:hover { border-color: var(--tep-blue-bright); color: var(--tep-blue-soft); }
     .tep-dashmap-hwindow-refresh.tep-spin svg { animation: tep-spin .7s linear infinite; }
     @keyframes tep-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .tep-dash-kind {
@@ -2674,17 +2840,17 @@
       padding: 1px 5px; border-radius: 4px; margin-left: 4px; vertical-align: middle;
     }
     .tep-dash-kind--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
-    .tep-dash-kind--endpoint { background: rgba(59,130,246,.18); color: #93c5fd; }
-    .tep-dash-kind--offline { background: rgba(239,68,68,.18); color: #fca5a5; }
+    .tep-dash-kind--endpoint { background: rgba(59,130,246,.18); color: var(--tep-blue-soft); }
+    .tep-dash-kind--offline { background: rgba(239,68,68,.18); color: var(--tep-red-soft); }
     .tep-map-tip-agent.tep-dash-tip-noclick { cursor: default; }
     .tep-map-tip-agent.tep-dash-tip-noclick:hover { background: transparent; }
-    .tep-map-tip-agent.tep-dash-tip-noclick:hover .tep-map-tip-name { color: #f8fafc; }
+    .tep-map-tip-agent.tep-dash-tip-noclick:hover .tep-map-tip-name { color: var(--tep-slate-50); }
     .tep-map-tip-health { font-weight: 600; white-space: nowrap; }
     .tep-map-tip-geo {
       display: inline-flex; align-items: center; vertical-align: middle;
-      margin-left: 6px; color: #93c5fd; pointer-events: auto;
+      margin-left: 6px; color: var(--tep-blue-soft); pointer-events: auto;
     }
-    .tep-map-tip-geo:hover { color: #fdba74; }
+    .tep-map-tip-geo:hover { color: var(--tep-orange-fg); }
     /* Endpoint's labeled variant — sits in the location meta row (that flex
        row's own gap already spaces it, hence margin-left:0) instead of the
        bare icon enterprise keeps next to its name, so it reads as a distinct
@@ -2706,9 +2872,9 @@
          single agents (shorter content) despite sharing this one class. */
       position: absolute; z-index: 5; pointer-events: auto;
       width: 343.75px;
-      background: rgba(15,23,42,.97); border: 1px solid #475569; border-radius: 8px;
+      background: rgba(var(--tep-slate-900-rgb),.97); border: 1px solid var(--tep-slate-600); border-radius: 8px;
       box-shadow: 0 8px 22px rgba(0,0,0,.55); padding: 10px 12.5px;
-      font-size: 11px; line-height: 1.35; color: #cbd5e1;
+      font-size: 11px; line-height: 1.35; color: var(--tep-slate-300);
     }
     /* Speech-bubble tail pointing at the marker the tip spawned from — a
        rotated square, half hidden behind the bubble's own edge, so only a
@@ -2720,26 +2886,26 @@
        50% for any hover-card implementation that doesn't set it. */
     .tep-agent-map-tip::after {
       content: ''; position: absolute; left: var(--tep-tip-tail-left, 50%);
-      width: 12px; height: 12px; background: rgba(15,23,42,.97);
+      width: 12px; height: 12px; background: rgba(var(--tep-slate-900-rgb),.97);
       transform: translateX(-50%) rotate(45deg); pointer-events: none;
     }
     .tep-agent-map-tip:not(.tep-agent-map-tip--below)::after {
-      bottom: -7px; border-right: 1px solid #475569; border-bottom: 1px solid #475569;
+      bottom: -7px; border-right: 1px solid var(--tep-slate-600); border-bottom: 1px solid var(--tep-slate-600);
     }
     .tep-agent-map-tip--below::after {
-      top: -7px; border-left: 1px solid #475569; border-top: 1px solid #475569;
+      top: -7px; border-left: 1px solid var(--tep-slate-600); border-top: 1px solid var(--tep-slate-600);
     }
     .tep-map-tip-head {
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
-      font-weight: 700; color: #fdba74; margin-bottom: 4px;
+      font-weight: 700; color: var(--tep-orange-fg); margin-bottom: 4px;
     }
-    .tep-map-tip-dist { color: #fdba74; font-weight: 600; white-space: nowrap; }
+    .tep-map-tip-dist { color: var(--tep-orange-fg); font-weight: 600; white-space: nowrap; }
     .tep-map-tip-agent {
       padding: 5px 6px; margin: 0 -6px; border-top: 1px solid rgba(148,163,184,.18);
       border-radius: 6px; cursor: pointer; transition: background .12s;
     }
     .tep-map-tip-agent:hover { background: rgba(249,115,22,.16); }
-    .tep-map-tip-agent:hover .tep-map-tip-name { color: #fdba74; }
+    .tep-map-tip-agent:hover .tep-map-tip-name { color: var(--tep-orange-fg); }
     /* Hovering the NAME itself (not just the row) previews its own specific
        destination — settings for enterprise, agent view for endpoint — with
        a distinct blue instead of the row's general orange hover, so the two
@@ -2747,33 +2913,33 @@
        in the row → test popover) read as visually different actions before
        you even click. Scoped to clickable rows only — .tep-dash-tip-noclick
        names have nowhere to go, so they keep the plain row-hover color. */
-    .tep-map-tip-agent.tep-dash-tip-clickable:hover .tep-map-tip-name:hover { color: #93c5fd; }
+    .tep-map-tip-agent.tep-dash-tip-clickable:hover .tep-map-tip-name:hover { color: var(--tep-blue-soft); }
     /* Matches the pulsing gold marker highlight from the map search box, so a
        cluster's hover list makes it obvious which row(s) matched. */
-    .tep-map-tip-agent--searchhit { background: rgba(250,204,21,.16); box-shadow: inset 2px 0 0 #facc15; }
+    .tep-map-tip-agent--searchhit { background: rgba(250,204,21,.16); box-shadow: inset 2px 0 0 var(--tep-yellow); }
     .tep-map-tip-agent--searchhit:hover { background: rgba(250,204,21,.24); }
     .tep-map-tip-agent--searchhit .tep-map-tip-name { color: #fde68a; }
     /* Bolds the one agent a click-through from the ISP widget's popover was
        aimed at — orange (not the search box's gold) so the two "this is the
        one you're looking for" cues never look interchangeable. */
-    .tep-map-tip-agent--focushit { background: rgba(249,115,22,.16); box-shadow: inset 2px 0 0 #f97316; }
+    .tep-map-tip-agent--focushit { background: rgba(249,115,22,.16); box-shadow: inset 2px 0 0 var(--tep-orange); }
     .tep-map-tip-agent--focushit:hover { background: rgba(249,115,22,.24); }
-    .tep-map-tip-agent--focushit .tep-map-tip-name { color: #fdba74; }
-    .tep-map-tip-name { font-weight: 700; color: #f8fafc; }
+    .tep-map-tip-agent--focushit .tep-map-tip-name { color: var(--tep-orange-fg); }
+    .tep-map-tip-name { font-weight: 700; color: var(--tep-slate-50); }
     .tep-map-tip-typeicon { flex-shrink: 0; vertical-align: -2px; margin-right: 4px; }
     /* Endpoint only: username(s) left, "seen X ago" right — space-between
        collapses to a single left-aligned item when there's no username. */
-    .tep-map-tip-user { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: #e2e8f0; margin-top: 1px; }
-    .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: #94a3b8; }
+    .tep-map-tip-user { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--tep-slate-200); margin-top: 1px; }
+    .tep-map-tip-meta, .tep-map-tip-metrics { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; color: var(--tep-slate-400); }
     .tep-map-tip-meta svg { vertical-align: -2px; }
     .tep-map-tip-isp { color: #7dd3fc; font-size: 10.5px; margin-top: 3px; }
-    .tep-map-tip-ip { color: #94a3b8; font-size: 10.5px; margin-top: 3px; font-family: var(--font-mono, monospace); }
+    .tep-map-tip-ip { color: var(--tep-slate-400); font-size: 10.5px; margin-top: 3px; font-family: var(--font-mono, monospace); }
     .tep-map-tip-dest {
       display: flex; align-items: center; gap: 5px; margin-top: 4px; padding-top: 4px;
-      border-top: 1px dashed rgba(148,163,184,.22); color: #cbd5e1; font-size: 10.5px;
+      border-top: 1px dashed rgba(148,163,184,.22); color: var(--tep-slate-300); font-size: 10.5px;
     }
     .tep-map-tip-dest-g { flex: 0 0 auto; display: inline-flex; }
-    .tep-map-tip-metrics span { color: #e2e8f0; font-weight: 600; }
+    .tep-map-tip-metrics span { color: var(--tep-slate-200); font-weight: 600; }
     /* App (SaaS/Application) + Net (Network) health, side by side, whichever
        are actually present — each is its own click target opening the
        per-agent test popover scoped to that metric, see the tip's click
@@ -2783,7 +2949,7 @@
     .tep-map-tip-metricrow {
       display: flex; align-items: center; justify-content: flex-start; gap: 18px;
       margin-top: 4px; padding: 3px 6px; border-radius: 4px;
-      background: rgba(148,163,184,.08); font-size: 10.5px; color: #94a3b8;
+      background: rgba(148,163,184,.08); font-size: 10.5px; color: var(--tep-slate-400);
     }
     .tep-map-tip-metricrow b { font-weight: 700; }
     .tep-map-tip-metric-pair { display: flex; align-items: center; gap: 4px; cursor: pointer; border-radius: 3px; padding: 1px 3px; margin: -1px -3px; }
@@ -2791,7 +2957,7 @@
     /* Shown in place of the metric row entirely when this agent has neither
        App nor Network data at all — a direct link out instead of an empty
        row (see tepDashTipRow). */
-    .tep-map-tip-metricrow--link { text-decoration: none; color: #93c5fd; cursor: pointer; font-weight: 600; }
+    .tep-map-tip-metricrow--link { text-decoration: none; color: var(--tep-blue-soft); cursor: pointer; font-weight: 600; }
     .tep-map-tip-metricrow--link:hover { background: rgba(148,163,184,.16); }
     /* Alert-agent variant of the metricrow above (see tepDashTipRow's
        alertMetricRowHtml) — same shape, red-tinted, dot + description
@@ -2810,25 +2976,179 @@
     .tep-map-tip-metricrow--alertsub .tep-map-tip-alert-desc { font-weight: 600; opacity: .85; }
     .tep-map-tip-alert-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .tep-map-tip-alert-name { color: #fee2e2; font-weight: 700; white-space: normal; word-break: break-word; }
-    .tep-map-tip-alert-desc { color: #fca5a5; font-weight: 700; white-space: normal; word-break: break-word; }
-    .tep-map-tip-alert-agents { color: #94a3b8; font-weight: 400; font-size: 9.5px; white-space: normal; word-break: break-word; }
+    .tep-map-tip-alert-desc { color: var(--tep-red-soft); font-weight: 700; white-space: normal; word-break: break-word; }
+    .tep-map-tip-alert-agents { color: var(--tep-slate-400); font-weight: 400; font-size: 9.5px; white-space: normal; word-break: break-word; }
     .tep-map-tip-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-    .tep-map-tip-labels span { background: #334155; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #cbd5e1; }
-    .tep-map-tip-more { color: #64748b; margin-top: 4px; }
+    .tep-map-tip-labels span { background: var(--tep-slate-700); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: var(--tep-slate-300); }
+    .tep-map-tip-more { color: var(--tep-slate-500); margin-top: 4px; }
     .tep-map-tip-body { max-height: 275px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; margin: 0 -2px; padding: 0 2px; }
     .tep-map-tip-body::-webkit-scrollbar { width: 8px; }
-    .tep-map-tip-body::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    .tep-map-tip-body::-webkit-scrollbar-thumb { background: var(--tep-slate-600); border-radius: 4px; }
     .tep-map-tip-body::-webkit-scrollbar-track { background: transparent; }
-    .tep-map-tip-foot { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(148,163,184,.18); color: #64748b; font-style: italic; }
+    .tep-map-tip-foot { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(148,163,184,.18); color: var(--tep-slate-500); font-style: italic; }
+    /* Cluster hover card's maximize button — only rendered when the card
+       covers more than one agent (see tepDashTooltipHtml/epAgentTooltipHtml). */
+    .tep-map-tip-maxbtn {
+      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; padding: 0; border-radius: 5px;
+      border: 1px solid rgba(148,163,184,.3); background: rgba(148,163,184,.08);
+      color: var(--tep-slate-300); cursor: pointer;
+    }
+    .tep-map-tip-maxbtn:hover { background: rgba(249,115,22,.18); color: var(--tep-orange-fg); border-color: var(--tep-orange); }
+    /* Full-screen "expanded cluster" view — a grouped, columned board of
+       every agent in a cluster, opened from the maximize button above.
+       Positioned below the fullscreen map's floating widget row (top set
+       inline per-open, from that row's own measured height) so it never
+       overlaps SaaS/Network/Alerts/etc — see openClusterMaxView. */
+    /* Fades in/out (opacity) while the panel itself genuinely ZOOMS from the
+       cluster's own on-screen spot — not a generic center-anchored pop —
+       up to full size and back down again on close (see openClusterMaxView
+       adding .tep-cluster-max-overlay--in a frame later, which sets
+       transform-origin to the maximize button's own position first;
+       hideClusterMaxView removes it before the actual DOM removal, same
+       open/close pattern .tep-dashmap-full uses, same TEP_TOGGLE_ANIM_MS
+       duration). CONFIRMED via user request ("looked like it zoomed into
+       that size and vice versa"), replacing an earlier plain scale(.96)
+       fade that read as a generic modal pop instead. */
+    .tep-cluster-max-overlay {
+      position: fixed; inset: 0; z-index: 2147483647; background: rgba(2,6,23,.6);
+      opacity: 0; transition: opacity .35s ease;
+    }
+    .tep-cluster-max-overlay--in { opacity: 1; }
+    .tep-cluster-max-panel {
+      position: fixed; left: 24px; right: 24px; bottom: 24px;
+      display: flex; flex-direction: column;
+      background: var(--tep-slate-900); color: var(--tep-slate-200); border: 1px solid var(--tep-slate-700);
+      border-radius: 14px; box-shadow: 0 20px 50px rgba(0,0,0,.6); overflow: hidden;
+      /* transform-origin set inline per-open (openClusterMaxView) to the
+         maximize button's own screen position — this scale(.05) alone would
+         just shrink toward dead-center otherwise. */
+      transform: scale(.05); transition: transform .38s cubic-bezier(.16,1,.3,1);
+    }
+    .tep-cluster-max-overlay--in .tep-cluster-max-panel { transform: scale(1); }
+    .tep-cluster-max-head {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 14px 18px; border-bottom: 1px solid var(--tep-slate-700);
+      font-weight: 700; font-size: 14px; color: var(--tep-orange-fg);
+    }
+    .tep-cluster-max-close {
+      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; padding: 0; border-radius: 6px;
+      border: 1px solid rgba(148,163,184,.3); background: rgba(148,163,184,.08);
+      color: var(--tep-slate-300); cursor: pointer;
+    }
+    .tep-cluster-max-close:hover { background: rgba(248,113,113,.2); color: var(--tep-red-soft); border-color: var(--tep-red); }
+    /* Mini search, top-right of the maximize view's header, next to the
+       close button — quick "find agent" across every subnet column without
+       hunting through them by eye. Own compact class (not reusing
+       .tep-dash-map-search) since it has to sit inline in a 14px-padded
+       header row rather than in normal document flow below a map. */
+    .tep-cluster-max-head-right { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+    .tep-cluster-max-search {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+      padding: 5px 10px; border-radius: 999px; font-weight: 400;
+      background: rgba(148,163,184,.08); border: 1px solid rgba(148,163,184,.3);
+    }
+    .tep-cluster-max-search:focus-within { border-color: var(--tep-orange); box-shadow: 0 0 0 2px rgba(249,115,22,.25); }
+    .tep-cluster-max-search svg { flex: 0 0 auto; color: var(--tep-slate-400); }
+    .tep-cluster-max-search input {
+      width: 140px; max-width: 22vw; background: transparent !important; border: none !important; outline: none !important;
+      box-shadow: none !important; padding: 0 !important; margin: 0 !important;
+      color: var(--tep-slate-200); font-family: inherit; font-size: 12px; font-weight: 400; height: 16px; line-height: 16px;
+    }
+    .tep-cluster-max-search input::placeholder { color: var(--tep-slate-500); }
+    .tep-cluster-max-search-clear {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 50%; cursor: pointer; font-size: 9px; line-height: 1; padding: 0;
+      color: var(--tep-slate-400); background: rgba(148,163,184,.15); border: none;
+    }
+    .tep-cluster-max-search-clear:hover { color: #fff; background: rgba(148,163,184,.3); }
+    /* A column with zero rows still matching the search is hidden entirely
+       (see the input handler in openClusterMaxView) rather than left
+       showing an empty body — an empty subnet card reads as "no data",
+       not "filtered out". */
+    .tep-cluster-max-col--search-hidden { display: none; }
+    /* One row of columns that never wraps — more subnets just keep adding
+       to the right, and the body scrolls horizontally to reach them
+       (CONFIRMED via user request) — instead of the old wrap-to-a-new-row
+       layout, which pushed the whole board's height around as columns came
+       and went. Each column now handles its OWN vertical scroll (below)
+       since it stretches to the body's full height rather than sizing to
+       its own content. */
+    .tep-cluster-max-body {
+      flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden;
+      display: flex; flex-wrap: nowrap; align-items: stretch; gap: 14px; padding: 16px;
+      scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
+    }
+    .tep-cluster-max-body::-webkit-scrollbar { height: 8px; }
+    .tep-cluster-max-body::-webkit-scrollbar-thumb { background: var(--tep-slate-600); border-radius: 4px; }
+    .tep-cluster-max-body::-webkit-scrollbar-track { background: transparent; }
+    .tep-cluster-max-col {
+      /* 282px — 260px + ~3 monospace characters' width at the column head's
+         own 11.5px font-size (~7.3px/char), per user request. */
+      flex: 0 0 282px; width: 282px; min-width: 220px;
+      background: rgba(17,28,46,.4); border: 1px solid rgba(148,163,184,.22); border-radius: 10px;
+      overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
+    }
+    .tep-cluster-max-col::-webkit-scrollbar { width: 6px; }
+    .tep-cluster-max-col::-webkit-scrollbar-thumb { background: var(--tep-slate-600); border-radius: 3px; }
+    .tep-cluster-max-col::-webkit-scrollbar-track { background: transparent; }
+    .tep-cluster-max-col-head {
+      position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 8px 12px 8px 10px; border-bottom: 1px solid rgba(148,163,184,.22);
+      font-weight: 700; font-size: 11.5px; font-family: var(--font-mono, monospace);
+      /* A full orange ring boxing the whole header read as busy/cartoonish
+         once several columns sat side by side (CONFIRMED via user
+         screenshot) — replaced with a slimmer, more common "highlighted
+         section" idiom instead: a colored left accent bar + a soft
+         orange-to-transparent wash behind the text, fading back to the
+         header's own plain dark background by ~65% across. Stands out at a
+         glance without boxing anything in. */
+      border-left: 3px solid var(--tep-orange);
+      background: linear-gradient(90deg, rgba(249,115,22,.16), rgba(249,115,22,0) 65%), rgba(var(--tep-slate-900-rgb),.92);
+    }
+    /* Subnet/IP label — light blue and extra-bold (900, up from the
+       header's own 700) instead of the header's plain neutral text, plus a
+       "Network: " prefix (added in tepClusterMaxViewHtml) — so the thing
+       that actually identifies each column (not just its agent count) is
+       what catches the eye scanning across a wide board. CONFIRMED via
+       user request. */
+    .tep-cluster-max-col-ip { color: var(--tep-blue-soft); font-weight: 900; font-size: 12.5px; }
+    .tep-cluster-max-col-count {
+      flex: 0 0 auto; font-family: inherit; font-weight: 700; font-size: 10.5px; color: var(--tep-slate-400);
+      background: var(--tep-slate-800); border-radius: 8px; padding: 1px 7px;
+    }
+    .tep-cluster-max-col-body { padding: 4px 10px 8px; }
+    .tep-cluster-max-col-body .tep-map-tip-agent:first-child { border-top: none; margin-top: 0; }
+    /* Small vertical gap between agent cards, on top of the divider/shading
+       below — tied to viewport height (not a flat px) so it stays
+       proportional if the window's resized. CONFIRMED via user request
+       ("just a little, ~5% window space"). */
+    .tep-cluster-max-col-body .tep-map-tip-agent { margin-top: 0.5vh; }
+    /* Extra separation between rows beyond the small hover card's single
+       hairline divider (shared base rule — .tep-map-tip-agent, above) —
+       this view packs far more rows into a much bigger card and they read
+       as one continuous blur with only that. A stronger divider + faint
+       alternating shading give each row its own line at a glance.
+       :not(:hover)/:not(--searchhit)/:not(--focushit) make the zebra rule
+       simply not match at all in those states, so a hovered/matched row's
+       own background always wins outright instead of fighting it on
+       specificity. CONFIRMED via user screenshot the plain hairline wasn't
+       enough once a column had a dozen-plus agents in it. */
+    .tep-cluster-max-col-body .tep-map-tip-agent { border-top-color: rgba(148,163,184,.32); }
+    .tep-cluster-max-col-body .tep-map-tip-agent:nth-child(even):not(:hover):not(.tep-map-tip-agent--searchhit):not(.tep-map-tip-agent--focushit) {
+      background: rgba(148,163,184,.07);
+    }
     .tep-nearsort-chip {
       display: inline-flex; align-items: center; gap: 8px; margin: 0 0 8px;
-      padding: 4px 6px 4px 10px; font-size: 11px; font-weight: 600; color: #fdba74;
+      padding: 4px 6px 4px 10px; font-size: 11px; font-weight: 600; color: var(--tep-orange-fg);
       background: rgba(249,115,22,.12); border: 1px solid rgba(249,115,22,.5); border-radius: 999px;
     }
     .tep-nearsort-chip button {
       display: inline-flex; align-items: center; justify-content: center;
       width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
-      color: #fdba74; background: transparent; border: none; font-size: 12px; line-height: 1;
+      color: var(--tep-orange-fg); background: transparent; border: none; font-size: 12px; line-height: 1;
     }
     .tep-nearsort-chip button:hover { background: rgba(249,115,22,.25); color: #fff7ed; }
     #te-panel-root:not(.tep-units-on) #tep-manage-units-total { display: none !important; }
@@ -2844,25 +3164,25 @@
       border-radius: 6px; margin: 0; animation: tepFadeIn .2s;
       pointer-events: none;
     }
-    .tep-toast-ok { background: #064e3b; color: #4ade80; border: 1px solid #065f46; }
-    .tep-toast-err { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
-    .tep-toast-processing { background: #1e293b; color: #38bdf8; border: 1px solid #0ea5e9; animation: tepFadeIn .2s, tepPulse 1.5s ease-in-out infinite; }
+    .tep-toast-ok { background: var(--tep-toast-ok-bg); color: var(--tep-green); border: 1px solid var(--tep-toast-ok-border); }
+    .tep-toast-err { background: var(--tep-toast-err-bg); color: var(--tep-red); border: 1px solid var(--tep-toast-err-border); }
+    .tep-toast-processing { background: var(--tep-slate-800); color: var(--tep-sky); border: 1px solid #0ea5e9; animation: tepFadeIn .2s, tepPulse 1.5s ease-in-out infinite; }
     @keyframes tepFadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes tepPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
     /* Form elements */
     .tep-label {
-      display: block; font-size: 12px; font-weight: 600; color: #94a3b8;
+      display: block; font-size: 12px; font-weight: 600; color: var(--tep-slate-400);
       margin-bottom: 4px; margin-top: 12px;
     }
     .tep-label:first-child { margin-top: 0; }
     .tep-input, .tep-select, .tep-textarea {
-      width: 100%; padding: 10px 10px; background: #1e293b;
-      border: 1px solid #334155; border-radius: 6px; color: #e2e8f0;
+      width: 100%; padding: 10px 10px; background: var(--tep-slate-800);
+      border: 1px solid var(--tep-slate-700); border-radius: 6px; color: var(--tep-slate-200);
       font-size: 13px; outline: none; transition: border-color .15s;
     }
     .tep-input:focus, .tep-select:focus, .tep-textarea:focus {
-      border-color: #3b82f6;
+      border-color: var(--tep-blue);
     }
     .tep-textarea { resize: vertical; min-height: 70px; font-family: monospace; }
     .tep-targets-wrap {
@@ -2892,7 +3212,7 @@
     button.tep-target-clone-line {
       border: none;
       background: transparent;
-      color: #64748b;
+      color: var(--tep-slate-500);
       cursor: pointer;
       font-size: 14px;
       font-weight: 600;
@@ -2904,8 +3224,8 @@
       border-radius: 4px;
     }
     button.tep-target-clone-line:hover {
-      color: #38bdf8;
-      background: #1e3a5f;
+      color: var(--tep-sky);
+      background: var(--tep-badge-http-bg);
     }
     .tep-input { height: 38px; }
     .tep-select { appearance: auto; height: 38px; line-height: 18px; }
@@ -2916,16 +3236,16 @@
       flex-direction: column;
       max-height: 180px;
       overflow: hidden;
-      background: #1e293b;
-      border: 1px solid #334155; border-radius: 6px;
+      background: var(--tep-slate-800);
+      border: 1px solid var(--tep-slate-700); border-radius: 6px;
       margin-top: 4px;
     }
     .tep-agent-persistent-bar {
       flex: 0 0 auto;
       font-weight: bold;
       padding: 4px 6px;
-      background: #334155;
-      border-bottom: 1px solid #475569;
+      background: var(--tep-slate-700);
+      border-bottom: 1px solid var(--tep-slate-600);
       border-top-left-radius: 5px;
       border-top-right-radius: 5px;
       cursor: pointer;
@@ -2941,33 +3261,33 @@
       overflow-y: auto;
       overflow-x: hidden;
       padding: 0 6px 6px 6px;
-      background: #1e293b;
+      background: var(--tep-slate-800);
     }
     .tep-agent-section--selected { margin: 0 0 6px 0; }
-    .tep-agent-section--selected .tep-agent-section-body { background: #1e293b; }
+    .tep-agent-section--selected .tep-agent-section-body { background: var(--tep-slate-800); }
     .tep-sel-badges { font-weight: 600; }
-    .tep-sel-badges strong { color: #38bdf8; }
+    .tep-sel-badges strong { color: var(--tep-sky); }
     .tep-agent-picker-hint {
-      padding: 6px 8px; font-size: 11px; color: #94a3b8; line-height: 1.35;
+      padding: 6px 8px; font-size: 11px; color: var(--tep-slate-400); line-height: 1.35;
     }
-    .tep-agent-picker-hint--muted { color: #64748b; font-style: italic; }
+    .tep-agent-picker-hint--muted { color: var(--tep-slate-500); font-style: italic; }
     .tep-agent-item {
       display: flex; align-items: center; gap: 6px;
       padding: 4px 6px; border-radius: 4px; cursor: pointer;
     }
-    .tep-agent-item:hover { background: #334155; }
-    .tep-agent-item input { accent-color: #3b82f6; }
-    .tep-agent-name { color: #e2e8f0; font-size: 12px; }
-    .tep-agent-loc { color: #64748b; font-size: 11px; }
+    .tep-agent-item:hover { background: var(--tep-slate-700); }
+    .tep-agent-item input { accent-color: var(--tep-blue); }
+    .tep-agent-name { color: var(--tep-slate-200); font-size: 12px; }
+    .tep-agent-loc { color: var(--tep-slate-500); font-size: 11px; }
     .tep-agent-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 2px; flex-shrink: 0; }
-    .tep-agent-status.online { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
-    .tep-agent-status.offline { background: #f87171; box-shadow: 0 0 4px #f87171; }
-    .tep-agent-status.unknown { background: #64748b; }
+    .tep-agent-status.online { background: var(--tep-green); box-shadow: 0 0 4px var(--tep-green); }
+    .tep-agent-status.offline { background: var(--tep-red); box-shadow: 0 0 4px var(--tep-red); }
+    .tep-agent-status.unknown { background: var(--tep-slate-500); }
     .tep-agent-tag-wrap { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0 2px; }
     .tep-agent-tag-btn {
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #e2e8f0;
+      background: var(--tep-slate-900);
+      border: 1px solid var(--tep-slate-700);
+      color: var(--tep-slate-200);
       font-size: 11px;
       padding: 4px 8px;
       border-radius: 999px;
@@ -2975,8 +3295,8 @@
       line-height: 1.1;
       white-space: nowrap;
     }
-    .tep-agent-tag-btn:hover { border-color: #60a5fa; background: #172554; }
-    .tep-agent-tag-meta { font-size: 11px; color: #94a3b8; padding: 6px 8px; line-height: 1.35; }
+    .tep-agent-tag-btn:hover { border-color: var(--tep-blue-bright); background: #172554; }
+    .tep-agent-tag-meta { font-size: 11px; color: var(--tep-slate-400); padding: 6px 8px; line-height: 1.35; }
 
     /* Filter */
     .tep-agent-filter-wrap {
@@ -2994,12 +3314,16 @@
       padding-right: 30px;
       box-sizing: border-box;
     }
+    .tep-agent-filter-wrap .tep-agent-filter::placeholder,
+    .tep-agent-filter-wrap .tep-edit-agent-filter::placeholder {
+      font-weight: 700; color: var(--tep-slate-400); opacity: 1;
+    }
     .tep-agent-filter {
-      padding: 6px 8px; background: #0f172a;
-      border: 1px solid #334155; border-radius: 4px; color: #e2e8f0;
+      padding: 6px 8px; background: var(--tep-slate-900);
+      border: 1px solid var(--tep-slate-700); border-radius: 4px; color: var(--tep-slate-200);
       font-size: 12px; outline: none;
     }
-    .tep-agent-filter:focus { border-color: #3b82f6; }
+    .tep-agent-filter:focus { border-color: var(--tep-blue); }
     .tep-agent-filter-clear {
       position: absolute;
       right: 5px;
@@ -3009,8 +3333,8 @@
       height: 22px;
       border: none;
       border-radius: 4px;
-      background: #334155;
-      color: #94a3b8;
+      background: var(--tep-slate-700);
+      color: var(--tep-slate-400);
       font-size: 15px;
       line-height: 1;
       cursor: pointer;
@@ -3020,8 +3344,8 @@
       justify-content: center;
     }
     .tep-agent-filter-clear:hover {
-      color: #e2e8f0;
-      background: #475569;
+      color: var(--tep-slate-200);
+      background: var(--tep-slate-600);
     }
 
     /* Buttons */
@@ -3032,12 +3356,12 @@
       transition: background .15s, transform .1s;
     }
     .tep-btn:active { transform: scale(0.97); }
-    .tep-btn-primary { background: #3b82f6; color: #fff; }
+    .tep-btn-primary { background: var(--tep-blue); color: #fff; }
     .tep-btn-primary:hover { background: #2563eb; }
     .tep-btn-primary:disabled { background: #1e40af; opacity: 0.5; cursor: not-allowed; }
-    .tep-btn-secondary { background: #334155; color: #e2e8f0; }
-    .tep-btn-secondary:hover { background: #475569; }
-    .tep-btn-danger { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+    .tep-btn-secondary { background: var(--tep-slate-700); color: var(--tep-slate-200); }
+    .tep-btn-secondary:hover { background: var(--tep-slate-600); }
+    .tep-btn-danger { background: #450a0a; color: var(--tep-red); border: 1px solid #7f1d1d; }
     .tep-btn-danger:hover { background: #7f1d1d; color: #fecaca; }
     .tep-btn-sm { padding: 5px 10px; font-size: 12px; }
     .tep-btn-icon {
@@ -3046,37 +3370,37 @@
     }
     .tep-btn-icon svg { display: block; }
     .tep-dash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
-    .tep-dash-intro { font-size: 12px; color: #94a3b8; line-height: 1.55; margin: 0 0 14px; }
+    .tep-dash-intro { font-size: 12px; color: var(--tep-slate-400); line-height: 1.55; margin: 0 0 14px; }
     .tep-dash-card {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: var(--tep-slate-800);
+      border: 1px solid var(--tep-slate-700);
       border-radius: 10px;
       padding: 12px 14px 14px;
       margin-bottom: 12px;
     }
-    .tep-dash-section-title { font-size: 13px; font-weight: 700; color: #f1f5f9; margin: 0 0 6px; }
-    .tep-dash-hint { font-size: 11px; color: #64748b; line-height: 1.45; margin: 0 0 10px; }
+    .tep-dash-section-title { font-size: 13px; font-weight: 700; color: var(--tep-slate-100); margin: 0 0 6px; }
+    .tep-dash-hint { font-size: 11px; color: var(--tep-slate-500); line-height: 1.45; margin: 0 0 10px; }
     .tep-dash-meta {
-      font-size: 11px; color: #94a3b8; margin-bottom: 10px; line-height: 1.5;
-      padding: 8px 10px; background: #0f172a; border-radius: 6px; border: 1px solid #1e293b;
+      font-size: 11px; color: var(--tep-slate-400); margin-bottom: 10px; line-height: 1.5;
+      padding: 8px 10px; background: var(--tep-slate-900); border-radius: 6px; border: 1px solid var(--tep-slate-800);
     }
     .tep-dash-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-top: 8px; }
     .tep-dash-row .tep-btn-primary { flex: 1 1 160px; }
     .tep-dash-json { min-height: 200px; font-size: 11px; }
     .tep-dash-json-details {
-      margin-top: 8px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; overflow: hidden;
+      margin-top: 8px; border: 1px solid var(--tep-slate-700); border-radius: 8px; background: var(--tep-slate-900); overflow: hidden;
     }
     .tep-dash-json-details > summary {
       list-style: none; cursor: pointer; padding: 10px 12px; font-size: 12px; user-select: none;
-      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; color: #cbd5e1;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; color: var(--tep-slate-300);
     }
     .tep-dash-json-details > summary::-webkit-details-marker { display: none; }
-    .tep-dash-json-details[open] > summary { border-bottom: 1px solid #334155; color: #f1f5f9; }
+    .tep-dash-json-details[open] > summary { border-bottom: 1px solid var(--tep-slate-700); color: var(--tep-slate-100); }
     .tep-dash-json-details > summary .tep-dash-json-sum { flex: 1; min-width: 0; font-weight: 600; line-height: 1.45; word-break: break-word; }
-    .tep-dash-json-details > summary .tep-dash-json-chev { flex-shrink: 0; font-size: 10px; color: #64748b; margin-top: 3px; transition: transform .15s; }
+    .tep-dash-json-details > summary .tep-dash-json-chev { flex-shrink: 0; font-size: 10px; color: var(--tep-slate-500); margin-top: 3px; transition: transform .15s; }
     .tep-dash-json-details[open] > summary .tep-dash-json-chev { transform: rotate(90deg); }
     .tep-dash-json-sum-ok { color: #86efac !important; }
-    .tep-dash-json-sum-err { color: #f87171 !important; }
+    .tep-dash-json-sum-err { color: var(--tep-red) !important; }
     .tep-dash-actions .tep-dash-refresh-btn {
       border-radius: 999px;
       width: 32px;
@@ -3088,58 +3412,58 @@
       justify-content: center;
       line-height: 0;
     }
-    .tep-dash-json-sum-empty { color: #94a3b8 !important; font-weight: 500 !important; }
+    .tep-dash-json-sum-empty { color: var(--tep-slate-400) !important; font-weight: 500 !important; }
     .tep-dash-json-details-body { padding: 10px 12px 12px; }
-    .tep-dash-restore-bar { margin-top: 12px; padding-top: 12px; border-top: 1px solid #334155; }
+    .tep-dash-restore-bar { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--tep-slate-700); }
     .tep-dash-details {
-      margin-top: 4px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; overflow: hidden;
+      margin-top: 4px; border: 1px solid var(--tep-slate-700); border-radius: 8px; background: var(--tep-slate-900); overflow: hidden;
     }
     .tep-dash-details > summary {
       list-style: none; cursor: pointer; padding: 10px 12px; font-size: 12px; font-weight: 600;
-      color: #94a3b8; user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      color: var(--tep-slate-400); user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     .tep-dash-details > summary::-webkit-details-marker { display: none; }
-    .tep-dash-details > summary .tep-dash-chevron { font-size: 10px; color: #64748b; transition: transform .15s; }
+    .tep-dash-details > summary .tep-dash-chevron { font-size: 10px; color: var(--tep-slate-500); transition: transform .15s; }
     .tep-dash-details[open] > summary .tep-dash-chevron { transform: rotate(90deg); }
-    .tep-dash-details[open] > summary { border-bottom: 1px solid #334155; color: #e2e8f0; }
-    .tep-dash-details-inner { padding: 12px 14px 14px; font-size: 11px; color: #94a3b8; line-height: 1.5; }
+    .tep-dash-details[open] > summary { border-bottom: 1px solid var(--tep-slate-700); color: var(--tep-slate-200); }
+    .tep-dash-details-inner { padding: 12px 14px 14px; font-size: 11px; color: var(--tep-slate-400); line-height: 1.5; }
     .tep-dash-details-inner code { font-size: 10px; }
     .tep-dash-restore-card .tep-label { margin-top: 10px; }
     .tep-dash-restore-card .tep-label:first-of-type { margin-top: 0; }
     .tep-dash-restore-agents-wrap {
-      margin-top: 10px; padding: 10px; background: #0f172a; border-radius: 8px; border: 1px solid #334155;
+      margin-top: 10px; padding: 10px; background: var(--tep-slate-900); border-radius: 8px; border: 1px solid var(--tep-slate-700);
     }
     .tep-br-pick { margin-top: 12px; }
     .tep-br-pick-head {
       display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px;
     }
     .tep-br-pick-head .tep-label { margin: 0; }
-    .tep-br-pick-count { font-size: 11px; color: #64748b; font-weight: 500; white-space: nowrap; }
+    .tep-br-pick-count { font-size: 11px; color: var(--tep-slate-500); font-weight: 500; white-space: nowrap; }
     .tep-br-pick-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
     .tep-br-pick-list {
-      max-height: 168px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px;
-      background: #0f172a; padding: 6px 8px;
+      max-height: 168px; overflow-y: auto; border: 1px solid var(--tep-slate-700); border-radius: 8px;
+      background: var(--tep-slate-900); padding: 6px 8px;
     }
     .tep-br-pick-row {
-      display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 11px; color: #e2e8f0;
+      display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 11px; color: var(--tep-slate-200);
       cursor: pointer; user-select: none;
     }
-    .tep-br-pick-row input { accent-color: #3b82f6; flex-shrink: 0; cursor: pointer; }
+    .tep-br-pick-row input { accent-color: var(--tep-blue); flex-shrink: 0; cursor: pointer; }
     .tep-br-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tep-br-pick-meta { flex-shrink: 0; font-size: 10px; color: #64748b; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-br-pick-meta { flex-shrink: 0; font-size: 10px; color: var(--tep-slate-500); max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tep-test-card.tep-test-card--dynamic {
       border-color: #5b21b6;
       box-shadow: inset 3px 0 0 0 #a78bfa;
     }
     .tep-test-card.tep-test-card--shared {
-      border-color: #854d0e;
-      background: #1a1f2e;
-      box-shadow: inset 3px 0 0 0 #facc15;
+      border-color: var(--tep-yellow);
+      background: var(--tep-slate-900);
+      box-shadow: inset 3px 0 0 0 var(--tep-yellow);
     }
-    .tep-test-card.tep-test-card--shared .tep-test-card-name { color: #facc15; }
+    .tep-test-card.tep-test-card--shared .tep-test-card-name { color: var(--tep-yellow); }
     .tep-dash-type-dot {
       width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
-      background: #60a5fa;
+      background: var(--tep-blue-bright);
     }
     .tep-link-btn {
       background: none;
@@ -3147,7 +3471,7 @@
       padding: 0 4px;
       font-size: 12px;
       font-weight: 600;
-      color: #93c5fd;
+      color: var(--tep-blue-soft);
       cursor: pointer;
       text-decoration: underline;
       text-underline-offset: 2px;
@@ -3160,15 +3484,15 @@
     .tep-attribution {
       margin-top: 12px;
       padding: 8px 10px;
-      border: 1px solid #334155;
+      border: 1px solid var(--tep-slate-700);
       border-radius: 8px;
-      background: #0f172a;
+      background: var(--tep-slate-900);
       font-size: 10px;
       line-height: 1.45;
-      color: #94a3b8;
+      color: var(--tep-slate-400);
     }
     .tep-attribution a {
-      color: #93c5fd;
+      color: var(--tep-blue-soft);
       text-decoration: underline;
       text-underline-offset: 2px;
     }
@@ -3176,21 +3500,30 @@
     .tep-attribution-version {
       font-size: 10px;
       font-weight: 600;
-      color: #64748b;
+      color: var(--tep-slate-500);
       margin: 0 0.2rem;
       letter-spacing: 0.02em;
       vertical-align: middle;
     }
 
-    /* Results log */
+    /* Results log — CONFIRMED via user report that pulling the toggle out
+       (now duplicated into each Diagnostics section instead) left "Copy
+       log" as a lone button with no visual frame around it. This wrapper
+       now supplies that frame itself (same border/radius/background
+       language as .tep-dash-details), so it reads as its own contained box
+       instead of an orphaned control floating at the end of the panel. */
     .tep-log-wrap {
       margin-top: 14px;
+      border: 1px solid var(--tep-slate-700); border-radius: 8px;
+      background: var(--tep-slate-900); overflow: hidden;
     }
     .tep-log-toolbar {
       display: flex;
       align-items: center;
       gap: 8px;
       margin-bottom: 0;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--tep-slate-700);
     }
     .tep-log-toolbar .tep-log-toggle {
       flex: 1;
@@ -3199,9 +3532,9 @@
     }
     .tep-log-copy {
       flex-shrink: 0;
-      background: #334155;
-      border: 1px solid #475569;
-      color: #e2e8f0;
+      background: var(--tep-slate-700);
+      border: 1px solid var(--tep-slate-600);
+      color: var(--tep-slate-200);
       font-size: 11px;
       font-weight: 600;
       padding: 5px 12px;
@@ -3209,58 +3542,58 @@
       cursor: pointer;
       white-space: nowrap;
     }
-    .tep-log-copy:hover { background: #475569; color: #f8fafc; }
+    .tep-log-copy:hover { background: var(--tep-slate-600); color: var(--tep-slate-50); }
     .tep-log-toggle {
-      background: #1e293b; border: 1px solid #334155; border-radius: 6px;
-      color: #94a3b8; font-size: 11px; font-weight: 600; padding: 5px 10px;
+      background: var(--tep-slate-800); border: 1px solid var(--tep-slate-700); border-radius: 6px;
+      color: var(--tep-slate-400); font-size: 11px; font-weight: 600; padding: 5px 10px;
       cursor: pointer; width: 100%; text-align: left;
       display: flex; align-items: center; gap: 6px;
     }
-    .tep-log-toggle:hover { background: #334155; color: #e2e8f0; }
+    .tep-log-toggle:hover { background: var(--tep-slate-700); color: var(--tep-slate-200); }
     .tep-log-toggle .tep-log-arrow { transition: transform .15s; display: inline-block; }
     .tep-log-toggle.open .tep-log-arrow { transform: rotate(90deg); }
     .tep-log {
-      background: #020617; border: 1px solid #1e293b;
-      border-radius: 0 0 6px 6px; padding: 10px; font-family: monospace; font-size: 11px;
+      /* No border/radius of its own — .tep-log-wrap is the frame now. */
+      padding: 10px; font-family: monospace; font-size: 11px;
       max-height: 200px; overflow-y: auto; white-space: pre-wrap;
       line-height: 1.6; display: none;
     }
     .tep-log.open { display: block; }
-    .tep-log-ok { color: #4ade80; }
-    .tep-log-err { color: #f87171; }
-    .tep-log-info { color: #94a3b8; }
+    .tep-log-ok { color: var(--tep-green); }
+    .tep-log-err { color: var(--tep-red); }
+    .tep-log-info { color: var(--tep-slate-400); }
 
     /* Tabs */
     .tep-tabs { display: flex; gap: 2px; margin-bottom: 14px; }
     .tep-tab {
       flex: 1; padding: 7px 4px; text-align: center; font-size: 12px;
-      font-weight: 600; background: #1e293b; border: 1px solid #334155;
-      color: #94a3b8; cursor: pointer; border-radius: 6px;
+      font-weight: 600; background: var(--tep-slate-800); border: 1px solid var(--tep-slate-700);
+      color: var(--tep-slate-400); cursor: pointer; border-radius: 6px;
       transition: background .15s, color .15s;
     }
-    .tep-tab:hover { background: #334155; color: #e2e8f0; }
-    .tep-tab.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+    .tep-tab:hover { background: var(--tep-slate-700); color: var(--tep-slate-200); }
+    .tep-tab.active { background: var(--tep-blue); color: #fff; border-color: var(--tep-blue); }
     .tep-tab.tep-tab-restore.active { background: #b45309; border-color: #b45309; color: #fff; }
     .tep-tab.tep-tab-restore:hover { background: #92400e; color: #fef3c7; }
     #tep-restore-panel { margin-top: 4px; }
 
     /* Section toggles */
     .tep-section-title {
-      font-size: 13px; font-weight: 700; color: #cbd5e1;
+      font-size: 13px; font-weight: 700; color: var(--tep-slate-300);
       margin-top: 16px; margin-bottom: 8px;
-      padding-bottom: 4px; border-bottom: 1px solid #1e293b;
+      padding-bottom: 4px; border-bottom: 1px solid var(--tep-slate-800);
     }
 
     /* Top-level view switcher */
-    .tep-view-tabs { display: flex; border-bottom: 1px solid #334155; }
+    .tep-view-tabs { display: flex; border-bottom: 1px solid var(--tep-slate-700); }
     .tep-view-tabs:empty { display: none; }
     .tep-view-tab {
       flex: 1; padding: 10px; text-align: center; font-size: 13px;
-      font-weight: 600; color: #94a3b8; cursor: pointer;
-      background: #1e293b; border: none; transition: all .15s;
+      font-weight: 600; color: var(--tep-slate-400); cursor: pointer;
+      background: var(--tep-slate-800); border: none; transition: all .15s;
     }
-    .tep-view-tab:hover { color: #e2e8f0; background: #273449; }
-    .tep-view-tab.active { color: #3b82f6; border-bottom: 2px solid #3b82f6; background: #0f172a; }
+    .tep-view-tab:hover { color: var(--tep-slate-200); background: var(--tep-slate-700); }
+    .tep-view-tab.active { color: var(--tep-blue); border-bottom: 2px solid var(--tep-blue); background: var(--tep-slate-900); }
     .tep-view-panel { display: none; }
     .tep-view-panel.active { display: block; }
 
@@ -3271,17 +3604,17 @@
     .tep-create-units-est { font-size: 12px; font-weight: 700; white-space: nowrap; }
     .tep-create-toggle {
       width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;
-      padding: 10px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;
-      color: #e2e8f0; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s;
+      padding: 10px 12px; background: var(--tep-slate-800); border: 1px solid var(--tep-slate-700); border-radius: 8px;
+      color: var(--tep-slate-200); font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s;
     }
-    .tep-create-toggle:hover { background: #273449; border-color: #475569; }
-    .tep-create-chevron { font-size: 10px; color: #94a3b8; display: inline-block; transition: transform .15s; }
+    .tep-create-toggle:hover { background: var(--tep-slate-700); border-color: var(--tep-slate-600); }
+    .tep-create-chevron { font-size: 10px; color: var(--tep-slate-400); display: inline-block; transition: transform .15s; }
     .tep-create-toggle[aria-expanded="true"] {
       border-color: rgba(251, 146, 60, 0.55);
       background: linear-gradient(135deg,
         rgba(251, 146, 60, 0.14),
-        rgba(15, 23, 42, 0.75) 55%,
-        rgba(30, 41, 59, 0.9)
+        rgba(var(--tep-slate-900-rgb), 0.75) 55%,
+        rgba(var(--tep-slate-800-rgb), 0.9)
       );
       box-shadow:
         0 0 0 1px rgba(251, 146, 60, 0.10) inset,
@@ -3291,47 +3624,56 @@
       -webkit-backdrop-filter: blur(8px);
     }
     .tep-create-toggle[aria-expanded="true"] .tep-create-chevron { transform: rotate(90deg); }
-    .tep-create-expand { margin-top: 10px; padding: 12px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; }
+    .tep-create-expand { margin-top: 10px; padding: 12px; border: 1px solid var(--tep-slate-700); border-radius: 8px; background: var(--tep-slate-900); }
 
     /* Test cards */
     .tep-test-card {
-      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      background: var(--tep-slate-800); border: 1px solid var(--tep-slate-700); border-radius: 8px;
       padding: 10px 12px; margin-bottom: 8px; transition: border-color .15s;
     }
+    /* Disabled cards read as "recessed" relative to a normal card — one
+       step down the SAME neutral ramp (slate-900, the page's own
+       background) instead of a hardcoded literal darker-than-dark navy.
+       CONFIRMED via user report the old #0b1324 read as a jarring solid
+       black card in light theme (it doesn't invert — it's darker than the
+       darkest theme token in either theme). Using slate-900 means "one
+       step recessed" automatically means the right thing in both themes:
+       slightly dim in dark mode, a light warm-grey card against white ones
+       in light mode. filter still applies on top for the muted look,
+       working on whatever the ramp resolved to instead of a fixed value. */
     .tep-test-card.tep-test-card--disabled {
-      background: #0b1324;
-      border-color: #1e2b42;
+      background: var(--tep-slate-900);
       filter: saturate(0.75) brightness(0.9);
     }
     .tep-test-card.tep-test-card--disabled .tep-test-card-name {
-      color: #94a3b8;
+      color: var(--tep-slate-400);
     }
-    .tep-test-card:hover { border-color: #475569; }
+    .tep-test-card:hover { border-color: var(--tep-slate-600); }
     .tep-test-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
     .tep-test-page-pointer {
-      display: inline-flex; align-items: center; flex-shrink: 0; color: #38bdf8; font-size: 15px; font-weight: 700;
+      display: inline-flex; align-items: center; flex-shrink: 0; color: var(--tep-sky); font-size: 15px; font-weight: 700;
       line-height: 1; user-select: none; margin: 0 6px 0 0;
     }
-    .tep-test-card-name { font-weight: 600; color: #e2e8f0; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+    .tep-test-card-name { font-weight: 600; color: var(--tep-slate-200); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
     .tep-test-link { text-decoration: none; }
     .tep-test-link:hover { text-decoration: underline; text-underline-offset: 2px; }
-    .tep-test-card-meta { display: flex; gap: 8px; margin-top: 6px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
+    .tep-test-card-meta { display: flex; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--tep-slate-500); flex-wrap: wrap; }
     .tep-test-card-meta > span { display: inline-flex; align-items: center; gap: 3px; }
-    .tep-test-card-meta .tep-meta-num { color: #f8fafc; font-weight: 600; }
-    .tep-test-card-meta .tep-meta-interval-suffix { color: #64748b; font-weight: 400; }
-    .tep-test-card-meta-agents { color: #f8fafc; }
-    .tep-test-card-meta-agents .tep-meta-num { color: #f8fafc; font-weight: 600; }
-    .tep-test-card-meta-interval { color: #64748b; }
-    .tep-test-card-meta-interval .tep-meta-num { color: #64748b; font-weight: 600; }
+    .tep-test-card-meta .tep-meta-num { color: var(--tep-slate-50); font-weight: 600; }
+    .tep-test-card-meta .tep-meta-interval-suffix { color: var(--tep-slate-500); font-weight: 400; }
+    .tep-test-card-meta-agents { color: var(--tep-slate-50); }
+    .tep-test-card-meta-agents .tep-meta-num { color: var(--tep-slate-50); font-weight: 600; }
+    .tep-test-card-meta-interval { color: var(--tep-slate-500); }
+    .tep-test-card-meta-interval .tep-meta-num { color: var(--tep-slate-500); font-weight: 600; }
     .tep-type-badge {
       font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
       text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
     }
-    .tep-type-http { background: #1e3a5f; color: #60a5fa; }
-    .tep-type-a2s { background: #1a3f2e; color: #4ade80; }
-    .tep-type-page { background: #3b1f5e; color: #c084fc; }
-    .tep-type-dns { background: #3b3510; color: #facc15; }
-    .tep-type-other { background: #334155; color: #94a3b8; }
+    .tep-type-http { background: var(--tep-badge-http-bg); color: var(--tep-badge-http-fg); }
+    .tep-type-a2s { background: var(--tep-badge-a2s-bg); color: var(--tep-badge-a2s-fg); }
+    .tep-type-page { background: var(--tep-badge-page-bg); color: var(--tep-badge-page-fg); }
+    .tep-type-dns { background: var(--tep-badge-dns-bg); color: var(--tep-badge-dns-fg); }
+    .tep-type-other { background: var(--tep-slate-700); color: var(--tep-slate-400); }
     .tep-test-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; position: relative; }
     .tep-test-actions .tep-test-actions-expanded {
       display: none; gap: 4px; align-items: center; flex-wrap: wrap;
@@ -3342,22 +3684,22 @@
     }
     .tep-convert-menu {
       position: fixed; z-index: 2147483646;
-      background: #1e293b; border: 1px solid #475569; border-radius: 8px;
+      background: var(--tep-slate-800); border: 1px solid var(--tep-slate-600); border-radius: 8px;
       padding: 6px; min-width: 168px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     }
     .tep-convert-menu-hint {
-      font-size: 10px; color: #94a3b8; padding: 4px 8px 6px; line-height: 1.35;
-      border-bottom: 1px solid #334155; margin-bottom: 4px;
+      font-size: 10px; color: var(--tep-slate-400); padding: 4px 8px 6px; line-height: 1.35;
+      border-bottom: 1px solid var(--tep-slate-700); margin-bottom: 4px;
     }
     .tep-convert-menu-item {
       display: block; width: 100%; text-align: left;
       background: transparent; border: none; border-radius: 4px;
-      color: #e2e8f0; font-size: 12px; padding: 6px 8px; cursor: pointer;
+      color: var(--tep-slate-200); font-size: 12px; padding: 6px 8px; cursor: pointer;
     }
-    .tep-convert-menu-item:hover { background: #334155; color: #fff; }
+    .tep-convert-menu-item:hover { background: var(--tep-slate-700); color: #fff; }
     .tep-test-actions button {
-      background: #334155; border: 1px solid #475569; color: #94a3b8;
+      background: var(--tep-slate-700); border: 1px solid var(--tep-slate-600); color: var(--tep-slate-400);
       font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
       transition: all .15s;
     }
@@ -3366,12 +3708,12 @@
       padding: 4px 6px; min-width: 28px; min-height: 28px; line-height: 0;
     }
     .tep-test-actions .tep-test-action-icon svg { display: block; flex-shrink: 0; }
-    .tep-test-actions button:hover { background: #475569; color: #e2e8f0; }
-    .tep-test-actions button.tep-btn-danger:hover { background: #7f1d1d; color: #fca5a5; border-color: #991b1b; }
+    .tep-test-actions button:hover { background: var(--tep-slate-600); color: var(--tep-slate-200); }
+    .tep-test-actions button.tep-btn-danger:hover { background: #7f1d1d; color: var(--tep-red-soft); border-color: #991b1b; }
     .tep-enabled-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-    .tep-enabled-dot.on { background: #4ade80; }
-    .tep-enabled-dot.off { background: #f87171; }
-    .tep-enabled-dot.unknown { background: #334155; }
+    .tep-enabled-dot.on { background: var(--tep-green); }
+    .tep-enabled-dot.off { background: var(--tep-red); }
+    .tep-enabled-dot.unknown { background: var(--tep-slate-700); }
     .tep-test-status-text {
       font-weight: 700;
       background: none;
@@ -3383,68 +3725,82 @@
       cursor: pointer;
       line-height: inherit;
     }
-    .tep-test-status-text--on { color: #4ade80; }
-    .tep-test-status-text--off { color: #f87171; }
+    .tep-test-status-text--on { color: var(--tep-green); }
+    .tep-test-status-text--off { color: var(--tep-red); }
     .tep-test-status-text--unknown { color: transparent; cursor: default; }
     .tep-test-status-text--readonly { cursor: default; opacity: 0.95; }
     .tep-test-status-text:hover:not(.tep-test-status-text--readonly) { filter: brightness(1.12); }
     .tep-test-status-row { display: inline-flex; align-items: center; gap: 4px; }
     .tep-manage-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+    /* Hidden while a test's edit form is open — CONFIRMED via user request,
+       reclaims a row of vertical space so the agent picker list inside the
+       edit form (already the tightest-scrolling part of it) gets more
+       room. :has() reacts to .is-editing being toggled anywhere in this
+       file (many call sites — save/cancel/toggle) without needing to touch
+       any of them individually. */
+    #tep-panel-manage-body:has(.tep-test-card.is-editing) .tep-manage-toolbar { display: none; }
     .tep-manage-toolbar select, .tep-manage-toolbar input {
-      padding: 6px 8px; background: #1e293b; border: 1px solid #334155;
-      border-radius: 6px; color: #e2e8f0; font-size: 12px; outline: none;
+      padding: 6px 8px; background: var(--tep-slate-800); border: 1px solid var(--tep-slate-700);
+      border-radius: 6px; color: var(--tep-slate-200); font-size: 12px; outline: none;
     }
     .tep-manage-toolbar input { flex: 1; min-width: 120px; }
     .tep-manage-toolbar select { min-width: 100px; }
     .tep-test-list { max-height: calc(100vh - 340px); overflow-y: auto; }
-    .tep-test-count { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+    .tep-test-count { font-size: 11px; color: var(--tep-slate-500); margin-bottom: 8px; }
 
     /* Alerts panel — severity + state badges (reuse tep-type-badge sizing) */
     .tep-sev-badge {
       font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
       text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
     }
-    .tep-sev-critical { background: #4c1220; color: #fca5a5; }
-    .tep-sev-major    { background: #4a1d0c; color: #fdba74; }
-    .tep-sev-minor    { background: #3b3510; color: #facc15; }
-    .tep-sev-warning  { background: #3b3510; color: #facc15; }
-    .tep-sev-info     { background: #1e3a5f; color: #60a5fa; }
-    .tep-sev-default  { background: #334155; color: #94a3b8; }
-    .tep-alert-active-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #f87171; flex-shrink: 0; }
-    .tep-alert-cleared-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #4ade80; flex-shrink: 0; }
+    .tep-sev-critical { background: var(--tep-badge-critical-bg); color: var(--tep-red-soft); }
+    .tep-sev-major    { background: var(--tep-badge-major-bg); color: var(--tep-orange-fg); }
+    .tep-sev-minor    { background: var(--tep-badge-dns-bg); color: var(--tep-yellow); }
+    .tep-sev-warning  { background: var(--tep-badge-dns-bg); color: var(--tep-yellow); }
+    .tep-sev-info     { background: var(--tep-badge-http-bg); color: var(--tep-blue-bright); }
+    .tep-sev-default  { background: var(--tep-slate-700); color: var(--tep-slate-400); }
+    .tep-alert-active-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--tep-red); flex-shrink: 0; }
+    .tep-alert-cleared-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--tep-green); flex-shrink: 0; }
     .tep-armg-group {
       display: flex; align-items: center; justify-content: space-between;
-      margin: 12px 0 6px; padding: 4px 2px 5px; border-bottom: 1px solid #334155;
+      margin: 12px 0 6px; padding: 4px 2px 5px; border-bottom: 1px solid var(--tep-slate-700);
     }
     .tep-armg-group:first-child { margin-top: 0; }
     .tep-armg-group-name {
-      font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #93c5fd;
+      font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--tep-blue-soft);
     }
     .tep-armg-group-count {
-      font-size: 10px; font-weight: 700; color: #94a3b8; background: #1e293b;
-      border: 1px solid #334155; border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
+      font-size: 10px; font-weight: 700; color: var(--tep-slate-400); background: var(--tep-slate-800);
+      border: 1px solid var(--tep-slate-700); border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
     }
 
     /* Edit form inline */
-    .tep-edit-form { margin-top: 8px; padding-top: 8px; border-top: 1px solid #334155; }
+    .tep-edit-form { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tep-slate-700); }
     .tep-edit-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
-    .tep-edit-row label { font-size: 11px; color: #94a3b8; min-width: 60px; }
+    .tep-edit-row label { font-size: 11px; color: var(--tep-slate-400); min-width: 60px; }
     .tep-edit-row input, .tep-edit-row select {
-      flex: 1; padding: 5px 8px; background: #0f172a; border: 1px solid #334155;
-      border-radius: 4px; color: #e2e8f0; font-size: 12px; outline: none;
+      flex: 1; padding: 5px 8px; background: var(--tep-slate-900); border: 1px solid var(--tep-slate-700);
+      border-radius: 4px; color: var(--tep-slate-200); font-size: 12px; outline: none;
     }
     .tep-edit-actions { display: flex; gap: 6px; margin-top: 8px; }
     .tep-edit-agents-box {
       display: flex;
       flex-direction: column;
-      max-height: 150px;
+      /* 150px → 180px → 210px (one more row each round, ~26px, see
+         .tep-agent-item's padding) — CONFIRMED via user request. Also now
+         scales with the actual browser window instead of staying a flat
+         pixel cap regardless of screen size: on anything taller than a
+         small laptop window the vh term wins and the box grows toward the
+         bottom of the screen; the px floor is what keeps it from shrinking
+         away to nothing on short windows. */
+      max-height: max(210px, 32vh);
       overflow: hidden;
-      background: #0f172a;
-      border: 1px solid #334155; border-radius: 4px;
+      background: var(--tep-slate-900);
+      border: 1px solid var(--tep-slate-700); border-radius: 4px;
       margin-top: 4px;
     }
     .tep-edit-agents-box .tep-agent-persistent-bar {
-      background: #1e293b;
+      background: var(--tep-slate-800);
       border-top-left-radius: 3px;
       border-top-right-radius: 3px;
     }
@@ -3455,45 +3811,51 @@
       overflow-x: hidden;
       padding: 0 4px 4px 4px;
     }
-    .tep-edit-agents-box .tep-agent-section--selected .tep-agent-section-body { background: #0f172a; }
+    .tep-edit-agents-box .tep-agent-section--selected .tep-agent-section-body { background: var(--tep-slate-900); }
     .tep-edit-agents-box label {
       display: flex; align-items: center; gap: 5px; padding: 3px 5px;
-      border-radius: 3px; cursor: pointer; font-size: 11px; color: #e2e8f0;
+      border-radius: 3px; cursor: pointer; font-size: 11px; color: var(--tep-slate-200);
       min-width: auto;
     }
-    .tep-edit-agents-box label:hover { background: #334155; }
-    .tep-edit-agents-box input { accent-color: #3b82f6; }
+    .tep-edit-agents-box label:hover { background: var(--tep-slate-700); }
+    .tep-edit-agents-box input { accent-color: var(--tep-blue); }
     .tep-edit-agent-filter {
-      padding: 4px 6px; background: #0f172a; border: 1px solid #334155;
-      border-radius: 4px; color: #e2e8f0; font-size: 11px; outline: none;
+      padding: 4px 6px; background: var(--tep-slate-900); border: 1px solid var(--tep-slate-700);
+      border-radius: 4px; color: var(--tep-slate-200); font-size: 11px; outline: none;
     }
-    .tep-edit-agent-filter:focus { border-color: #3b82f6; }
+    .tep-edit-agent-filter:focus { border-color: var(--tep-blue); }
 
     /* Bulk actions bar */
     .tep-bulk-bar {
-      display: none; background: #1e3a5f; border: 1px solid #3b82f6; border-radius: 8px;
+      display: none; background: var(--tep-badge-http-bg); border: 1px solid var(--tep-blue); border-radius: 8px;
       padding: 10px 12px; margin-bottom: 10px; gap: 8px; align-items: center; flex-wrap: wrap;
     }
     .tep-bulk-bar.active { display: flex; }
-    .tep-bulk-bar span { font-size: 12px; font-weight: 600; color: #93c5fd; white-space: nowrap; }
+    .tep-bulk-bar span { font-size: 12px; font-weight: 600; color: var(--tep-blue-soft); white-space: nowrap; }
+    .tep-bulk-clear-link {
+      background: none; border: none; padding: 0; margin: 0;
+      color: var(--tep-blue-soft); font-size: 11px; text-decoration: underline;
+      cursor: pointer; font-family: inherit; white-space: nowrap;
+    }
+    .tep-bulk-clear-link:hover { color: var(--tep-slate-200); }
     .tep-bulk-bar select {
-      padding: 5px 8px; background: #0f172a; border: 1px solid #334155;
-      border-radius: 4px; color: #e2e8f0; font-size: 12px; outline: none;
+      padding: 5px 8px; background: var(--tep-slate-900); border: 1px solid var(--tep-slate-700);
+      border-radius: 4px; color: var(--tep-slate-200); font-size: 12px; outline: none;
     }
     .tep-bulk-bar button {
       padding: 5px 12px; border: none; border-radius: 5px; font-size: 12px;
       font-weight: 600; cursor: pointer; transition: background .15s;
     }
-    .tep-bulk-apply { background: #3b82f6; color: #fff; }
+    .tep-bulk-apply { background: var(--tep-blue); color: #fff; }
     .tep-bulk-apply:hover { background: #2563eb; }
-    .tep-bulk-delete { background: #7f1d1d; color: #fca5a5; }
+    .tep-bulk-delete { background: #7f1d1d; color: var(--tep-red-soft); }
     .tep-bulk-delete:hover { background: #991b1b; }
-    .tep-test-card-check { accent-color: #3b82f6; margin-right: 4px; cursor: pointer; flex-shrink: 0; }
+    .tep-test-card-check { accent-color: var(--tep-blue); margin-right: 4px; cursor: pointer; flex-shrink: 0; }
 
     /* Scrollbar */
     #te-panel-root ::-webkit-scrollbar { width: 6px; }
     #te-panel-root ::-webkit-scrollbar-track { background: transparent; }
-    #te-panel-root ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    #te-panel-root ::-webkit-scrollbar-thumb { background: var(--tep-slate-700); border-radius: 3px; }
   `;
 
   // ---------------------------------------------------------------------------
@@ -3596,7 +3958,7 @@
   toggleBtn.title = 'Toggle TE Optics panel';
   toggleBtn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483647;width:34px;height:34px;' +
     'border-radius:8px;background:linear-gradient(180deg, rgba(249,115,22,.24), rgba(249,115,22,.10));' +
-    'border:1px solid #f97316;color:#fdba74;font-size:18px;display:flex;align-items:center;' +
+    'border:1px solid var(--tep-orange);color:var(--tep-orange-fg);font-size:18px;display:flex;align-items:center;' +
     'justify-content:center;cursor:pointer;box-shadow:0 0 0 2px rgba(249,115,22,.14), 0 1px 3px rgba(0,0,0,.45);' +
     'transition:color .2s,border-color .2s,box-shadow .25s,background .25s,transform .15s;user-select:none;';
   toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.transform = 'scale(1.1)'; });
@@ -3656,7 +4018,7 @@
   const liveTestBadge = document.createElement('div');
   liveTestBadge.id = 'tep-livetest-badge';
   liveTestBadge.style.cssText = 'position:fixed;bottom:116px;right:20px;z-index:2147483647;display:none;' +
-    'max-width:280px;padding:8px 12px;border-radius:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;' +
+    'max-width:280px;padding:8px 12px;border-radius:10px;background:var(--tep-slate-900);color:var(--tep-slate-200);border:1px solid var(--tep-slate-700);' +
     'font-size:13px;line-height:1.5;box-shadow:0 4px 16px rgba(0,0,0,.45);user-select:none;';
   document.documentElement.appendChild(liveTestBadge);
 
@@ -3672,10 +4034,10 @@
   liveTestClearBtn.textContent = 'Clear results';
   liveTestClearBtn.title = 'Clear LIVE TEST results and return the map to its pre-test view';
   liveTestClearBtn.style.cssText = 'position:fixed;bottom:58px;right:20px;z-index:2147483647;display:none;' +
-    'width:80px;text-align:center;font-size:11px;font-weight:600;letter-spacing:.2px;color:#94a3b8;' +
+    'width:80px;text-align:center;font-size:11px;font-weight:600;letter-spacing:.2px;color:var(--tep-slate-400);' +
     'text-decoration:underline;cursor:pointer;user-select:none;font-family:inherit;transition:color .15s;';
-  liveTestClearBtn.addEventListener('mouseenter', () => { liveTestClearBtn.style.color = '#e2e8f0'; });
-  liveTestClearBtn.addEventListener('mouseleave', () => { liveTestClearBtn.style.color = '#94a3b8'; });
+  liveTestClearBtn.addEventListener('mouseenter', () => { liveTestClearBtn.style.color = 'var(--tep-slate-200)'; });
+  liveTestClearBtn.addEventListener('mouseleave', () => { liveTestClearBtn.style.color = 'var(--tep-slate-400)'; });
   liveTestClearBtn.addEventListener('click', () => { liveTestClearLatency(); liveTestSetBadge(''); });
   document.documentElement.appendChild(liveTestClearBtn);
 
@@ -3691,6 +4053,38 @@
   document.documentElement.appendChild(liveTestScreenPulse);
 
   const mainStyles = tepInjectCSS(STYLES);
+
+  // Panel color theme — 'dark' (default, current look) or 'light' (matches
+  // the native ThousandEyes app's own navy/white/blue look — CONFIRMED via
+  // user-provided screenshot). Applying is just toggling one attribute:
+  // every themeable color in STYLES already reads from the --tep-* custom
+  // properties defined there, which the :root[data-tep-theme="light"]
+  // block overrides — no re-injection of STYLES needed, the browser
+  // recomputes the cascade the instant the attribute changes. NOT the same
+  // control as .tep-title-brand's "dark mode" (that dims the underlying TE
+  // APP page itself — see applyDarkParams — a completely different,
+  // pre-existing feature this must not be confused with).
+  const TEP_THEME_KEY = 'tep-theme';
+  const TEP_SUN_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>';
+  const TEP_MOON_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z"/></svg>';
+  let tepTheme = localStorage.getItem(TEP_THEME_KEY) === 'light' ? 'light' : 'dark';
+  function tepThemeToggleLabel() {
+    return tepTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme (matches the native ThousandEyes app)';
+  }
+  function applyTheme(theme) {
+    tepTheme = theme === 'light' ? 'light' : 'dark';
+    if (tepTheme === 'light') document.documentElement.setAttribute('data-tep-theme', 'light');
+    else document.documentElement.removeAttribute('data-tep-theme');
+    try { localStorage.setItem(TEP_THEME_KEY, tepTheme); } catch (_) { /* */ }
+    const btn = document.getElementById('tep-theme-toggle');
+    if (btn) {
+      btn.innerHTML = tepTheme === 'light' ? TEP_MOON_ICON_SVG : TEP_SUN_ICON_SVG;
+      const label = tepThemeToggleLabel();
+      btn.title = label;
+      btn.setAttribute('aria-label', label);
+    }
+  }
+  applyTheme(tepTheme);
 
   // Last TEP_VERSION seen on this origin — lets a fresh load detect that
   // it's actually newer than what was here before, since the bootstrap
@@ -3709,7 +4103,7 @@
    *  (tepShowUpdatedBadge) shows up everywhere consistently. */
   function tepTitleVersionHtml() {
     if (!tepShowUpdatedBadge) return `<span class="tep-title-version">v${TEP_VERSION}</span>`;
-    return `<span class="tep-title-version tep-title-version--updated">v${TEP_VERSION}</span><span class="tep-update-complete-badge">Update Complete!</span>`;
+    return `<span class="tep-title-version tep-title-version--updated">v${TEP_VERSION}</span><span class="tep-update-complete-badge">New!</span>`;
   }
   // Push TE page content to the left
   const TEP_WIDTH_KEY = 'tep-panel-width';
@@ -3736,10 +4130,13 @@
 
   root.insertAdjacentHTML('beforeend', `
     <div class="tep-header" id="tep-drag-handle">
-      <h2>
-        <span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span>
-        ${tepTitleVersionHtml()}
-      </h2>
+      <div class="tep-header-title-row">
+        <h2>
+          <span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span>
+          ${tepTitleVersionHtml()}
+        </h2>
+        <button type="button" class="tep-theme-toggle-flat" id="tep-theme-toggle" title="${tepThemeToggleLabel()}" aria-label="${tepThemeToggleLabel()}">${tepTheme === 'light' ? TEP_MOON_ICON_SVG : TEP_SUN_ICON_SVG}</button>
+      </div>
       <button class="tep-dark-toggle" id="tep-dark-toggle" style="display:none;" aria-hidden="true" tabindex="-1"></button>
       <button class="tep-dark-reset" id="tep-dark-reset" title="Reset / turn off dark mode" style="display:none;">&#9728;</button>
       <div class="tep-mode-switch" role="group" aria-label="Switch sidebar mode">
@@ -3775,12 +4172,6 @@
       <div class="tep-body" id="tep-body">
       <!-- ============== MANAGE (default) + expandable CREATE ============== -->
       <div class="tep-view-panel active" id="tep-panel-manage">
-        <div class="tep-dash-back-banner" id="tep-dash-tests-back-wrap" hidden>
-          <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-back-to-tools" style="width:100%;">← Dashboard tools</button>
-        </div>
-        <div class="tep-dash-back-banner" id="tep-endpoint-tests-back-wrap" hidden>
-          <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-endpoint-back-to-tools" style="width:100%;">← Endpoint tools</button>
-        </div>
         <div class="tep-create-block">
           <button type="button" class="tep-create-toggle" id="tep-create-toggle" aria-expanded="false" aria-controls="tep-panel-create">
             <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Create test
@@ -3821,7 +4212,7 @@
               <label class="tep-label">Port</label>
               <input class="tep-input" id="tep-a2s-port" type="number" value="443" min="1" max="65535" style="width:80px;">
             </div>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#94a3b8;cursor:pointer;padding-bottom:2px;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--tep-slate-400);cursor:pointer;padding-bottom:2px;">
               <input type="checkbox" id="tep-a2s-insession" checked> In-Session
             </label>
           </div>
@@ -3857,7 +4248,7 @@
           <button class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-load-agents" style="float:right;">Reload Agents</button>
         </div>
         <div class="tep-agent-filter-wrap">
-          <input class="tep-agent-filter" id="tep-agent-filter" placeholder="Filter agents&hellip;">
+          <input class="tep-agent-filter" id="tep-agent-filter" placeholder="Search for agents&hellip;">
           <button type="button" class="tep-agent-filter-clear" id="tep-agent-filter-clear" title="Clear filter" aria-label="Clear filter">&times;</button>
         </div>
         <div class="tep-agents-box" id="tep-agents-box">
@@ -3904,6 +4295,7 @@
         <div class="tep-manage-block">
           <button type="button" class="tep-create-toggle" id="tep-manage-toggle" aria-expanded="true" aria-controls="tep-panel-manage-body">
             <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Manage
+            <span class="tep-test-count" id="tep-test-count" style="margin-left:auto;margin-bottom:0;"></span>
           </button>
           <div class="tep-manage-expand tep-create-expand" id="tep-panel-manage-body">
         <div class="tep-manage-toolbar">
@@ -3923,10 +4315,10 @@
           </select>
           <input id="tep-manage-search" placeholder="Search tests&hellip;">
           <select id="tep-manage-sort" style="width:auto;">
-            <option value="created" selected>Sort: Date Created</option>
+            <option value="created">Sort: Created</option>
             <option value="default">Sort: Alphabetical</option>
             <option value="name">Sort: Name</option>
-            <option value="modified">Sort: Date Modified</option>
+            <option value="modified" selected>Sort: Modified</option>
           </select>
           <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-manage-load" title="Refresh test list" aria-label="Refresh test list">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3939,6 +4331,7 @@
         </div>
         <div class="tep-bulk-bar" id="tep-bulk-bar">
           <span id="tep-bulk-count">0 selected</span>
+          <button type="button" class="tep-bulk-clear-link" id="tep-bulk-clear">Clear selected</button>
           <select id="tep-bulk-action">
             <option value="">— Bulk Action —</option>
             <option value="enable">Enable All</option>
@@ -3953,7 +4346,7 @@
             <option value="TCP-SYN">TCP / SYN</option>
             <option value="ICMP">ICMP</option>
           </select>
-          <label id="tep-bulk-insession" style="display:none;font-size:11px;color:#94a3b8;cursor:pointer;align-items:center;gap:4px;">
+          <label id="tep-bulk-insession" style="display:none;font-size:11px;color:var(--tep-slate-400);cursor:pointer;align-items:center;gap:4px;">
             <input type="checkbox" id="tep-bulk-insession-cb" checked> In-Session
           </label>
           <select id="tep-bulk-interval" style="display:none;">
@@ -3967,13 +4360,18 @@
           </select>
           <button class="tep-bulk-apply" id="tep-bulk-apply">Apply</button>
         </div>
-        <div class="tep-test-count" id="tep-test-count"></div>
         <div class="tep-test-list" id="tep-test-list">
           <span class="tep-log-info">Loading tests&hellip;</span>
         </div>
           </div>
         </div>
 
+        <div class="tep-attribution" aria-label="Legal and attribution">
+          <strong style="color:var(--tep-slate-300);">TE Optics</strong>
+          <span class="tep-attribution-version">${TEP_VERSION}</span>
+          &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
+          · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
+        </div>
         <details class="tep-dash-details" id="tep-details-diagnostics">
           <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
           <div class="tep-dash-details-inner tep-dash-advanced-inner">
@@ -4066,6 +4464,7 @@
             </div>
             <div class="tep-bulk-bar" id="tep-dash-bulk-bar">
               <span id="tep-dash-bulk-count">0 selected</span>
+              <button type="button" class="tep-bulk-clear-link" id="tep-dash-bulk-clear">Clear selected</button>
               <select id="tep-dash-bulk-action">
                 <option value="">— Bulk Action —</option>
                 <option value="delete">Delete</option>
@@ -4086,49 +4485,32 @@
           <div class="tep-create-expand" id="tep-dash-expand-map">
             <div class="tep-manage-toolbar">
               <div class="tep-dash-map-legend-key" aria-hidden="true">
-                <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><rect x="0.65" y="4" width="14.7" height="8" rx="2" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:2"/><line x1="2.2" y1="9.3" x2="13.8" y2="9.3" stroke="#000" stroke-width="1"/><circle cx="3.8" cy="6.7" r="1" fill="#000"/></svg>Enterprise</span>
-                <span class="tep-dash-legend-item"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 20.5a8 8 0 0 1 16 0Z" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/><circle cx="12" cy="7.5" r="4.2" style="fill:#94a3b8;stroke:#e2e8f0;stroke-width:1.5"/></svg>User</span>
-                <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6" style="fill:#3b82f6;stroke:#dbeafe;stroke-width:2"/></svg>Cluster</span>
+                <span class="tep-dash-legend-item" title="Enterprise agents mapped / total"><svg viewBox="0 0 16 16" width="13" height="13"><rect x="0.65" y="4" width="14.7" height="8" rx="2" style="fill:var(--tep-slate-400);stroke:var(--tep-slate-200);stroke-width:2"/><line x1="2.2" y1="9.3" x2="13.8" y2="9.3" stroke="#000" stroke-width="1"/><circle cx="3.8" cy="6.7" r="1" fill="#000"/></svg><span id="tep-dash-map-legend-ent-n">…</span></span>
+                <span class="tep-dash-legend-item" title="Endpoint agents mapped / total"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 20.5a8 8 0 0 1 16 0Z" style="fill:var(--tep-slate-400);stroke:var(--tep-slate-200);stroke-width:1.5"/><circle cx="12" cy="7.5" r="4.2" style="fill:var(--tep-slate-400);stroke:var(--tep-slate-200);stroke-width:1.5"/></svg><span id="tep-dash-map-legend-ep-n">…</span></span>
+                <span class="tep-dash-legend-item"><svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6" style="fill:var(--tep-blue);stroke:#dbeafe;stroke-width:2"/></svg>Cluster</span>
                 <span class="tep-dash-legend-item"><span class="tep-dash-legend-swatch" style="background:linear-gradient(90deg,#22c55e,#ef4444);"></span>healthy → unhealthy</span>
-              </div>
-            </div>
-            <div class="tep-manage-toolbar" style="justify-content:space-between;align-items:center;">
-              <div class="tep-test-count" id="tep-dash-map-count" style="margin-bottom:0;">Not loaded yet.</div>
-              <div style="display:flex;gap:6px;">
-                <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-btn-icon" id="tep-dash-map-refresh" title="Reload agents" aria-label="Reload agents">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 3" />
-                    <path d="M21 3v5h-5" />
-                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 21" />
-                    <path d="M3 21v-5h5" />
-                  </svg>
-                </button>
               </div>
             </div>
             <div id="tep-dash-map-host"></div>
           </div>
         </div>
 
-        <div class="tep-create-block" id="tep-dash-block-tests">
-          <button type="button" class="tep-create-toggle" id="tep-dash-toggle-tests" aria-expanded="false" aria-controls="tep-dash-expand-tests">
-            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Tests
-          </button>
-          <div class="tep-create-expand" id="tep-dash-expand-tests" hidden>
-            <p class="tep-dash-hint" style="margin:0 0 8px;">Open the standard test tools (Create test, Manage) while staying on this page.</p>
-          </div>
+        <div class="tep-attribution" aria-label="Legal and attribution">
+          <strong style="color:var(--tep-slate-300);">TE Optics</strong>
+          <span class="tep-attribution-version">${TEP_VERSION}</span>
+          &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
+          · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
         </div>
-
         <details class="tep-dash-details">
           <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
           <div class="tep-dash-details-inner tep-dash-advanced-inner">
-            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#94a3b8;cursor:pointer;line-height:1.45;margin-bottom:10px;">
+            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--tep-slate-400);cursor:pointer;line-height:1.45;margin-bottom:10px;">
               <input type="checkbox" id="tep-dash-sniff-ajax" checked style="margin-top:3px;flex-shrink:0;">
               <span>Log dashboard-related <code>/ajax/</code> and <code>/namespace/dash-api</code> JSON to the browser console (filter <code>[TE Optics]</code>).</span>
             </label>
             <div class="tep-dash-actions" style="margin-top:0;">
-              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-copy-debug">Copy diagnostics report</button>
-            </div>
-            <p style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-dash-copy-debug">Copy diagnostics report</button>            </div>
+            <p style="margin:10px 0 0;font-size:11px;color:var(--tep-slate-500);line-height:1.45;">
               Console flags: <code>window.__TEP_OPTICS_PROBE_SPECULATIVE__ = true</code> then Retry Auth;
               <code>window.__TEP_OPTICS_FORCE_DASH_PROBE__ = true</code> then reload backup;
               <code>window.__TEP_OPTICS_VERBOSE_DASH_PROBES__ = true</code> for probe lines in the log.
@@ -4171,7 +4553,7 @@
               </div>
             </div>
 
-            <div style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 12px;font-size:12px;color:#94a3b8;">
+            <div style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 12px;font-size:12px;color:var(--tep-slate-400);">
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
                 <input type="checkbox" id="tep-ep-include-http" checked> HTTP Server test
               </label>
@@ -4220,9 +4602,10 @@
             </div>
             <div class="tep-bulk-bar" id="tep-ep-bulk-bar">
               <span id="tep-ep-bulk-count">0 selected</span>
+              <button type="button" class="tep-bulk-clear-link" id="tep-ep-bulk-clear">Clear selected</button>
               <select id="tep-ep-bulk-action">
                 <option value="">— Bulk Action —</option>
-                <option value="probe">TCP probe mode</option>
+                <option value="probe">Network protocol / probe mode</option>
                 <option value="interval">Change interval</option>
                 <option value="max-machines">Max agents</option>
                 <option value="enable">Enable</option>
@@ -4231,9 +4614,11 @@
                 <option value="delete">Delete</option>
               </select>
               <select id="tep-ep-bulk-probe" style="display:none;">
-                <option value="AUTO">AUTO</option>
-                <option value="SYN">SYN</option>
-                <option value="SACK">SACK</option>
+                <option value="AUTODETECT">Auto-detect</option>
+                <option value="ICMP">ICMP</option>
+                <option value="PREFER_SACK">Prefer TCP — Prefer SACK</option>
+                <option value="FORCE_SACK">Prefer TCP — Force SACK</option>
+                <option value="FORCE_SYN">Prefer TCP — Force SYN</option>
               </select>
               <select id="tep-ep-bulk-interval" style="display:none;">
                 <option value="60">1 minute</option>
@@ -4315,30 +4700,26 @@
           </div>
         </div>
 
-        <div class="tep-create-block" id="tep-ep-block-cloud-tests">
-          <button type="button" class="tep-create-toggle" id="tep-ep-toggle-cloud-tests" aria-expanded="false" aria-controls="tep-ep-expand-cloud-tests">
-            <span class="tep-create-chevron" aria-hidden="true">&#9654;</span> Cloud Tests
-          </button>
-          <div class="tep-create-expand" id="tep-ep-expand-cloud-tests" hidden>
-            <p class="tep-dash-hint" style="margin:0 0 8px;">Open the standard cloud test tools (Create test, Manage) while staying on this page.</p>
-          </div>
+        <div class="tep-attribution" aria-label="Legal and attribution">
+          <strong style="color:var(--tep-slate-300);">TE Optics</strong>
+          <span class="tep-attribution-version">${TEP_VERSION}</span>
+          &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
+          · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
         </div>
-
         <details class="tep-dash-details" id="tep-ep-details-diagnostics">
           <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
           <div class="tep-dash-details-inner tep-dash-advanced-inner">
             <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">
               Logs same-origin requests under <code>/namespace/endpoint-api</code>, <code>/namespace/endpoint/</code>, <code>/namespace/product-led-growth-api</code>, <code>test-config</code>, and <code>/ajax/…/endpoint</code> to the Log below and the browser console (<code>[TE Optics endpoint]</code>). Reload test settings, open a test, change probe mode, save — then copy this report.
             </p>
-            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#94a3b8;cursor:pointer;line-height:1.45;margin-bottom:10px;">
+            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--tep-slate-400);cursor:pointer;line-height:1.45;margin-bottom:10px;">
               <input type="checkbox" id="tep-ep-sniff-ajax" checked style="margin-top:3px;flex-shrink:0;">
               <span>Record endpoint API traffic (fetch + XHR)</span>
             </label>
             <div class="tep-dash-actions" style="margin-top:0;">
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-copy-debug">Copy diagnostics report</button>
-              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-clear-sniff">Clear sniff history</button>
-            </div>
-            <p class="tep-dash-hint" id="tep-ep-sniff-meta" style="margin:10px 0 0;font-size:11px;color:#64748b;">Sniff history empty — interact with the Endpoint UI to capture URLs.</p>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-ep-clear-sniff">Clear sniff history</button>            </div>
+            <p class="tep-dash-hint" id="tep-ep-sniff-meta" style="margin:10px 0 0;font-size:11px;color:var(--tep-slate-500);">Sniff history empty — interact with the Endpoint UI to capture URLs.</p>
           </div>
         </details>
       </div>
@@ -4380,11 +4761,17 @@
               </div>
               <div class="tep-br-pick-list" id="tep-tags-pick-list"></div>
             </div>
-            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Backups include <strong>all</strong> assignments. Restore creates the selected tag definitions (key, value, color, object type) as new tags and re-applies <strong>cloud agent</strong> assignments only — enterprise and endpoint agent assignments are omitted because their ids are account-specific and won&rsquo;t exist on another site.</p>
+            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:var(--tep-slate-500);line-height:1.45;">Backups include <strong>all</strong> assignments. Restore creates the selected tag definitions (key, value, color, object type) as new tags and re-applies <strong>cloud agent</strong> assignments only — enterprise and endpoint agent assignments are omitted because their ids are account-specific and won&rsquo;t exist on another site.</p>
             <div class="tep-dash-row" style="margin-top:14px;">
               <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-tags-restore" style="flex:1;" disabled>Restore selected tags&hellip;</button>
             </div>
-            <details class="tep-dash-details" id="tep-tags-diagnostics" style="margin-top:14px;">
+            <div class="tep-attribution" aria-label="Legal and attribution" style="margin-top:14px;">
+              <strong style="color:var(--tep-slate-300);">TE Optics</strong>
+              <span class="tep-attribution-version">${TEP_VERSION}</span>
+              &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
+              · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
+            </div>
+            <details class="tep-dash-details" id="tep-tags-diagnostics">
               <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
               <div class="tep-dash-details-inner tep-dash-advanced-inner">
                 <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">
@@ -4392,9 +4779,8 @@
                 </p>
                 <div class="tep-dash-actions" style="margin-top:0;">
                   <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tags-copy-debug">Copy API discovery report</button>
-                  <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tags-clear-sniff">Clear captures</button>
-                </div>
-                <p class="tep-dash-hint" id="tep-tags-sniff-meta" style="margin:10px 0 0;font-size:11px;color:#64748b;">Sniff history empty — create/edit/delete a tag in the TE UI to capture its API call, then copy the report.</p>
+                  <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-tags-clear-sniff">Clear captures</button>                </div>
+                <p class="tep-dash-hint" id="tep-tags-sniff-meta" style="margin:10px 0 0;font-size:11px;color:var(--tep-slate-500);">Sniff history empty — create/edit/delete a tag in the TE UI to capture its API call, then copy the report.</p>
               </div>
             </details>
           </div>
@@ -4470,7 +4856,7 @@
               <option value="safe" selected>Safe — clear test &amp; notification bindings (best for a different account)</option>
               <option value="keep">Keep bindings from the JSON (same account only; may fail cross-account)</option>
             </select>
-            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:#64748b;line-height:1.45;">Server-owned fields (id, dates) are always stripped. In <strong>Safe</strong> mode, test/agent assignments and notification/integration references are cleared because those ids are account-specific — you re-assign rules afterward in the TE UI. Restore auto-routes each rule to the right API: standard, endpoint-agent, or endpoint browser-session.</p>
+            <p class="tep-dash-hint" style="margin:10px 0 0;font-size:11px;color:var(--tep-slate-500);line-height:1.45;">Server-owned fields (id, dates) are always stripped. In <strong>Safe</strong> mode, test/agent assignments and notification/integration references are cleared because those ids are account-specific — you re-assign rules afterward in the TE UI. Restore auto-routes each rule to the right API: standard, endpoint-agent, or endpoint browser-session.</p>
             <div class="tep-dash-row" style="margin-top:14px;">
               <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-arules-restore" style="flex:1;" disabled>Restore selected alert rules&hellip;</button>
             </div>
@@ -4512,7 +4898,13 @@
           </div>
         </div>
 
-        <details class="tep-dash-details" id="tep-alerts-diagnostics" style="margin-top:4px;">
+        <div class="tep-attribution" aria-label="Legal and attribution" style="margin-top:4px;">
+          <strong style="color:var(--tep-slate-300);">TE Optics</strong>
+          <span class="tep-attribution-version">${TEP_VERSION}</span>
+          &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
+          · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
+        </div>
+        <details class="tep-dash-details" id="tep-alerts-diagnostics">
           <summary>Diagnostics — API discovery <span class="tep-dash-chevron" aria-hidden="true">&#9654;</span></summary>
           <div class="tep-dash-details-inner tep-dash-advanced-inner">
             <p class="tep-dash-hint" style="margin:0 0 10px;line-height:1.45;">
@@ -4520,25 +4912,21 @@
             </p>
             <div class="tep-dash-actions" style="margin-top:0;">
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-alerts-copy-debug">Copy API discovery report</button>
-              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-alerts-clear-sniff">Clear captures</button>
-            </div>
-            <p class="tep-dash-hint" id="tep-alerts-sniff-meta" style="margin:10px 0 0;font-size:11px;color:#64748b;">Sniff history empty — interact with alerts/rules in the TE UI to capture API calls, then copy the report.</p>
+              <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm" id="tep-alerts-clear-sniff">Clear captures</button>            </div>
+            <p class="tep-dash-hint" id="tep-alerts-sniff-meta" style="margin:10px 0 0;font-size:11px;color:var(--tep-slate-500);">Sniff history empty — interact with alerts/rules in the TE UI to capture API calls, then copy the report.</p>
           </div>
         </details>
       </div>
 
-      <!-- Author: Christopher Hunt -->
-      <div class="tep-attribution" id="tep-attribution" aria-label="Legal and attribution">
-        <strong style="color:#cbd5e1;">TE Optics</strong>
-        <span class="tep-attribution-version">${TEP_VERSION}</span>
-        &mdash; <a href="https://lucidium2000.github.io/TE-Optics/" target="_blank" rel="noopener noreferrer">Check for Updates</a>
-        · not affiliated with Cisco or ThousandEyes · provided as-is; no warranty or support.
-      </div>
-
-      <!-- Log (shared) -->
-      <div class="tep-log-wrap">
+      <!-- Log (shared) — genuinely lives INSIDE whichever Diagnostics
+           section is currently open (see the 'toggle' listener wired to
+           every .tep-dash-details below), physically reparented there —
+           not just a trigger button pointing at content sitting elsewhere.
+           Starts hidden here in its parking spot; a single instance, moved
+           on demand, since #tep-log is written to from ~everywhere in this
+           file and can't be duplicated per tab. -->
+      <div class="tep-log-wrap" id="tep-log-wrap" style="display:none;">
         <div class="tep-log-toolbar">
-          <button type="button" class="tep-log-toggle" id="tep-log-toggle"><span class="tep-log-arrow">&#9654;</span> Log</button>
           <button type="button" class="tep-log-copy" id="tep-log-copy" title="Copy entire log to clipboard">Copy log</button>
         </div>
         <div class="tep-log" id="tep-log"></div>
@@ -4619,12 +5007,6 @@
     pManage.classList.remove('active');
     pDash.classList.remove('active');
     if (pEndpoint) pEndpoint.classList.remove('active');
-    const dashBack = root.querySelector('#tep-dash-tests-back-wrap');
-    const epBack = root.querySelector('#tep-endpoint-tests-back-wrap');
-    if (dashBack) dashBack.setAttribute('hidden', '');
-    if (epBack) epBack.setAttribute('hidden', '');
-    tepFromDashTests = false;
-    tepFromEndpointTests = false;
 
     const pTags = root.querySelector('#tep-panel-tags');
     if (pTags) pTags.classList.remove('active');
@@ -4678,12 +5060,6 @@
     const pAlerts = root.querySelector('#tep-panel-alerts');
     const h2 = root.querySelector('.tep-header h2');
     [pDash, pEndpoint, pManage, pTags, pAlerts].forEach((p) => { if (p) p.classList.remove('active'); });
-    const dashBack = root.querySelector('#tep-dash-tests-back-wrap');
-    const epBack = root.querySelector('#tep-endpoint-tests-back-wrap');
-    if (dashBack) dashBack.setAttribute('hidden', '');
-    if (epBack) epBack.setAttribute('hidden', '');
-    tepFromDashTests = false;
-    tepFromEndpointTests = false;
     const target = mode === 'endpoint' ? pEndpoint : pManage;
     if (target) target.classList.add('active');
     if (h2) {
@@ -4704,81 +5080,6 @@
     });
   }
 
-  function showTestsPanelFromDashboard() {
-    if (!isDashboardToolsPage()) return;
-    const pDash = root.querySelector('#tep-panel-dashboard');
-    const pManage = root.querySelector('#tep-panel-manage');
-    const back = root.querySelector('#tep-dash-tests-back-wrap');
-    const epBack = root.querySelector('#tep-endpoint-tests-back-wrap');
-    if (pDash) pDash.classList.remove('active');
-    if (pManage) pManage.classList.add('active');
-    if (back) back.removeAttribute('hidden');
-    if (epBack) epBack.setAttribute('hidden', '');
-    tepFromDashTests = true;
-    tepFromEndpointTests = false;
-    const h2 = root.querySelector('.tep-header h2');
-    if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> ${tepTitleVersionHtml()}`;
-    }
-    void loadTests();
-    updateManageUnitsTotal();
-    applyDefaultAuthenticatedStatus();
-  }
-
-  function showDashboardPanelFromTests() {
-    if (!isDashboardToolsPage()) return;
-    const pDash = root.querySelector('#tep-panel-dashboard');
-    const pManage = root.querySelector('#tep-panel-manage');
-    const back = root.querySelector('#tep-dash-tests-back-wrap');
-    if (pManage) pManage.classList.remove('active');
-    if (pDash) pDash.classList.add('active');
-    if (back) back.setAttribute('hidden', '');
-    tepFromDashTests = false;
-    const h2 = root.querySelector('.tep-header h2');
-    if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
-    }
-    updateManageUnitsTotal();
-    applyDefaultAuthenticatedStatus();
-  }
-
-  function showTestsPanelFromEndpoint() {
-    if (!isEndpointToolsPage()) return;
-    const pEndpoint = root.querySelector('#tep-panel-endpoint');
-    const pManage = root.querySelector('#tep-panel-manage');
-    const back = root.querySelector('#tep-endpoint-tests-back-wrap');
-    const dashBack = root.querySelector('#tep-dash-tests-back-wrap');
-    if (pEndpoint) pEndpoint.classList.remove('active');
-    if (pManage) pManage.classList.add('active');
-    if (back) back.removeAttribute('hidden');
-    if (dashBack) dashBack.setAttribute('hidden', '');
-    tepFromEndpointTests = true;
-    tepFromDashTests = false;
-    const h2 = root.querySelector('.tep-header h2');
-    if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics — Tests</span> ${tepTitleVersionHtml()}`;
-    }
-    void loadTests();
-    updateManageUnitsTotal();
-    applyDefaultAuthenticatedStatus();
-  }
-
-  function showEndpointPanelFromTests() {
-    if (!isEndpointToolsPage()) return;
-    const pEndpoint = root.querySelector('#tep-panel-endpoint');
-    const pManage = root.querySelector('#tep-panel-manage');
-    const back = root.querySelector('#tep-endpoint-tests-back-wrap');
-    if (pManage) pManage.classList.remove('active');
-    if (pEndpoint) pEndpoint.classList.add('active');
-    if (back) back.setAttribute('hidden', '');
-    tepFromEndpointTests = false;
-    const h2 = root.querySelector('.tep-header h2');
-    if (h2) {
-      h2.innerHTML = `<span class="tep-title-brand" title="Dark mode: click to toggle" tabindex="0" role="button">TE Optics</span> ${tepTitleVersionHtml()}`;
-    }
-    updateManageUnitsTotal();
-    applyDefaultAuthenticatedStatus();
-  }
 
   // ---------------------------------------------------------------------------
   // Refs
@@ -4901,9 +5202,9 @@
 
   function applyDefaultAuthenticatedStatus() {
     if (!isOnTEPage()) return;
-    if (isEndpointToolsPage() && !tepFromEndpointTests) {
+    if (isEndpointToolsPage()) {
       setStatus('Authenticated — endpoint tools', 'ok');
-    } else if (isDashboardToolsPage() && !tepFromDashTests) {
+    } else if (isDashboardToolsPage()) {
       setStatus(agents && agents.length ? `Dashboard — ${agents.length} portal agent(s) loaded` : 'Authenticated — dashboard tools', 'ok');
     } else {
       setStatus(agents && agents.length ? `Authenticated — ${agents.length} agent(s) loaded` : 'Authenticated — loading agents…', 'ok');
@@ -7377,6 +7678,12 @@
     }
   }
 
+  /** Same "Clear selected" as the Manage Tests bulk bar. */
+  function clearDashCleanupSelection() {
+    selectedDashCleanupIds.clear();
+    root.querySelectorAll('.tep-dash-cleanup-cb').forEach((cb) => { cb.checked = false; });
+    updateDashCleanupBulkUI();
+  }
   function updateDashCleanupBulkUI() {
     const countEl = root.querySelector('#tep-dash-bulk-count');
     const bar = root.querySelector('#tep-dash-bulk-bar');
@@ -8599,6 +8906,7 @@
           const statusMap = {};
           const geoMap = {};
           const ipMap = {};
+          const localIpMap = {};
           const ispMap = {};
           for (const pa of physicalAgents) {
             const id = pa.agentId || pa.id;
@@ -8617,12 +8925,24 @@
               geoMap[id] = geo;
               if (pa.vAgentId) geoMap['v_' + pa.vAgentId] = geo;
             }
-            // Field name unconfirmed — best-effort across the usual candidates so
-            // the map search box can still match on it when present.
-            const ip = pa.ipAddress || pa.publicIp || pa.privateIp || pa.ip || pa.lastIp || pa.agentIp || '';
-            if (ip) {
-              ipMap[id] = ip;
-              if (pa.vAgentId) ipMap['v_' + pa.vAgentId] = ip;
+            // CONFIRMED via a live /ajax/menu/data capture (enterpriseAgentsWithIssues[]):
+            // TE's enterprise agent objects expose the agent's own local/private
+            // IP as `ipAddress` and its public IP as `publicIpAddress` — mirrors
+            // the ip/localIp split endpoint agents already have (see
+            // epAgentPickField above), so the two are no longer folded into one
+            // best-effort guess. This used to put `ipAddress` (actually the LOCAL
+            // ip) into the public-ip slot; that's fixed here, and the local ip is
+            // now captured too so enterprise agents can subnet-group in the
+            // cluster maximize view the same way endpoint agents do.
+            const localIp = pa.ipAddress || pa.localIpAddress || pa.privateIpAddress || pa.internalIp || pa.privateIp || pa.lanIp || '';
+            const publicIp = pa.publicIpAddress || pa.publicIp || pa.ip || pa.lastIp || pa.agentIp || '';
+            if (localIp) {
+              localIpMap[id] = localIp;
+              if (pa.vAgentId) localIpMap['v_' + pa.vAgentId] = localIp;
+            }
+            if (publicIp) {
+              ipMap[id] = publicIp;
+              if (pa.vAgentId) ipMap['v_' + pa.vAgentId] = publicIp;
             }
             // CONFIRMED via live capture: pa.network.asName (org that owns the
             // agent's ASN — e.g. "Atlantic Health System") is this enterprise
@@ -8649,7 +8969,7 @@
           }
 
           // Match physical agent status + location/coords to virtual agents
-          let matched = 0, geoFilled = 0;
+          let matched = 0, geoFilled = 0, localIpMatched = 0;
           for (const a of newAgents) {
             if (a.agentType !== 'Enterprise') continue;
             const s = statusMap[a.physicalId] || statusMap['v_' + a.agentId];
@@ -8661,10 +8981,12 @@
             }
             const ip = ipMap[a.physicalId] || ipMap['v_' + a.agentId];
             if (ip) a.ip = ip;
+            const localIp = localIpMap[a.physicalId] || localIpMap['v_' + a.agentId];
+            if (localIp) { a.localIp = localIp; localIpMatched++; }
             const isp = ispMap[a.physicalId] || ispMap['v_' + a.agentId];
             if (isp) a.isp = isp;
           }
-          log(`Matched status for ${matched} enterprise agent(s); filled coordinates for ${geoFilled}.`, 'tep-log-info');
+          log(`Matched status for ${matched} enterprise agent(s); filled coordinates for ${geoFilled}; local IP for ${localIpMatched}.`, 'tep-log-info');
         }
       } catch (e) { log('Physical agent status error: ' + e.message, 'tep-log-info'); }
 
@@ -8725,7 +9047,7 @@
       // Load enterprise-relevant tags after agents exist (does not block UI).
       void loadEnterpriseAgentTags();
       renderAgents();
-      if (isDashboardToolsPage() && !tepFromDashTests) {
+      if (isDashboardToolsPage()) {
         setStatus(`Dashboard — ${agents.length} portal agent(s) loaded`, 'ok');
       } else {
         setStatus(`Authenticated — ${agents.length} agent(s) loaded`, 'ok');
@@ -9100,7 +9422,7 @@
       section.style.marginBottom = '6px';
       const header = document.createElement('div');
       header.className = 'tep-agent-section-header';
-      header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
+      header.style.cssText = 'font-weight:bold;padding:4px 6px;background:var(--tep-slate-700);border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
       const shouldOpen = eff ? eff === sectionKey : fallbackOpen;
       header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
       const body = document.createElement('div');
@@ -9157,7 +9479,7 @@
 
       const header = document.createElement('div');
       header.className = 'tep-agent-section-header';
-      header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
+      header.style.cssText = 'font-weight:bold;padding:4px 6px;background:var(--tep-slate-700);border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;';
       const shouldOpen = eff ? eff === 'enterprise-tags' : false;
       header.innerHTML = `<span>🏷️ Agent labels/tags</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
 
@@ -10546,6 +10868,17 @@
     bulkBar.classList.toggle('active', count > 0);
   }
 
+  /** "Clear selected" — CONFIRMED via user request. Unchecks every visible
+   *  checkbox directly (cheaper than a full re-render, and doesn't disturb
+   *  scroll position) rather than re-rendering the list purely to reset
+   *  checkbox state that renderTests() would derive from selectedTestIds
+   *  anyway. */
+  function clearBulkSelection() {
+    selectedTestIds.clear();
+    testListEl.querySelectorAll('.tep-test-card-check').forEach((cb) => { cb.checked = false; });
+    updateBulkUI();
+  }
+
   /** `?testId=` (or `testid`) on the current app URL — that test is listed first in Manage when it appears in the filtered set. */
   function getUrlQueryTestIdFocus() {
     try {
@@ -10606,6 +10939,17 @@
         const da = a.modifiedDate || a.lastModified || a.dateModified || '';
         const db = b.modifiedDate || b.lastModified || b.dateModified || '';
         if (da || db) return da > db ? -1 : da < db ? 1 : 0;
+        // Same immediate approximation 'created' uses below — the bulk list
+        // this first render comes from doesn't include modifiedDate at all
+        // (only the per-test detail enrichment does, moments later), so
+        // without this the list opens in the enabled/type/name default order
+        // — reading as "alphabetical" — and then visibly reshuffles into
+        // real modified order once enrichment lands. testId descending is
+        // available immediately and is a reasonable stand-in in the
+        // meantime, same as it is for 'created'.
+        const ida = Number(a.testId != null ? a.testId : a.id);
+        const idb = Number(b.testId != null ? b.testId : b.id);
+        if (Number.isFinite(ida) && Number.isFinite(idb) && ida !== idb) return idb - ida;
       }
       if (sortMode === 'created') {
         const da = a.createdDate || a.dateCreated || a.createDate || '';
@@ -10720,7 +11064,7 @@
   function renderTests() {
     closeConvertMenu();
     const filtered = getFilteredTests();
-    testCountEl.textContent = `Showing ${filtered.length} of ${allTests.length} test(s)`;
+    testCountEl.textContent = `${filtered.length} test${filtered.length === 1 ? '' : 's'}`;
 
     if (!filtered.length) {
       const typeEl = root.querySelector('#tep-manage-type-filter');
@@ -10767,7 +11111,7 @@
           <span class="tep-type-badge ${typeCss}">${typeLabelHtml}</span>
           <a class="tep-test-card-name tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'}</a>
           <div class="tep-test-actions">
-            ${isReadOnly(t) ? '<span style="font-size:10px;color:#64748b;">read-only</span>' : `
+            ${isReadOnly(t) ? '<span style="font-size:10px;color:var(--tep-slate-500);">read-only</span>' : `
             <div class="tep-test-actions-expanded">
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="clone" title="Create a new test with the same settings (unsaved edits are not included)">Clone</button>
               ${canConvertTest(t) ? '<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="convert" title="Convert to another test type">Convert</button>' : ''}
@@ -10944,7 +11288,7 @@
         </select>
       </div>
       ${isOneWayNetworkTest(t) ? `<div class="tep-edit-row" style="display:flex;align-items:center;">
-        <label class="tep-edit-bidir-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+        <label class="tep-edit-bidir-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tep-slate-200);">
           <input type="checkbox" class="tep-edit-bidirectional" ${onewayBidirChecked ? 'checked' : ''}>
           <span>Bidirectional</span>
         </label>
@@ -10970,16 +11314,16 @@
             <label>Port</label>
             <input type="number" class="tep-edit-port" value="${portVal}" min="1" max="65535" style="width:80px;">
           </div>
-          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;padding-bottom:2px;">
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--tep-slate-400);cursor:pointer;padding-bottom:2px;">
             <input type="checkbox" class="tep-edit-insession" ${t.pathtraceInSession ? 'checked' : ''}> In-Session
           </label>
         </div>
       </div>
       `; })() : ''}
       <div style="margin-top:8px;">
-        <label style="font-size:11px;color:#94a3b8;font-weight:600;">Agents (${currentAgentIds.size} assigned)</label>
+        <label style="font-size:11px;color:var(--tep-slate-400);font-weight:600;">Agents (${currentAgentIds.size} assigned)</label>
         <div class="tep-agent-filter-wrap tep-agent-filter-wrap--compact">
-          <input class="tep-edit-agent-filter" placeholder="Filter agents…">
+          <input class="tep-edit-agent-filter" placeholder="Search for agents…">
           <button type="button" class="tep-agent-filter-clear" title="Clear filter" aria-label="Clear filter">&times;</button>
         </div>
         <div class="tep-edit-agents-box"></div>
@@ -11049,7 +11393,7 @@
           editAgentsBox.innerHTML = '';
           const barE = document.createElement('div');
           barE.className = 'tep-agent-persistent-bar';
-          barE.style.cssText = 'font-size:12px;color:#e2e8f0;';
+          barE.style.cssText = 'font-size:12px;color:var(--tep-slate-200);';
           const titleE = `✓ Selected <span class="tep-sel-badges">— <strong>${brEmpty.total}</strong> (🏢 ${brEmpty.ent} · ☁️ ${brEmpty.cloud})</span>`;
           barE.innerHTML = `<span>${titleE}</span><span class="tep-section-arrow">${listCollapsedE ? '▶' : '▼'}</span>`;
           barE.addEventListener('click', () => {
@@ -11074,7 +11418,7 @@
           editAgentsBox.appendChild(barE);
           editAgentsBox.appendChild(scrollE);
         } else {
-          editAgentsBox.innerHTML = '<span style="font-size:11px;color:#64748b;">No agents match.</span>';
+          editAgentsBox.innerHTML = '<span style="font-size:11px;color:var(--tep-slate-500);">No agents match.</span>';
         }
         refreshEditUnitsPreview();
         return;
@@ -11138,7 +11482,7 @@
       editAgentsBox.innerHTML = '';
       const barEdit = document.createElement('div');
       barEdit.className = 'tep-agent-persistent-bar';
-      barEdit.style.cssText = 'font-size:12px;color:#e2e8f0;';
+      barEdit.style.cssText = 'font-size:12px;color:var(--tep-slate-200);';
       const titleEdit = `✓ Selected <span class="tep-sel-badges">— <strong>${brEdit.total}</strong> (🏢 ${brEdit.ent} · ☁️ ${brEdit.cloud})</span>`;
       barEdit.innerHTML = `<span>${titleEdit}</span><span class="tep-section-arrow">${listCollapsedEdit ? '▶' : '▼'}</span>`;
       barEdit.addEventListener('click', () => {
@@ -11165,8 +11509,8 @@
             const checked = restoreAgentSelectionSetHas(editAgentIds, agent.agentId) ? 'checked' : '';
             const statusDot = agent.agentType === 'Enterprise'
               ? `<span class="tep-agent-status ${agent.status}" style="width:6px;height:6px;"></span>` : '';
-            const locTxt = agent.location ? ` <span style="color:#64748b;font-size:10px;">${agent.location}</span>` : '';
-            lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:#64748b;font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
+            const locTxt = agent.location ? ` <span style="color:var(--tep-slate-500);font-size:10px;">${agent.location}</span>` : '';
+            lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:var(--tep-slate-500);font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
             const cb = lbl.querySelector('input');
             cb.addEventListener('change', () => {
               if (cb.checked) editAgentIds.add(aid);
@@ -11198,7 +11542,7 @@
         section.style.marginBottom = '6px';
         const header = document.createElement('div');
         header.className = 'tep-agent-section-header';
-        header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#e2e8f0;';
+        header.style.cssText = 'font-weight:bold;padding:4px 6px;background:var(--tep-slate-700);border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tep-slate-200);';
         const shouldOpen = effEdit ? effEdit === sectionKey : fallbackOpen;
         header.innerHTML = `<span>${title} (${list.length})</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
         const body = document.createElement('div');
@@ -11215,8 +11559,8 @@
           const checked = restoreAgentSelectionSetHas(editAgentIds, agent.agentId) ? 'checked' : '';
           const statusDot = agent.agentType === 'Enterprise'
             ? `<span class="tep-agent-status ${agent.status}" style="width:6px;height:6px;"></span>` : '';
-          const locTxt = agent.location ? ` <span style="color:#64748b;font-size:10px;">${agent.location}</span>` : '';
-          lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:#64748b;font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
+          const locTxt = agent.location ? ` <span style="color:var(--tep-slate-500);font-size:10px;">${agent.location}</span>` : '';
+          lbl.innerHTML = `<input type="checkbox" value="${aid}" ${checked}> ${statusDot} ${agent.agentName || 'Agent ' + aid} <span style="color:var(--tep-slate-500);font-size:10px;">${agent.agentType || ''}</span>${locTxt}`;
           const cb = lbl.querySelector('input');
           cb.addEventListener('change', () => {
             if (cb.checked) editAgentIds.add(aid);
@@ -11242,7 +11586,7 @@
         section.style.marginBottom = '6px';
         const header = document.createElement('div');
         header.className = 'tep-agent-section-header';
-        header.style.cssText = 'font-weight:bold;padding:4px 6px;background:#2a2a2a;border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#e2e8f0;';
+        header.style.cssText = 'font-weight:bold;padding:4px 6px;background:var(--tep-slate-700);border-radius:4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tep-slate-200);';
         const shouldOpen = effEdit ? effEdit === sectionKey : false;
         header.innerHTML = `<span>🏷️ Agent labels/tags</span><span class="tep-section-arrow">${shouldOpen ? '▼' : '▶'}</span>`;
         const body = document.createElement('div');
@@ -11690,7 +12034,7 @@
         toast(`Deleted "${t.name}".`, 'ok');
         card.remove();
         allTests = allTests.filter(x => (x.testId || x.id) !== testId);
-        testCountEl.textContent = `Showing ${testListEl.children.length} of ${allTests.length} test(s)`;
+        testCountEl.textContent = `${testListEl.children.length} test${testListEl.children.length === 1 ? '' : 's'}`;
       } else {
         const txt = await resp.text().catch(() => '');
         log(`  ✗ ${resp.status}: ${txt.substring(0, 200)}`, 'tep-log-err');
@@ -13218,11 +13562,28 @@
         out.genericConfig.interval = sec;
       }
     } else if (action === 'probe') {
-      const mode = (opts && opts.probeMode) ? String(opts.probeMode) : 'AUTO';
+      // Same flat-value → {networkProtocol, tcpProbeMode, tcpConnect}
+      // mapping as applyEndpointEditFormValues — see
+      // getEndpointNetworkProtocol/getEndpointProbingMode's doc comment.
+      // pathtraceInSession deliberately left untouched here (bulk action is
+      // scoped to protocol/probe mode only, not a general network editor).
+      const val = (opts && opts.probeMode) ? String(opts.probeMode) : 'AUTODETECT';
       if (!out.networkConfig || typeof out.networkConfig !== 'object') {
         out.networkConfig = buildEndpointNetworkConfig();
       }
-      out.networkConfig.tcpProbeMode = mode;
+      const probingMode = ENDPOINT_PROBING_MODES.find((m) => m.value === val);
+      if (probingMode) {
+        out.networkConfig.networkProtocol = 'PREFER_TCP';
+        out.networkConfig.tcpProbeMode = probingMode.tcpProbeMode;
+        out.networkConfig.tcpConnect = probingMode.tcpConnect;
+      } else {
+        out.networkConfig.networkProtocol = (val === 'ICMP') ? 'ICMP' : 'AUTODETECT';
+        // 'UNKNOWN', not 'AUTO' — CONFIRMED via a real bulk-save capture of
+        // an Auto-detect save: {"networkProtocol":"AUTODETECT",
+        // "tcpProbeMode":"UNKNOWN","tcpConnect":false}.
+        out.networkConfig.tcpProbeMode = 'UNKNOWN';
+        out.networkConfig.tcpConnect = false;
+      }
     } else if (action === 'max-machines') {
       const maxM = Math.max(1, parseInt(opts && opts.maxMachines, 10) || 25);
       if (!out.machineConfig || typeof out.machineConfig !== 'object') {
@@ -13278,7 +13639,28 @@
     if (!out.networkConfig || typeof out.networkConfig !== 'object') {
       out.networkConfig = buildEndpointNetworkConfig();
     }
-    out.networkConfig.tcpProbeMode = vals.probeMode || 'AUTO';
+    // Protocol + probing mode + in-session all move together — see
+    // getEndpointNetworkProtocol/getEndpointProbingMode's doc comment.
+    // Only Prefer TCP actually uses tcpProbeMode/tcpConnect/
+    // pathtraceInSession; anything else resets them to the same
+    // "unforced" values buildEndpointNetworkConfig's own default uses,
+    // rather than leaving a stale SYN/SACK/in-session setting behind that
+    // the test isn't even acting on (the original "skewed" bug).
+    const protocol = vals.networkProtocol || 'AUTODETECT';
+    out.networkConfig.networkProtocol = protocol;
+    if (protocol === 'PREFER_TCP') {
+      const mode = ENDPOINT_PROBING_MODES.find((m) => m.value === vals.probingMode) || ENDPOINT_PROBING_MODES[0];
+      out.networkConfig.tcpProbeMode = mode.tcpProbeMode;
+      out.networkConfig.tcpConnect = mode.tcpConnect;
+      out.networkConfig.pathtraceInSession = !!vals.pathtraceInSession;
+    } else {
+      // 'UNKNOWN', not 'AUTO' — CONFIRMED via a real bulk-save capture of
+      // an Auto-detect save: {"networkProtocol":"AUTODETECT",
+      // "tcpProbeMode":"UNKNOWN","tcpConnect":false}.
+      out.networkConfig.tcpProbeMode = 'UNKNOWN';
+      out.networkConfig.tcpConnect = false;
+      out.networkConfig.pathtraceInSession = false;
+    }
 
     const maxM = Math.max(1, parseInt(vals.maxMachines, 10) || 25);
     if (!out.machineConfig || typeof out.machineConfig !== 'object') {
@@ -13302,7 +13684,9 @@
     const isDynamic = isEndpointDynamicTest(t);
     const target = getEndpointTestTarget(t);
     const interval = getEndpointTestInterval(t) || 60;
-    const probe = getEndpointProbeMode(t);
+    const protocol = getEndpointNetworkProtocol(t);
+    const probingMode = getEndpointProbingMode(t);
+    const inSession = getEndpointPathtraceInSession(t);
     const maxMachines = getEndpointMaxMachines(t);
     const tt = String(t.testType || t.type || '');
     const targetLabel = tt === 'Http' ? 'URL' : 'Target';
@@ -13315,13 +13699,29 @@
         </select>
       </div>`;
 
-    const probeBlock = isDynamic ? '' : `<div class="tep-edit-row">
-        <label>Probe</label>
-        <select class="tep-ep-edit-probe">
-          <option value="AUTO" ${probe === 'AUTO' ? 'selected' : ''}>AUTO</option>
-          <option value="SYN" ${probe === 'SYN' ? 'selected' : ''}>SYN</option>
-          <option value="SACK" ${probe === 'SACK' ? 'selected' : ''}>SACK</option>
+    // Two-tier per getEndpointNetworkProtocol/getEndpointProbingMode's own
+    // doc comment: Probing Mode + In-Session only apply (and only render)
+    // when Network Protocol is Prefer TCP — CONFIRMED via live capture the
+    // real UI hides them the same way for Auto-detect/ICMP.
+    const protocolBlock = isDynamic ? '' : `<div class="tep-edit-row">
+        <label>Protocol</label>
+        <select class="tep-ep-edit-protocol">
+          ${Object.keys(ENDPOINT_NETWORK_PROTOCOL_LABELS).map((v) =>
+    `<option value="${v}" ${v === protocol ? 'selected' : ''}>${tepEscapeHtmlText(ENDPOINT_NETWORK_PROTOCOL_LABELS[v])}</option>`).join('')}
         </select>
+      </div>`;
+    const probingModeBlock = isDynamic ? '' : `<div class="tep-edit-row tep-ep-edit-tcp-only" style="${protocol === 'PREFER_TCP' ? '' : 'display:none;'}">
+        <label>Probing Mode</label>
+        <select class="tep-ep-edit-probing-mode">
+          ${ENDPOINT_PROBING_MODES.map((m) =>
+    `<option value="${m.value}" ${m.value === probingMode.value ? 'selected' : ''}>${tepEscapeHtmlText(m.label)}</option>`).join('')}
+        </select>
+      </div>`;
+    const inSessionBlock = isDynamic ? '' : `<div class="tep-edit-row tep-ep-edit-tcp-only" style="${protocol === 'PREFER_TCP' ? '' : 'display:none;'}">
+        <label>&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer;">
+          <input type="checkbox" class="tep-ep-edit-insession" ${inSession ? 'checked' : ''}> In-Session
+        </label>
       </div>`;
 
     const maxMachinesBlock = isDynamic ? '' : `<div class="tep-edit-row">
@@ -13341,7 +13741,9 @@
         <input class="tep-ep-edit-target" value="${(target || '').replace(/"/g, '&quot;')}" ${isDynamic ? 'disabled' : ''}>
       </div>
       ${intervalBlock}
-      ${probeBlock}
+      ${protocolBlock}
+      ${probingModeBlock}
+      ${inSessionBlock}
       ${maxMachinesBlock}
       <div class="tep-edit-row">
         <label>Enabled</label>
@@ -13355,6 +13757,14 @@
         <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-ep-cancel-edit">Cancel</button>
       </div>
     `;
+
+    const protocolSelect = form.querySelector('.tep-ep-edit-protocol');
+    if (protocolSelect) {
+      protocolSelect.addEventListener('change', () => {
+        const showTcp = protocolSelect.value === 'PREFER_TCP';
+        form.querySelectorAll('.tep-ep-edit-tcp-only').forEach((row) => { row.style.display = showTcp ? '' : 'none'; });
+      });
+    }
 
     form.querySelector('.tep-ep-cancel-edit').addEventListener('click', () => {
       card.classList.remove('is-editing');
@@ -13370,11 +13780,16 @@
           return;
         }
         const targetEl = form.querySelector('.tep-ep-edit-target');
+        const protocolEl = form.querySelector('.tep-ep-edit-protocol');
+        const probingModeEl = form.querySelector('.tep-ep-edit-probing-mode');
+        const inSessionEl = form.querySelector('.tep-ep-edit-insession');
         const vals = {
           name,
           target: targetEl ? targetEl.value.trim() : '',
           interval: parseInt(form.querySelector('.tep-ep-edit-interval') && form.querySelector('.tep-ep-edit-interval').value, 10),
-          probeMode: form.querySelector('.tep-ep-edit-probe') ? form.querySelector('.tep-ep-edit-probe').value : 'AUTO',
+          networkProtocol: protocolEl ? protocolEl.value : 'AUTODETECT',
+          probingMode: probingModeEl ? probingModeEl.value : 'PREFER_SACK',
+          pathtraceInSession: inSessionEl ? inSessionEl.checked : false,
           maxMachines: form.querySelector('.tep-ep-edit-max-machines') ? form.querySelector('.tep-ep-edit-max-machines').value : getEndpointMaxMachines(t),
           enabled: parseInt(form.querySelector('.tep-ep-edit-enabled').value, 10) === 1
         };
@@ -13545,11 +13960,69 @@
     return null;
   }
 
-  function getEndpointProbeMode(t) {
+  /** Endpoint Network tests' probing setup is genuinely two-tier — CONFIRMED
+   *  via live capture (real UI interaction events plus an actual bulk-save
+   *  payload for a "Force SYN" test): a top-level networkConfig.
+   *  networkProtocol (Auto-detect / ICMP / Prefer TCP), and — ONLY when
+   *  Prefer TCP is selected — a "Probing Mode" sub-choice (Prefer SACK /
+   *  Force SACK / Force SYN) that maps to tcpProbeMode AND tcpConnect
+   *  TOGETHER, not tcpProbeMode alone. The old UI only ever showed/edited
+   *  tcpProbeMode by itself, which read as "skewed" for anything that
+   *  wasn't plain TCP — an ICMP or Auto-detect test could still display a
+   *  stale SYN/SACK value the test wasn't even using, and tcpConnect was
+   *  never touched at all despite genuinely mattering (Force SYN's
+   *  tcpConnect:true vs. the default builder's tcpConnect:false).
+   *  CONFIRMED: Force SYN = tcpProbeMode 'SYN' + tcpConnect true (real
+   *  bulk-save payload). Force SACK = tcpProbeMode 'SACK' + tcpConnect
+   *  true and Prefer SACK = tcpProbeMode 'SACK' + tcpConnect false are
+   *  inferred from the "Force X"/"Prefer X" naming pattern and
+   *  buildEndpointNetworkConfig's own default (tcpProbeMode 'AUTO',
+   *  tcpConnect false) — not independently confirmed via a live capture of
+   *  those two specifically, so worth re-verifying if a save doesn't
+   *  stick as expected. */
+  const ENDPOINT_NETWORK_PROTOCOL_LABELS = {
+    AUTODETECT: 'Auto-detect',
+    ICMP: 'ICMP',
+    PREFER_TCP: 'Prefer TCP (ICMP fallback)'
+  };
+  const ENDPOINT_PROBING_MODES = [
+    { value: 'PREFER_SACK', label: 'Prefer SACK', tcpProbeMode: 'SACK', tcpConnect: false },
+    { value: 'FORCE_SACK', label: 'Force SACK', tcpProbeMode: 'SACK', tcpConnect: true },
+    { value: 'FORCE_SYN', label: 'Force SYN', tcpProbeMode: 'SYN', tcpConnect: true }
+  ];
+  function getEndpointNetworkProtocol(t) {
     const raw = unwrapEndpointTestRow(t);
     const nc = raw && raw.networkConfig;
-    if (!nc || typeof nc !== 'object') return 'AUTO';
-    return nc.tcpProbeMode || nc.probeMode || 'AUTO';
+    return (nc && nc.networkProtocol) || 'AUTODETECT';
+  }
+  /** Matches this test's current tcpProbeMode+tcpConnect pair against
+   *  ENDPOINT_PROBING_MODES, defaulting to Prefer SACK (the unforced
+   *  baseline) when unset or unrecognized. Only meaningful when
+   *  getEndpointNetworkProtocol(t) === 'PREFER_TCP'. */
+  function getEndpointProbingMode(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const nc = raw && raw.networkConfig;
+    const mode = nc && nc.tcpProbeMode;
+    const connect = !!(nc && nc.tcpConnect);
+    return ENDPOINT_PROBING_MODES.find((m) => m.tcpProbeMode === mode && m.tcpConnect === connect)
+      || ENDPOINT_PROBING_MODES[0];
+  }
+  /** Single human-readable label for a test's whole probing setup — the
+   *  protocol name unless it's Prefer TCP, in which case the more specific
+   *  probing-mode label (Prefer/Force SACK, Force SYN) is more useful. */
+  function getEndpointProbeSummaryLabel(t) {
+    const protocol = getEndpointNetworkProtocol(t);
+    if (protocol === 'PREFER_TCP') return getEndpointProbingMode(t).label;
+    return ENDPOINT_NETWORK_PROTOCOL_LABELS[protocol] || protocol;
+  }
+  /** pathtraceInSession only ever means anything for TCP (CONFIRMED
+   *  elsewhere in this file for enterprise tests too — see the
+   *  proto === 'TCP' ? inSession : 0 pattern), so this is only relevant
+   *  when getEndpointNetworkProtocol(t) === 'PREFER_TCP'. */
+  function getEndpointPathtraceInSession(t) {
+    const raw = unwrapEndpointTestRow(t);
+    const nc = raw && raw.networkConfig;
+    return !!(nc && nc.pathtraceInSession);
   }
 
   /** TE /endpoint/views/ scenario ids mirror EndpointTestTemplateApp (scheduled + dynamic). */
@@ -13777,6 +14250,12 @@
     if (countEl) countEl.textContent = `${count} selected`;
     if (bar) bar.classList.toggle('active', count > 0);
   }
+  /** Same "Clear selected" as the Manage Tests bulk bar. */
+  function clearEndpointBulkSelection() {
+    selectedEndpointTestIds.clear();
+    root.querySelectorAll('.tep-ep-test-card-check').forEach((cb) => { cb.checked = false; });
+    updateEndpointBulkUI();
+  }
 
   async function loadEndpointTests() {
     const listEl = $('#tep-ep-test-list');
@@ -13851,10 +14330,9 @@
       const typeLabel = typeLabels[t.testType] || t.testType || '?';
       const target = getEndpointTestTarget(t);
       const interval = getEndpointTestInterval(t);
-      const probe = getEndpointProbeMode(t);
       const categoryLabel = getEndpointTestCategoryLabel(t);
       const intervalLabel = isDynamic ? 'On demand' : formatInterval(interval);
-      const probeLabel = isDynamic ? '—' : String(probe);
+      const probeLabel = isDynamic ? '—' : getEndpointProbeSummaryLabel(t);
       const enabled = isEndpointTestEnabled(t) ? 'on' : 'off';
       const statusLabel = isEndpointTestEnabled(t) ? 'Enabled' : 'Disabled';
       const statusClass = isEndpointTestEnabled(t) ? 'tep-test-status-text--on' : 'tep-test-status-text--off';
@@ -13887,7 +14365,7 @@
           <span title="Test category">${tepEscapeHtmlText(categoryLabel)}</span>
           <span>${tepEscapeHtmlText(target ? String(target).substring(0, 50) : '—')}</span>
           <span title="${isDynamic ? 'Dynamic tests run on demand' : 'Test interval'}">${tepEscapeHtmlText(intervalLabel)}</span>
-          <span title="${isDynamic ? 'Not applicable for dynamic tests' : 'networkConfig.tcpProbeMode'}">Probe: ${tepEscapeHtmlText(probeLabel)}</span>
+          <span title="${isDynamic ? 'Not applicable for dynamic tests' : 'networkConfig.networkProtocol (+ tcpProbeMode/tcpConnect when Prefer TCP)'}">Probe: ${tepEscapeHtmlText(probeLabel)}</span>
         </div>
       `;
       const cb = card.querySelector('.tep-ep-test-card-check');
@@ -14517,22 +14995,29 @@
     const card = document.createElement('div');
     card.className = 'tep-test-card';
     const href = buildEndpointAgentViewUrl(agent);
-    const meta = [];
-    if (epAgentsNearRef) {
+    // Four explicit meta rows (each its own .tep-test-card-meta, stacked via
+    // that class's own margin-top) instead of one flex-wrap bag left to
+    // reflow unpredictably at different panel widths: row 2 is just the
+    // username, row 3 is location + license, row 4 is OS + the live
+    // CPU/RAM/disk/battery readings. "Last contact" moved into the header
+    // row instead (see lastSeenHtml below).
+    const distMeta = epAgentsNearRef ? (() => {
       const g = epAgentGeo(agent);
       const dist = g ? tepFmtDistance(tepHaversineKm(epAgentsNearRef.lat, epAgentsNearRef.lng, g.lat, g.lng)) : 'unknown';
-      meta.push(`<span title="Distance from selected map point" style="color:#fdba74;font-weight:700;">◎ ${tepEscapeHtmlText(dist)}</span>`);
-    }
-    if (agent.users.length) meta.push(`<span title="Users" style="color:#f8fafc;font-weight:600;">${tepEscapeHtmlText(agent.users.join(', '))}</span>`);
-    meta.push(`<span title="Location">${tepEscapeHtmlText(agent.location || '—')}</span>`);
-    meta.push(`<span title="Last contact">${tepEscapeHtmlText(agent.lastSeenMs ? epRelativeTime(agent.lastSeenMs) : '—')}</span>`);
-    if (agent.license) meta.push(`<span title="License type">${tepEscapeHtmlText(agent.license)}</span>`);
+      return `<span title="Distance from selected map point" style="color:var(--tep-orange-fg);font-weight:700;">◎ ${tepEscapeHtmlText(dist)}</span>`;
+    })() : '';
+    const userMetaHtml = agent.users.length
+      ? `<div class="tep-test-card-meta"><span title="Users" style="color:var(--tep-slate-50);font-weight:600;">${tepEscapeHtmlText(agent.users.join(', '))}</span></div>`
+      : '';
+    const locMeta = [distMeta, `<span title="Location">${tepEscapeHtmlText(agent.location || '—')}</span>`];
+    if (agent.license) locMeta.push(`<span title="License type">${tepEscapeHtmlText(agent.license)}</span>`);
     const os = epAgentOsInfo(agent);
-    meta.push(`<span title="${tepEscapeHtmlText(os.title || os.label)}" style="gap:4px;">${EP_OS_ICON[os.key] || EP_OS_ICON.other}${tepEscapeHtmlText(os.label)}</span>`);
-    if (agent.cpu != null) meta.push(`<span title="Last CPU usage" style="color:#f8fafc;font-weight:600;">CPU ${tepEscapeHtmlText(agent.cpu)}</span>`);
-    if (agent.ram != null) meta.push(`<span title="Last RAM usage" style="color:#f8fafc;font-weight:600;">RAM ${tepEscapeHtmlText(agent.ram)}</span>`);
-    if (agent.disk != null) meta.push(`<span title="Disk usage">Disk ${tepEscapeHtmlText(agent.disk)}</span>`);
-    if (agent.battery != null) meta.push(tepBatteryHtml(agent));
+    const sysMeta = [`<span title="${tepEscapeHtmlText(os.title || os.label)}" style="gap:4px;">${EP_OS_ICON[os.key] || EP_OS_ICON.other}${tepEscapeHtmlText(os.label)}</span>`];
+    if (agent.cpu != null) sysMeta.push(`<span title="Last CPU usage" style="color:var(--tep-slate-50);font-weight:600;">CPU ${tepEscapeHtmlText(agent.cpu)}</span>`);
+    if (agent.ram != null) sysMeta.push(`<span title="Last RAM usage" style="color:var(--tep-slate-50);font-weight:600;">RAM ${tepEscapeHtmlText(agent.ram)}</span>`);
+    if (agent.disk != null) sysMeta.push(`<span title="Disk usage">Disk ${tepEscapeHtmlText(agent.disk)}</span>`);
+    if (agent.battery != null) sysMeta.push(tepBatteryHtml(agent));
+    const lastSeenHtml = `<span title="Last contact" style="color:var(--tep-slate-500);flex-shrink:0;">${tepEscapeHtmlText(agent.lastSeenMs ? epRelativeTime(agent.lastSeenMs) : '—')}</span>`;
     const labelsHtml = agent.labels.length
       ? `<div class="tep-test-card-meta">${agent.labels.map((l) => `<span class="tep-type-badge tep-type-other">${tepEscapeHtmlText(l)}</span>`).join(' ')}</div>`
       : '';
@@ -14546,13 +15031,13 @@
     // available, same as the map hover card — falls back to the flat green
     // it always had when no score was found.
     const agentWifiScoreColor = agent.connKind === 'wifi' && agent.wifiScore != null ? tepWifiScoreColor(agent.wifiScore).fill : null;
-    const connColor = agent.connKind === 'wifi' ? (agentWifiScoreColor || '#4ade80') : '#94a3b8';
+    const connColor = agent.connKind === 'wifi' ? (agentWifiScoreColor || 'var(--tep-green)') : 'var(--tep-slate-400)';
     const connTitle = agent.connKind === 'wifi' ? `Wi-Fi${agent.wifiScore != null ? ` — signal ${agent.wifiScore}%` : ''}` : 'Ethernet';
     const connHtml = agent.connKind && EP_CONN_ICON[agent.connKind]
       ? `<span class="tep-agent-conn" title="${connTitle}" style="flex-shrink:0;display:inline-flex;color:${connColor};" aria-label="${connTitle}">${EP_CONN_ICON[agent.connKind]}</span>`
       : '';
     const vpnHtml = (typeof agent.vpn === 'boolean')
-      ? `<span class="tep-agent-vpn" title="${agent.vpn ? 'On VPN (last sample)' : 'Not on VPN (last sample)'}" style="flex-shrink:0;display:inline-flex;color:${agent.vpn ? '#facc15' : '#475569'};" aria-label="${agent.vpn ? 'On VPN' : 'Not on VPN'}">${EP_VPN_ICON}</span>`
+      ? `<span class="tep-agent-vpn" title="${agent.vpn ? 'On VPN (last sample)' : 'Not on VPN (last sample)'}" style="flex-shrink:0;display:inline-flex;color:${agent.vpn ? 'var(--tep-yellow)' : 'var(--tep-slate-600)'};" aria-label="${agent.vpn ? 'On VPN' : 'Not on VPN'}">${EP_VPN_ICON}</span>`
       : '';
     card.innerHTML = `
       <div class="tep-test-card-header">
@@ -14561,8 +15046,11 @@
         ${nameHtml}
         ${connHtml}
         ${vpnHtml}
+        ${lastSeenHtml}
       </div>
-      <div class="tep-test-card-meta">${meta.join('')}</div>
+      ${userMetaHtml}
+      <div class="tep-test-card-meta">${locMeta.filter(Boolean).join('')}</div>
+      <div class="tep-test-card-meta">${sysMeta.join('')}</div>
       ${labelsHtml}
     `;
     card.__tepAgent = agent;
@@ -14573,7 +15061,7 @@
   function appendEndpointAgentGroupHeader(listEl, label, count) {
     const head = document.createElement('div');
     head.className = 'tep-agent-group-head';
-    head.style.cssText = 'margin:12px 0 4px;padding-bottom:2px;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(148,163,184,.25);';
+    head.style.cssText = 'margin:12px 0 4px;padding-bottom:2px;font-size:11px;font-weight:600;color:var(--tep-slate-400);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(148,163,184,.25);';
     head.textContent = `${label} (${count})`;
     listEl.appendChild(head);
   }
@@ -15305,7 +15793,7 @@
   }
   /** Marker colour purely from health: green (healthy) → red (unhealthy); gray = unknown. */
   function tepHealthColor(level) {
-    if (level === 'unknown') return { fill: '#64748b', stroke: '#cbd5e1' };
+    if (level === 'unknown') return { fill: 'var(--tep-slate-500)', stroke: 'var(--tep-slate-300)' };
     const f = level === 'healthy' ? 0 : (level === 'warning' ? 0.5 : 1);
     return tepHealthColorFrac(f);
   }
@@ -15367,7 +15855,7 @@
   }
   /** {fill,stroke} for a 0-100 score, same smooth gradient (and red floor) the
    *  SaaS/Network Health widgets' own rings already use — a plain default
-   *  blue (same #3b82f6/#93c5fd pairing used elsewhere in this panel, e.g.
+   *  blue (same var(--tep-blue)/var(--tep-blue-soft) pairing used elsewhere in this panel, e.g.
    *  the Data Window slider's accent) when there's no score to show.
    *  Deliberately NOT gray: gray sits inside the same low-saturation range
    *  the new recency-opacity fade already pushes old markers toward, so a
@@ -15376,7 +15864,7 @@
    *  different kind of state" rather than "bad health," and (unlike gray)
    *  still has enough contrast to stay visible at low opacity. */
   function tepColorFromScore(score) {
-    if (score == null || !Number.isFinite(score)) return { fill: '#3b82f6', stroke: '#93c5fd' };
+    if (score == null || !Number.isFinite(score)) return { fill: 'var(--tep-blue)', stroke: 'var(--tep-blue-soft)' };
     const f = Math.max(0, Math.min(1, (100 - score) / (100 - TEP_HEALTH_RED_FLOOR_PCT)));
     return tepHealthColorFrac(f);
   }
@@ -15387,7 +15875,7 @@
    *  blend) rather than a continuous gradient — red only below 60%, then
    *  progressively greener bands up to a full green at 93%+. */
   function tepWifiScoreColor(score) {
-    if (score == null || !Number.isFinite(score)) return { fill: '#3b82f6', stroke: '#93c5fd' };
+    if (score == null || !Number.isFinite(score)) return { fill: 'var(--tep-blue)', stroke: 'var(--tep-blue-soft)' };
     const stop = score < 60 ? [220, 38, 38]      // red
       : score < 75 ? [249, 115, 22]              // orange
         : score < 85 ? [250, 204, 21]            // yellow
@@ -15527,7 +16015,7 @@
       // list to begin with). Search/alerts exist to locate a SPECIFIC
       // agent; they should win.
       const searchHit = dashMapSearchQuery
-        && dashMapItemMatchesQuery({ name: a.agentName, location: a.location, ip: a.ip }, dashMapSearchQuery);
+        && dashMapItemMatchesQuery({ name: a.agentName, location: a.location, ip: a.ip, localIp: a.localIp }, dashMapSearchQuery);
       const alertHit = !!(dashMapAlertPreviewHighlight && dashMapAlertPreviewHighlight.has(String(a.agentId)));
       const listHoverHit = !!(dashMapAgentsListHoverHighlight && dashMapAgentsListHoverHighlight.has(String(a.agentId)));
       const exempt = searchHit || alertHit || listHoverHit;
@@ -15567,7 +16055,7 @@
         // Only offer a maps link when the coordinates are the agent's real ones.
         mapUrl: hasRealCoords ? tepGoogleMapsUrl(lat, lng) : null,
         agentId: a.agentId, latencyMs: liveTestLatencyFor(a.agentId),
-        ip: a.ip || '',
+        ip: a.ip || '', localIp: a.localIp || '',
       });
     }
     for (const a of allEndpointAgents) {
@@ -15681,7 +16169,7 @@
       ? `<span class="tep-map-tip-lat" style="color:${tepLiveNodeColor(it.latencyMs, it.lossPct, latGoalMs).stroke};font-weight:700;">${it.latencyMs}ms</span>`
       : '';
     const loss = (Number.isFinite(it.lossPct) && it.lossPct > 0)
-      ? `<span class="tep-map-tip-lat" style="color:#fca5a5;font-weight:700;">${Math.round(it.lossPct * 10) / 10}% loss</span>`
+      ? `<span class="tep-map-tip-lat" style="color:var(--tep-red-soft);font-weight:700;">${Math.round(it.lossPct * 10) / 10}% loss</span>`
       : '';
     // If this agent has a LIVE TEST flow, show the Google node it's connecting to.
     const dest = (it.agentId != null) ? liveTestDestByAgent.get(String(it.agentId)) : null;
@@ -15700,12 +16188,12 @@
     const ispHtml = isp
       ? `<div class="tep-map-tip-isp">${tepEscapeHtmlText(isp.isp)}${isp.publicIp ? ' · ' + tepEscapeHtmlText(isp.publicIp) : ''}${(isp.publicIp && lat) ? ' ' + lat : ''}</div>`
       : '';
-    // Endpoint-only local IP — hidden by default (rarely useful at a glance),
-    // but still searchable: dashMapItemMatchesQuery already matches it
-    // against dashMapSearchQuery, so a query that specifically hit THIS IP
-    // reveals it here instead of leaving the match unexplained.
+    // Local IP (endpoint or enterprise) — hidden by default (rarely useful at
+    // a glance), but still searchable: dashMapItemMatchesQuery already
+    // matches it against dashMapSearchQuery, so a query that specifically hit
+    // THIS IP reveals it here instead of leaving the match unexplained.
     const ipMatchedSearch = !!(dashMapSearchQuery && it.localIp && it.localIp.toLowerCase().includes(dashMapSearchQuery));
-    const ipHtml = (it.kind === 'endpoint' && it.localIp && ipMatchedSearch)
+    const ipHtml = (it.localIp && ipMatchedSearch)
       ? `<div class="tep-map-tip-ip">${tepEscapeHtmlText(it.localIp)}</div>` : '';
     // CPU/RAM/disk/battery/connection/VPN — populated only after this
     // agent's segment-visualisation enrichment resolves (triggered lazily
@@ -15716,7 +16204,7 @@
     // not the generic health gradient — falling back to the flat blue it
     // always had when no score was found.
     const wifiScoreColor = it.connKind === 'wifi' && it.wifiScore != null ? tepWifiScoreColor(it.wifiScore).fill : null;
-    const connColor = it.connKind === 'wifi' ? (wifiScoreColor || '#93c5fd') : (it.connKind === 'ethernet' ? '#86efac' : '#94a3b8');
+    const connColor = it.connKind === 'wifi' ? (wifiScoreColor || 'var(--tep-blue-soft)') : (it.connKind === 'ethernet' ? '#86efac' : 'var(--tep-slate-400)');
     const connTitle = it.connKind === 'wifi' ? `Wi-Fi${it.wifiScore != null ? ` — signal ${it.wifiScore}%` : ''}` : 'Ethernet';
     const connHtml = it.kind === 'endpoint' && it.connKind && EP_CONN_ICON[it.connKind]
       ? `<span title="${connTitle}" style="display:inline-flex;color:${connColor};">${EP_CONN_ICON[it.connKind]}</span>` : '';
@@ -15833,24 +16321,67 @@
     }
     return false;
   }
-  function tepDashTooltipHtml(cluster) {
-    const loc = cluster.items[0].location || 'Unknown';
-    const n = cluster.items.length;
-    const head = `<span>${tepEscapeHtmlText(loc)}${n > 1 ? ' · ' + n + ' agents' : ''}</span>`;
-    const cap = 60;
-    // Any current highlight match (search, alert, test-row hover, or
-    // agents-list hover — see tepItemIsMapHighlightMatch) surfaces first,
-    // ahead of even loss/latency — that's specifically who this tooltip was
-    // opened to point out. Loss-having agents surface next (a lossy agent
-    // is the more actionable signal than raw latency), then worst latency,
-    // then original order. data-idx (read by openTipAgent) must still point
-    // at the item's position in the UNSORTED cluster.items, so pair each
-    // with its real index before sorting a copy just for display order.
-    const ordered = cluster.items.map((it, idx) => ({ it, idx }));
-    ordered.sort((a, b) => {
+  /** Rough "network ID" for the maximize view's columns — an agent's own
+   *  local IP truncated to its /24, since no agent (endpoint or enterprise)
+   *  ever reports a gateway IP anywhere in the data this panel fetches.
+   *  Enterprise agents' local IP comes from /ajax/settings/tests/
+   *  physical-agents/enterprise (pa.ipAddress — see loadAgents), the same
+   *  per-load fetch that already backs the sidebar list, so grouping them
+   *  here costs no extra request. Any agent (either kind) missing a local IP
+   *  falls into a shared "Other agents" column instead of being dropped from
+   *  the expanded view entirely. */
+  function tepClusterNetworkGroups(items) {
+    const bySubnet = new Map();
+    const other = [];
+    items.forEach((it, idx) => {
+      const m = it.localIp
+        ? /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(String(it.localIp).trim())
+        : null;
+      if (m) {
+        const key = m[1] + '.0/24';
+        if (!bySubnet.has(key)) bySubnet.set(key, []);
+        bySubnet.get(key).push({ it, idx });
+      } else {
+        other.push({ it, idx });
+      }
+    });
+    // Numeric subnet order (192.168.1.0/24 before 192.168.4.0/24), not
+    // biggest-column-first — reads as a natural, scannable network list
+    // instead of shuffling every time a column's agent count changes.
+    const groups = Array.from(bySubnet.entries())
+      .map(([label, entries]) => ({ label, entries }))
+      .sort((a, b) => {
+        const oa = a.label.split('.').map(Number);
+        const ob = b.label.split('.').map(Number);
+        for (let i = 0; i < 4; i++) { if (oa[i] !== ob[i]) return oa[i] - ob[i]; }
+        return 0;
+      });
+    if (other.length) groups.push({ label: 'Other agents', entries: other });
+    return groups;
+  }
+  /** Shared row order for BOTH the regular cluster hover card
+   *  (tepDashTooltipHtml) and the maximize view's per-column lists — a
+   *  highlight match (search, alert, test-row hover, agents-list hover)
+   *  always surfaces first, ahead of even a bad score — that's specifically
+   *  who this list was opened to point out. After that, the aggregate App/
+   *  Net score (tepColorScoreForItem — the exact same 0-100 blend that
+   *  colors the marker itself) sorts worst-first, CONFIRMED via user
+   *  request, so the agent most worth looking at is always at the top of
+   *  its column instead of buried in whatever order the map happened to
+   *  build the cluster in. An item with no score yet (null — no App/Net
+   *  data at all, not "0/bad") sorts after every scored item rather than
+   *  first, since "unknown" isn't the same claim as "unhealthy". Loss-then-
+   *  latency is the final tiebreaker for equal/missing scores. */
+  function tepSortTipEntries(entries) {
+    return entries.slice().sort((a, b) => {
       const aHit = tepItemIsMapHighlightMatch(a.it);
       const bHit = tepItemIsMapHighlightMatch(b.it);
       if (aHit !== bHit) return aHit ? -1 : 1;
+      const as = tepColorScoreForItem(a.it);
+      const bs = tepColorScoreForItem(b.it);
+      if (as == null && bs != null) return 1;
+      if (as != null && bs == null) return -1;
+      if (as != null && bs != null && as !== bs) return as - bs;
       const aLoss = Number.isFinite(a.it.lossPct) && a.it.lossPct > 0;
       const bLoss = Number.isFinite(b.it.lossPct) && b.it.lossPct > 0;
       if (aLoss !== bLoss) return aLoss ? -1 : 1;
@@ -15858,6 +16389,50 @@
       const bv = Number.isFinite(b.it.latencyMs) ? b.it.latencyMs : -1;
       return bv - av;
     });
+  }
+  /** Grouped, large-format board for a whole cluster — opened via the hover
+   *  card's maximize button (tepDashTooltipHtml, n>1 only). data-idx on each
+   *  row still points into the ORIGINAL cluster.items array (not the
+   *  per-column list), so the existing row click handling (openTipAgent)
+   *  works unmodified against it. */
+  function tepClusterMaxViewHtml(cluster) {
+    const loc = cluster.items[0].location || 'Unknown';
+    const n = cluster.items.length;
+    const cols = tepClusterNetworkGroups(cluster.items).map((g) => {
+      const rows = tepSortTipEntries(g.entries).map(({ it, idx }) => tepDashTipRow(it, idx)).join('');
+      // "Network: " prefix only for real subnet labels — the "Other agents"
+      // catch-all isn't a network id, so it stays bare.
+      const labelText = g.label === 'Other agents' ? g.label : `Network: ${g.label}`;
+      return '<div class="tep-cluster-max-col">'
+        + `<div class="tep-cluster-max-col-head"><span class="tep-cluster-max-col-ip">${tepEscapeHtmlText(labelText)}</span><span class="tep-cluster-max-col-count">${g.entries.length}</span></div>`
+        + `<div class="tep-cluster-max-col-body">${rows}</div>`
+        + '</div>';
+    }).join('');
+    const closeIcon = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+    const searchIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+    const searchHtml = '<div class="tep-cluster-max-search">' + searchIcon
+      + '<input type="text" id="tep-cluster-max-search-input" placeholder="Find agent…" autocomplete="off" spellcheck="false" aria-label="Find an agent in this cluster" />'
+      + '<button type="button" class="tep-cluster-max-search-clear" id="tep-cluster-max-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">✕</button>'
+      + '</div>';
+    return `<div class="tep-cluster-max-head"><span>${tepEscapeHtmlText(loc)} · ${n} agent${n === 1 ? '' : 's'}</span>`
+      + `<div class="tep-cluster-max-head-right">${searchHtml}`
+      + `<button type="button" class="tep-cluster-max-close" title="Close" aria-label="Close">${closeIcon}</button></div></div>`
+      + `<div class="tep-cluster-max-body">${cols}</div>`;
+  }
+  function tepDashTooltipHtml(cluster) {
+    const loc = cluster.items[0].location || 'Unknown';
+    const n = cluster.items.length;
+    const maxBtn = n > 1
+      ? '<button type="button" class="tep-map-tip-maxbtn" data-action="tep-cluster-max" title="Expand full cluster view" aria-label="Expand full cluster view">'
+        + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></button>'
+      : '';
+    const head = `<span>${tepEscapeHtmlText(loc)}${n > 1 ? ' · ' + n + ' agents' : ''}</span>${maxBtn}`;
+    const cap = 60;
+    // Same order the maximize view's columns use — see tepSortTipEntries.
+    // data-idx (read by openTipAgent) must still point at the item's
+    // position in the UNSORTED cluster.items, so pair each with its real
+    // index before sorting a copy just for display order.
+    const ordered = tepSortTipEntries(cluster.items.map((it, idx) => ({ it, idx })));
     let body = ordered.slice(0, cap).map(({ it, idx }) => tepDashTipRow(it, idx)).join('');
     if (n > cap) body += `<div class="tep-map-tip-more">+${n - cap} more…</div>`;
     body = `<div class="tep-map-tip-body">${body}</div>`;
@@ -15936,13 +16511,23 @@
     return onLand;
   }
 
+  /** Legend "icon + count" spans for the sidebar Agent Map — replaces the
+   *  old separate "X/X enterprise · Y/Y endpoint agent(s) on map" row and
+   *  its reload button (CONFIRMED via user request to fold the counts into
+   *  the legend itself, icon + number only, no more words). Fullscreen has
+   *  no such legend spans, so this silently no-ops there. */
+  function tepSetDashMapLegendCounts(entText, epText) {
+    const entEl = $('#tep-dash-map-legend-ent-n');
+    const epEl = $('#tep-dash-map-legend-ep-n');
+    if (entEl) entEl.textContent = entText;
+    if (epEl) epEl.textContent = epText;
+  }
   /** Render the combined enterprise+endpoint agent map. host defaults to the inline
    *  panel host; pass opts.full=true to fill a fullscreen container. */
   function renderDashboardAgentMap(hostEl, opts) {
     const full = !!(opts && opts.full);
     const preserveZoom = !!(opts && opts.preserveZoom);
     const host = hostEl || $('#tep-dash-map-host');
-    const countEl = full ? null : $('#tep-dash-map-count');
     if (!host) return;
     // Whether host already shows a real map — a background refresh
     // (preserveZoom) that suddenly computes zero/ungeocodable agents is far
@@ -15973,13 +16558,13 @@
         return;
       }
       host.innerHTML = '<div class="tep-dash-map-empty">No agents loaded yet — use the reload button above.</div>';
-      if (countEl) countEl.textContent = 'No agents.';
+      if (!full) tepSetDashMapLegendCounts('0/0', '0/0');
       return;
     }
     if (!list.length) {
       if (preserveZoom && hadRealMap) return;
       host.innerHTML = '<div class="tep-dash-map-empty">' + (entTotal + epTotal) + ' agent(s) found, but none could be geolocated from their location text.</div>';
-      if (countEl) countEl.textContent = (entTotal + epTotal) + ' agent(s) · none plottable';
+      if (!full) tepSetDashMapLegendCounts(`${entMapped}/${entTotal}`, `${epMapped}/${epTotal}`);
       return;
     }
 
@@ -16507,7 +17092,18 @@
       it.wifiScore = agent.wifiScore != null ? agent.wifiScore : null;
       it.vpn = agent.vpn === true;
       if (tip._cluster === cluster && tip.style.display !== 'none') {
+        // Preserve scroll position across this re-render — CONFIRMED via
+        // user report: a plain innerHTML swap resets .tep-map-tip-body's
+        // scrollTop to 0, and since this fires per-row as each agent's
+        // enrichment resolves (one after another while scrolling a big
+        // cluster), it kept yanking the list back to the top mid-scroll.
+        const bodyEl = tip.querySelector('.tep-map-tip-body');
+        const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
         tip.innerHTML = tepDashTooltipHtml(cluster);
+        if (scrollTop) {
+          const newBodyEl = tip.querySelector('.tep-map-tip-body');
+          if (newBodyEl) newBodyEl.scrollTop = scrollTop;
+        }
         if (marker && marker.isConnected) positionTip(marker);
       }
     }
@@ -16584,9 +17180,15 @@
         if (dashMapSearchHook) dashMapSearchHook.refresh();
       }
     }
-    function openTipAgent(row, isNameClick, metricKind) {
-      if (!row || !tip._cluster) return;
-      const it = tip._cluster.items[parseInt(row.dataset.idx, 10)];
+    // clusterOverride: the maximize view (openClusterMaxView, below) lives
+    // outside `wrap` and can stay open well after the small hover card that
+    // spawned it has closed (and nulled tip._cluster on mouseout) — its own
+    // rows pass their own captured cluster reference here instead of relying
+    // on tip._cluster still pointing at the right one.
+    function openTipAgent(row, isNameClick, metricKind, clusterOverride) {
+      const cluster = clusterOverride || tip._cluster;
+      if (!row || !cluster) return;
+      const it = cluster.items[parseInt(row.dataset.idx, 10)];
       if (!it) return;
       // Clicking the App or Net value (tepDashTipRow's metric-pair spans)
       // opens the same test-list popover as the rest of the row, but scoped
@@ -16615,6 +17217,121 @@
       }
       armPopoverAutoClose();
       void toggleAgentTestsPopover(row, it);
+    }
+    // --- Cluster maximize view (tep-cluster-max-*) ---------------------------
+    let clusterMaxEl = null;
+    let clusterMaxKeyHandler = null;
+    function hideClusterMaxView() {
+      if (!clusterMaxEl) return;
+      tepPlayClusterMaxPop(false);
+      document.removeEventListener('keydown', clusterMaxKeyHandler, true);
+      // Reverse of the open transition below — remove the --in class (fires
+      // the CSS opacity/scale transition back out, shrinking toward the
+      // SAME transform-origin point it grew from since nothing resets it)
+      // and only actually strip the element once that's had time to finish,
+      // instead of yanking it out instantly. 380ms matches .tep-cluster-max-
+      // panel's own transition duration (its own constant, not the shared
+      // TEP_TOGGLE_ANIM_MS=300 other unrelated toggles use — this view's
+      // zoom transition is intentionally a bit slower than those).
+      const el = clusterMaxEl;
+      el.classList.remove('tep-cluster-max-overlay--in');
+      setTimeout(() => { try { el.remove(); } catch (_) { /* */ } }, 380);
+      clusterMaxEl = null;
+      clusterMaxKeyHandler = null;
+    }
+    /** Opens a large, columned board of every agent in `cluster` (grouped by
+     *  local-IP /24 — see tepClusterNetworkGroups). Sits right below TE's
+     *  own 56px title bar — CONFIRMED via user request the old behavior
+     *  (clearing the fullscreen map's floating widget row too, measured off
+     *  #tep-dashmap-widgets) left a large, wasted gap up top; the overlay's
+     *  own dark backdrop (.tep-cluster-max-overlay) already dims whatever's
+     *  underneath, so there's no real need to physically dodge the widgets
+     *  row anymore — this covers it instead of pushing below it. */
+    function openClusterMaxView(cluster, originRect) {
+      if (!cluster || !cluster.items || !cluster.items.length) return;
+      hideClusterMaxView();
+      hideTip();
+      const topPx = 66;
+      const overlay = document.createElement('div');
+      // Mounted on <html> (below), so — like the Tests popover above —
+      // being a CSS descendant of .tep-dashmap-full never applied here;
+      // only pin it dark when THIS open came from the fullscreen map, so
+      // the inline map's own maximize view still follows the panel's
+      // light/dark toggle.
+      overlay.className = 'tep-cluster-max-overlay' + (full ? ' tep-fs-pop' : '');
+      const panel = document.createElement('div');
+      panel.className = 'tep-cluster-max-panel';
+      panel.style.top = topPx + 'px';
+      // Zoom FROM the maximize button's own on-screen spot (right where the
+      // cluster's hover card was) instead of a generic center-anchored pop —
+      // CONFIRMED via user request ("look more like it zoomed into that
+      // size and vice versa"). transform-origin is a % of the PANEL's own
+      // (untransformed) box, computed against its known CSS geometry
+      // (left/right:24px, top:topPx, bottom:24px) rather than
+      // getBoundingClientRect(), which would still read the pre-transition
+      // scaled-down size at this point. Same origin drives the close
+      // transition too (nothing resets it), so it shrinks back toward the
+      // exact same spot it grew from.
+      const panelW = window.innerWidth - 48;
+      const panelH = window.innerHeight - topPx - 24;
+      const ox = originRect ? originRect.left + originRect.width / 2 : window.innerWidth / 2;
+      const oy = originRect ? originRect.top + originRect.height / 2 : window.innerHeight / 2;
+      const originXPct = Math.max(0, Math.min(100, ((ox - 24) / panelW) * 100));
+      const originYPct = Math.max(0, Math.min(100, ((oy - topPx) / panelH) * 100));
+      panel.style.transformOrigin = originXPct + '% ' + originYPct + '%';
+      panel.innerHTML = tepClusterMaxViewHtml(cluster);
+      overlay.appendChild(panel);
+      document.documentElement.appendChild(overlay);
+      clusterMaxEl = overlay;
+      tepPlayClusterMaxPop(true);
+      // Double rAF for the same reason as the fullscreen map's own mount-time
+      // fade-in — guarantees the opacity:0/scaled-down starting state
+      // actually paints before the transition to --in begins, or the browser
+      // can coalesce both into one frame and skip the animation entirely.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => { overlay.classList.add('tep-cluster-max-overlay--in'); });
+      });
+      clusterMaxKeyHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); hideClusterMaxView(); } };
+      document.addEventListener('keydown', clusterMaxKeyHandler, true);
+      // Mini search (top-right of the header) — plain in-place row filter,
+      // not a map re-frame like the main dashboard search: matches against
+      // each row's own rendered text (name, location, health, etc.), hiding
+      // non-matching rows and any column left with none visible, so finding
+      // one agent in a big cluster doesn't mean scanning every column by eye.
+      const searchInput = panel.querySelector('#tep-cluster-max-search-input');
+      const searchClear = panel.querySelector('#tep-cluster-max-search-clear');
+      const applySearch = () => {
+        const q = (searchInput.value || '').trim().toLowerCase();
+        searchClear.style.display = q ? '' : 'none';
+        panel.querySelectorAll('.tep-cluster-max-col').forEach((colEl) => {
+          let visible = 0;
+          colEl.querySelectorAll('.tep-map-tip-agent').forEach((row) => {
+            const hit = !q || row.textContent.toLowerCase().includes(q);
+            row.style.display = hit ? '' : 'none';
+            if (hit) visible++;
+          });
+          colEl.classList.toggle('tep-cluster-max-col--search-hidden', !!q && visible === 0);
+        });
+      };
+      if (searchInput) searchInput.addEventListener('input', applySearch);
+      if (searchClear) {
+        searchClear.addEventListener('click', () => {
+          searchInput.value = '';
+          applySearch();
+          searchInput.focus();
+        });
+      }
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.closest('.tep-cluster-max-close')) { hideClusterMaxView(); return; }
+        if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
+        if (e.target.closest('.tep-map-tip-metricrow--alert')) return; // let the alert's own test link open
+        if (e.target.closest('.tep-map-tip-metricrow--link')) return; // let the Agent Settings/Views link open
+        const row = e.target.closest('.tep-map-tip-agent');
+        if (!row) return;
+        const metricPair = e.target.closest('.tep-map-tip-metric-pair');
+        const isNameClick = !!e.target.closest('.tep-map-tip-name') && !e.target.closest('.tep-map-tip-health');
+        openTipAgent(row, isNameClick, metricPair && metricPair.dataset.metric, cluster);
+      });
     }
     wrap.addEventListener('mouseover', (e) => {
       const m = e.target.closest('.tep-agent-map-marker');
@@ -16664,6 +17381,16 @@
     // should still behave like the rest of the row (open the tests popover)
     // — not like clicking the name itself.
     tip.addEventListener('click', (e) => {
+      const maxBtn = e.target.closest('.tep-map-tip-maxbtn');
+      // tip's own bounding rect (the whole hover card), not maxBtn's — the
+      // button sits pinned to the card's top-right corner, and since
+      // positionTip defaults to placing the card ABOVE the marker (only
+      // flipping below when there's no room), that corner is often well
+      // above the marker's actual position — CONFIRMED via user report the
+      // zoom-out was converging near the top of the screen instead of
+      // where the hover visually was. The card's own center tracks the
+      // marker much more closely.
+      if (maxBtn) { openClusterMaxView(tip._cluster, tip.getBoundingClientRect()); return; }
       if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
       if (e.target.closest('.tep-map-tip-metricrow--alert')) return; // let the alert's own test link open
       if (e.target.closest('.tep-map-tip-metricrow--link')) return; // let the Agent Settings/Views link open
@@ -16723,7 +17450,7 @@
         const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
         de.el.style.left = x + 'px';
         de.el.style.top = y + 'px';
-        destPx.push({ x, y, movable: false });
+        destPx.push({ x, y, movable: false, radius: 13 }); // ~26px G marker
       });
 
       // Agent markers can genuinely coincide (or nearly so) with a G marker,
@@ -16740,13 +17467,30 @@
       // back to shifting the OTHER (movable, i.e. non-Google) marker further
       // away to free up room — the conflicting marker itself is never forced
       // into the ocean just to resolve the overlap.
-      const MIN_SEP = 30; // px — clears the largest marker pair (24px cluster + 26px G) with a visible gap
+      // Required separation is now PER-PAIR (sum of each marker's own
+      // rendered radius, read straight off its SVG width, + a fixed gap) —
+      // NOT one flat constant like the old MIN_SEP=30. Cluster bubbles scale
+      // up to ~1.45x for a very large cluster (see clusterSize above), so a
+      // flat 30px cleared a small-cluster pair but not two big ones, which
+      // is exactly what left clusters overlapping heavily — CONFIRMED via
+      // user screenshot ("clusters overlapping this much make it hard to
+      // use"). Using the exact radius sum (not a smaller flat guess) means
+      // two conflicting markers end up fully separated (0% overlap) rather
+      // than just clearing some fraction of each other, comfortably past
+      // the "at least 50% of a node visible" ask.
+      const SEP_GAP = 6; // px — visible breathing room on top of the exact radius sum
+      const DEFAULT_RADIUS = 12; // fallback only, if a marker's SVG size can't be read
+      function markerRadiusPx(el) {
+        const svgEl = el && el.querySelector && el.querySelector('svg');
+        const wAttr = svgEl && parseFloat(svgEl.getAttribute('width'));
+        return (Number.isFinite(wAttr) && wAttr > 0) ? wAttr / 2 : DEFAULT_RADIUS;
+      }
       const WATER_SEARCH_DEG = [0, 25, -25, 50, -50, 75, -75, 100, -100, 130, -130, 160, -160, 180];
-      function landSafeSpot(baseAngle, px, py) {
+      function landSafeSpot(baseAngle, px, py, sep) {
         for (const offDeg of WATER_SEARCH_DEG) {
           const angle = baseAngle + offDeg * Math.PI / 180;
-          const cx = px + Math.cos(angle) * MIN_SEP;
-          const cy = py + Math.sin(angle) * MIN_SEP;
+          const cx = px + Math.cos(angle) * sep;
+          const cy = py + Math.sin(angle) * sep;
           const fxC = (cx - epDashMapZoom.tx) / (w * epDashMapZoom.s);
           const fyC = (cy - epDashMapZoom.ty) / (h * epDashMapZoom.s);
           if (tepIsViewboxPtOnLand(svg, fxC * TEP_BASEMAP.vbw, fyC * TEP_BASEMAP.vbh)) return { x: cx, y: cy };
@@ -16773,45 +17517,59 @@
       for (const m of markerEls) {
         const trueX = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
         const trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
+        const rM = markerRadiusPx(m);
         let x = trueX, y = trueY;
-        if (!midAnimation) for (const p of placedPx) {
-          const ddx = x - p.x, ddy = y - p.y;
-          const dist = Math.hypot(ddx, ddy);
-          if (dist < MIN_SEP) {
-            // Bearing from the conflicting point through this marker's OWN
-            // true position; only falls back to straight up on exact
-            // coincidence, where no real bearing exists to preserve.
-            const bx = trueX - p.x, by = trueY - p.y;
-            const blen = Math.hypot(bx, by);
-            const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
-            const spot = landSafeSpot(angle, p.x, p.y);
-            if (spot) {
-              x = spot.x; y = spot.y;
-            } else if (p.movable && p.el) {
-              // No land-safe angle around this conflict for OUR marker —
-              // shift the OTHER (already-placed, movable) marker away
-              // instead, and keep ours at its true position.
-              const pushAngle = Math.atan2(p.y - trueY, p.x - trueX);
-              p.x += Math.cos(pushAngle) * MIN_SEP;
-              p.y += Math.sin(pushAngle) * MIN_SEP;
-              p.el.style.left = p.x + 'px';
-              p.el.style.top = p.y + 'px';
-              if (p.mapKey) markerPxByKey.set(p.mapKey, { x: p.x, y: p.y });
-              x = trueX; y = trueY;
-            } else {
-              // Conflicting point is fixed (a G destination) with no
-              // land-safe angle available — fall back to the plain bearing
-              // nudge rather than leaving the markers stacked.
-              x = p.x + Math.cos(angle) * MIN_SEP;
-              y = p.y + Math.sin(angle) * MIN_SEP;
+        // Several passes, not just one reaction per conflict — with 3+
+        // markers crowded into the same small area, moving away from the
+        // FIRST conflict found could land right on top of a SECOND one a
+        // single pass never re-checked (the old behavior). Keeps resolving
+        // until nothing's left too close — usually 1-2 passes — or it's
+        // tried enough times that it settles for the closest miss found
+        // rather than looping forever on a genuinely packed cluster.
+        if (!midAnimation) for (let pass = 0; pass < 6; pass++) {
+          let moved = false;
+          for (const p of placedPx) {
+            const sep = rM + (p.radius != null ? p.radius : DEFAULT_RADIUS) + SEP_GAP;
+            const ddx = x - p.x, ddy = y - p.y;
+            const dist = Math.hypot(ddx, ddy);
+            if (dist < sep) {
+              // Bearing from the conflicting point through this marker's OWN
+              // true position; only falls back to straight up on exact
+              // coincidence, where no real bearing exists to preserve.
+              const bx = trueX - p.x, by = trueY - p.y;
+              const blen = Math.hypot(bx, by);
+              const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
+              const spot = landSafeSpot(angle, p.x, p.y, sep);
+              if (spot) {
+                x = spot.x; y = spot.y;
+              } else if (p.movable && p.el) {
+                // No land-safe angle around this conflict for OUR marker —
+                // shift the OTHER (already-placed, movable) marker away
+                // instead, and keep ours at its true position.
+                const pushAngle = Math.atan2(p.y - trueY, p.x - trueX);
+                p.x += Math.cos(pushAngle) * sep;
+                p.y += Math.sin(pushAngle) * sep;
+                p.el.style.left = p.x + 'px';
+                p.el.style.top = p.y + 'px';
+                if (p.mapKey) markerPxByKey.set(p.mapKey, { x: p.x, y: p.y });
+                x = trueX; y = trueY;
+              } else {
+                // Conflicting point is fixed (a G destination) with no
+                // land-safe angle available — fall back to the plain bearing
+                // nudge rather than leaving the markers stacked.
+                x = p.x + Math.cos(angle) * sep;
+                y = p.y + Math.sin(angle) * sep;
+              }
+              moved = true;
             }
           }
+          if (!moved) break;
         }
         m.style.left = x + 'px';
         m.style.top = y + 'px';
         const mapKey = m._fx.toFixed(6) + ',' + m._fy.toFixed(6);
         markerPxByKey.set(mapKey, { x, y });
-        placedPx.push({ x, y, movable: true, el: m, mapKey });
+        placedPx.push({ x, y, movable: true, el: m, mapKey, radius: rM });
       }
 
       // LIVE TEST flow overlay: source follows the (possibly nudged) agent
@@ -17041,7 +17799,14 @@
       dashMapAlertHook = {
         refreshOpenTip: () => {
           if (tip._cluster && tip.style.display !== 'none') {
+            // Same scroll-preserving swap as enrichEndpointAgentForTip above.
+            const bodyEl = tip.querySelector('.tep-map-tip-body');
+            const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
             tip.innerHTML = tepDashTooltipHtml(tip._cluster);
+            if (scrollTop) {
+              const newBodyEl = tip.querySelector('.tep-map-tip-body');
+              if (newBodyEl) newBodyEl.scrollTop = scrollTop;
+            }
           }
         },
       };
@@ -17268,9 +18033,7 @@
         e.stopPropagation();
       });
     }
-    if (countEl) {
-      countEl.textContent = `${entMapped}/${entTotal} enterprise · ${epMapped}/${epTotal} endpoint agent(s) on map`;
-    }
+    if (!full) tepSetDashMapLegendCounts(`${entMapped}/${entTotal}`, `${epMapped}/${epTotal}`);
   }
 
   /** Ensure agent data is present, then (re)render the dashboard map. The
@@ -17281,9 +18044,8 @@
    *  job is purely to make sure the data actually gets fetched. */
   async function loadDashboardMapAgents(force) {
     const host = $('#tep-dash-map-host');
-    const countEl = $('#tep-dash-map-count');
     if (host) host.innerHTML = '<span class="tep-log-info">Loading agents…</span>';
-    if (countEl) countEl.textContent = 'Loading…';
+    tepSetDashMapLegendCounts('…', '…');
     const jobs = [];
     // Endpoint agents are not fetched elsewhere on the dashboard page → load here.
     if (force || !allEndpointAgents.length) jobs.push(loadEndpointAgents().catch(() => {}));
@@ -17503,7 +18265,7 @@
     if (!container) return;
     const s = tepAgentWidgetStats();
     const entTot = s.entOnline + s.entOffline + s.entUnknown;
-    const entBar = tepWidgetBar([{ v: s.entOnline, color: '#22c55e' }, { v: s.entOffline, color: '#ef4444' }, { v: s.entUnknown, color: '#64748b' }]);
+    const entBar = tepWidgetBar([{ v: s.entOnline, color: '#22c55e' }, { v: s.entOffline, color: '#ef4444' }, { v: s.entUnknown, color: 'var(--tep-slate-500)' }]);
     const epBar = tepWidgetBar([{ v: s.epOnline, color: '#22c55e' }, { v: s.epOffline, color: '#ef4444' }]);
     // Each side of a radio pair dims while the OTHER side is explicitly
     // selected — both stay lit only when neither is (the default).
@@ -17513,7 +18275,7 @@
     // enterprise, head/shoulders = user) — currentColor so each just
     // inherits .tep-dash-widget-title's own muted color, no health signal
     // implied here (this is a plain label, not a specific agent).
-    const entTitleIcon = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.65" y="4" width="14.7" height="8" rx="2" style="fill:currentColor;stroke:currentColor;stroke-width:2"/><line x1="2.2" y1="9.3" x2="13.8" y2="9.3" stroke="#0f172a" stroke-width="1"/><circle cx="3.8" cy="6.7" r="1" fill="#0f172a"/></svg>';
+    const entTitleIcon = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.65" y="4" width="14.7" height="8" rx="2" style="fill:currentColor;stroke:currentColor;stroke-width:2"/><line x1="2.2" y1="9.3" x2="13.8" y2="9.3" stroke="var(--tep-slate-900)" stroke-width="1"/><circle cx="3.8" cy="6.7" r="1" fill="var(--tep-slate-900)"/></svg>';
     const epTitleIcon = `<svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">${tepUserIconInner('style="fill:currentColor;stroke:currentColor;stroke-width:2"')}</svg>`;
     const entWidget = tepWidgetCard(entTitleIcon + 'Enterprise Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ent', dashMapAgentTypeFilter === 'enterprise')
@@ -18494,6 +19256,70 @@
     const sev = 1 - score / 100;
     return { score, sev };
   }
+  const tepOneWayNetCache = new Map(); // testId -> { ts, windowSec, row }
+  const TEP_ONEWAY_NET_CACHE_MS = 2 * 60 * 1000;
+  /** One metric's raw timeline for a single OneWayNetwork test — CONFIRMED
+   *  via live capture: GET /ajax/agent/view/timeline/one-way-net/
+   *  {latency|loss}?testId=X&metricId=oneWayNet{Latency|Loss}&direction=
+   *  BIDIRECTIONAL → { chunks:[{startRoundId,intervalLength}], values:[...] }.
+   *  A flat array covering TE's own default multi-day range (NOT scoped to
+   *  the panel's Data Window — no window param exists on this endpoint),
+   *  values null wherever that round didn't report. */
+  async function tepFetchOneWayNetTimeline(testId, metric) {
+    const metricId = metric === 'latency' ? 'oneWayNetLatency' : 'oneWayNetLoss';
+    const url = `/ajax/agent/view/timeline/one-way-net/${metric}?testId=${encodeURIComponent(testId)}&metricId=${metricId}&direction=BIDIRECTIONAL`;
+    let resp;
+    try { resp = await ajax(url); } catch (e) { return null; }
+    if (!resp || !resp.ok) return null;
+    let json;
+    try { json = await resp.json(); } catch (_) { return null; }
+    const chunk = json && Array.isArray(json.chunks) ? json.chunks[0] : null;
+    const values = json && Array.isArray(json.values) ? json.values : null;
+    if (!chunk || !chunk.intervalLength || !values) return null;
+    return { intervalLength: chunk.intervalLength, values };
+  }
+  /** OneWayNetwork ("Agent to Agent") tests — CONFIRMED via live capture to
+   *  report latency/loss under their own per-test timeline endpoint above,
+   *  NOT the NAS-NET_LATENCY/NAS-NET_LOSS metrics regular Network (Agent-
+   *  to-Server) tests use (tepFetchNasMetricRaw), so they never appeared in
+   *  Network Health at all before this. Since the timeline endpoint always
+   *  returns its own full default range regardless of the panel's Data
+   *  Window, only the trailing window's-worth of values (by intervalLength)
+   *  is averaged here, so this test's contribution stays scoped the same
+   *  way every other Network Health row already is. Returns
+   *  [{title,sev,score,testId,avgLat,avgLoss}]. */
+  async function tepFetchOneWayNetworkHealth(force) {
+    const windowSec = tepMetricsWindowSec();
+    const tests = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'onewaynetwork' && t.flagEnabled && !t.flagDeleted);
+    const rows = [];
+    for (const t of tests) {
+      const testId = t.testId != null ? t.testId : t.id;
+      if (testId == null) continue;
+      const cached = tepOneWayNetCache.get(testId);
+      if (!force && cached && cached.windowSec === windowSec && (Date.now() - cached.ts) < TEP_ONEWAY_NET_CACHE_MS) {
+        rows.push(cached.row);
+        continue;
+      }
+      const [latT, lossT] = await Promise.all([
+        tepFetchOneWayNetTimeline(testId, 'latency').catch(() => null),
+        tepFetchOneWayNetTimeline(testId, 'loss').catch(() => null),
+      ]);
+      const avgOf = (series) => {
+        if (!series || !series.values.length) return null;
+        const n = Math.max(1, Math.round(windowSec / series.intervalLength));
+        const tail = series.values.slice(-n).filter((v) => Number.isFinite(v));
+        return tail.length ? tail.reduce((s, x) => s + x, 0) / tail.length : null;
+      };
+      const avgLat = avgOf(latT);
+      const avgLoss = avgOf(lossT);
+      if (avgLat == null && avgLoss == null) continue;
+      const { score, sev } = tepNetworkTestScore(avgLat, avgLoss);
+      const row = { title: t.name || `Test ${testId}`, sev, score, testId: String(testId), avgLat, avgLoss };
+      tepOneWayNetCache.set(testId, { ts: Date.now(), windowSec, row });
+      rows.push(row);
+    }
+    return rows;
+  }
   /** Network Health: every Network-category test's loss+latency, averaged per
    *  test across its agents. Deliberately NOT the same blend as ISP Health —
    *  latency drives a lenient baseline score (severity dampened 20%, up from
@@ -18503,7 +19329,11 @@
    *  softened by blending it into a fraction of the total. Assumes
    *  NAS-NET_LATENCY is milliseconds and NAS-NET_LOSS is already a 0–100
    *  percent (matching NAS-WEB_AVAILABILITY's confirmed scale) — NOT
-   *  independently confirmed. Returns { avgSev, count, breakdown:[{title,
+   *  independently confirmed. Also folds in OneWayNetwork ("Agent to
+   *  Agent") tests (see tepFetchOneWayNetworkHealth) — a separate metric
+   *  family TE reports those under, so they need their own per-test fetch
+   *  rather than showing up in the NAS-NET_* query above. Returns
+   *  { avgSev, count, breakdown:[{title,
    *  sev,score,testId,avgLat,avgLoss}] } (breakdown sorted worst-first) or
    *  null. */
   async function tepFetchAllNetworkHealth(force) {
@@ -18543,6 +19373,14 @@
           title: names[testId] || `Test ${testId}`, sev, score,
           testId: String(testId), avgLat, avgLoss,
         });
+        testCount++;
+      }
+      // OneWayNetwork ("Agent to Agent") tests — separate metric family,
+      // fetched per-test (see tepFetchOneWayNetworkHealth's own comment for
+      // why the NAS-NET_* query above can't see these).
+      const owRows = await tepFetchOneWayNetworkHealth(force).catch(() => []);
+      for (const row of owRows) {
+        breakdown.push(row);
         testCount++;
       }
     }
@@ -18886,6 +19724,23 @@
     });
   }
 
+  /** All 6 of the SaaS/Network/Alerts/AgentTests/ISP/AgentsList popovers
+   *  share the same visual language (.tep-saas-breakdown-pop, position:
+   *  fixed) and are meant to be mutually exclusive — CONFIRMED via user
+   *  request they should never overlap, since only one is ever meant to be
+   *  open at a time. Called at the top of every toggle/open function below,
+   *  closing every OTHER one before that function's own logic runs; each
+   *  hide*Popover() is itself already a no-op when its popover isn't open,
+   *  so this is cheap even when nothing else is showing. Defined once here
+   *  (ahead of the individual hide functions, which is fine — function
+   *  declarations hoist) rather than duplicating a 6-line close list at
+   *  every call site. */
+  function hideOtherBreakdownPopovers(exceptHideFn) {
+    const all = [hideSaasBreakdownPopover, hideNetworkBreakdownPopover, hideAlertsPopover,
+      hideAgentTestsPopover, hideIspAgentsPopover, hideAgentsListPopover];
+    for (const fn of all) { if (fn !== exceptHideFn) fn(); }
+  }
+
   // Set by fillDashWidgetsAsync whenever the SaaS Health average resolves to a
   // real per-test breakdown; click on the widget shows it via these.
   let tepSaasBreakdownData = null;   // { rows: [{title, value, testId}] } | null
@@ -18928,6 +19783,7 @@
   function toggleSaasBreakdownPopover(anchorEl) {
     if (tepSaasPopoverEl) { hideSaasBreakdownPopover(); return; }
     if (!tepSaasBreakdownData || !tepSaasBreakdownData.rows || !tepSaasBreakdownData.rows.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideSaasBreakdownPopover);
     const { rows, epCount } = tepSaasBreakdownData;
     // testId → Set<agentId>, built directly from the rows we already have
     // (each endpoint row carries its own agentIds from the fetch) — no
@@ -18935,7 +19791,9 @@
     const byTestAgentIds = new Map();
     for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop';
+    // Fullscreen-widgets-only popover (see toggleSaasBreakdownPopover's
+    // caller) — always dark, same as the map it's anchored to (tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
     const rowsHtml = rows.map((r) => {
       const p = Math.max(0, Math.min(100, Number(r.value) || 0));
       // Same smooth gradient as the widget's own ring (TEP_HEALTH_RED_FLOOR_PCT)
@@ -19093,8 +19951,13 @@
       hideAgentTestsPopover(); // a different agent (or scope)'s popover is open — swap it
     }
     if (!anchorEl) return;
+    hideOtherBreakdownPopovers(hideAgentTestsPopover);
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop';
+    // Shared with the INLINE (non-fullscreen) map's hover card too — only
+    // pin dark when this particular open came from the fullscreen map
+    // (dashMapFullEl set), so the inline map's copy keeps following the
+    // panel's own light/dark toggle like the rest of its chrome.
+    pop.className = 'tep-saas-breakdown-pop' + (dashMapFullEl ? ' tep-fs-pop' : '');
     pop.innerHTML = '<div class="tep-saas-breakdown-head">Loading tests…</div>';
     document.documentElement.appendChild(pop);
     tepAgentTestsPopoverEl = pop;
@@ -19258,11 +20121,13 @@
   function toggleNetworkBreakdownPopover(anchorEl) {
     if (tepNetworkPopoverEl) { hideNetworkBreakdownPopover(); return; }
     if (!tepNetworkBreakdownData || !tepNetworkBreakdownData.rows || !tepNetworkBreakdownData.rows.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideNetworkBreakdownPopover);
     const { rows, epCount } = tepNetworkBreakdownData;
     const byTestAgentIds = new Map();
     for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide';
+    // Fullscreen-widgets-only popover — always dark (see tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
     const rowsHtml = rows.map((r) => {
       // Same compressed gradient as the widget's own ring (matches
       // TEP_HEALTH_RED_FLOOR_PCT — full red at that score, not score 0) so a
@@ -19286,7 +20151,7 @@
         Number.isFinite(r.avgLat) ? `${Math.round(r.avgLat)}ms` : null,
         Number.isFinite(r.avgLoss) && r.avgLoss > 0 ? `${Math.round(r.avgLoss * 10) / 10}% loss` : null,
       ].filter(Boolean).join(' · ');
-      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:#64748b;font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:var(--tep-slate-500);font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
     }).join('');
     const headTitle = epCount ? 'Tests behind this average' : 'Network tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${headTitle}`
@@ -19387,7 +20252,7 @@
   // Website") — NOT any top-level field. severity is a plain string
   // (MINOR/INFO confirmed present; CRITICAL/MAJOR are TE's other documented
   // levels, not yet seen in a capture but mapped defensively).
-  const TEP_ALERT_SEV_COLOR = { CRITICAL: '#f87171', MAJOR: '#fb923c', MINOR: '#fbbf24', INFO: '#94a3b8' };
+  const TEP_ALERT_SEV_COLOR = { CRITICAL: 'var(--tep-red)', MAJOR: '#fb923c', MINOR: '#fbbf24', INFO: 'var(--tep-slate-400)' };
   // scenarioId is CONFIRMED only for BrowserBot (a user-supplied real
   // filtered-view URL landed on scenarioId=pageLoad for a BrowserBot/"Page
   // Load" alert) — other test types' scenario tab ids are unconfirmed, so
@@ -19548,7 +20413,7 @@
     const name = (rule && rule.name) || 'Alert';
     const testName = (test && test.name) || '';
     const sev = String((a && a.severity) || '').toUpperCase();
-    const sevColor = TEP_ALERT_SEV_COLOR[sev] || '#94a3b8';
+    const sevColor = TEP_ALERT_SEV_COLOR[sev] || 'var(--tep-slate-400)';
     const startMs = tepAlertStartMs(a);
     const when = startMs ? epRelativeTime(startMs) : '';
     // href is the agent-less fallback (list data only) — used as-is for a
@@ -19566,14 +20431,16 @@
       + `<span class="tep-saas-breakdown-title">`
       + (sev ? `<b style="color:${sevColor};">${tepEscapeHtmlText(sev)}</b> ` : '')
       + `${tepEscapeHtmlText(name)}${testName ? ' · ' + tepEscapeHtmlText(testName) : ''}</span>`
-      + `<span style="color:#94a3b8;font-size:10.5px;white-space:nowrap;">${tepEscapeHtmlText(when)}</span>`
+      + `<span style="color:var(--tep-slate-400);font-size:10.5px;white-space:nowrap;">${tepEscapeHtmlText(when)}</span>`
       + `</${tag}>`;
   }
   function toggleAlertsPopover(anchorEl) {
     if (tepAlertsPopoverEl) { hideAlertsPopover(); return; }
     if (!tepAlertsData || !tepAlertsData.rows || !tepAlertsData.rows.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideAlertsPopover);
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop';
+    // Fullscreen-widgets-only popover — always dark (see tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
     pop.innerHTML = `<div class="tep-saas-breakdown-head"><a class="tep-combo-title-link" href="${window.location.origin}/alerts/list?tab=active" target="_blank" rel="noopener noreferrer" title="Open the Active Alerts page">Active alerts</a>`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click to locate on the map</span></div>'
       + `<div class="tep-saas-breakdown-list">${tepAlertsData.rows.map((a) => tepAlertRowHtml(a)).join('')}</div>`;
@@ -19811,7 +20678,7 @@
     // fine", not "it's down". Online agents' icon color IS the health signal
     // now (replaces the old text "enterprise"/"user" pill — see typeIcon).
     const isOffline = it.health != null && it.health !== 'healthy';
-    const hc = isOffline ? { fill: '#475569', stroke: '#94a3b8' } : tepColorFromScore(tepColorScoreForItem(it));
+    const hc = isOffline ? { fill: 'var(--tep-slate-600)', stroke: 'var(--tep-slate-400)' } : tepColorFromScore(tepColorScoreForItem(it));
     const iconStyle = `style="fill:${hc.fill};stroke:${hc.stroke};stroke-width:2"`;
     // Same shapes the map marker itself uses: rounded square = enterprise,
     // head/shoulders = user.
@@ -19824,18 +20691,18 @@
       ? `<b style="color:${tepLiveNodeColor(it.latencyMs, it.lossPct, latGoalMs).stroke}">${it.latencyMs}ms</b>`
       : '';
     const loss = (Number.isFinite(it.lossPct) && it.lossPct > 0)
-      ? ` <span style="color:#fca5a5;font-weight:700;">${Math.round(it.lossPct * 10) / 10}%</span>` : '';
+      ? ` <span style="color:var(--tep-red-soft);font-weight:700;">${Math.round(it.lossPct * 10) / 10}%</span>` : '';
     // Latency excluded from the ISP average — a private-subnet hop on this
     // agent's OWN route is already running slow, not the ISP (see
     // tepRouteLocalHopHighLatency). Loss doesn't get this treatment; see the
     // comment in liveTestFetchPathVisDest for why.
     const lanTag = it.lanIssue
-      ? ' <span style="color:#f87171;font-weight:700;" title="Latency excluded from the ISP average — the delay showed up on this agent’s own local subnet, not the ISP">(LAN)</span>'
+      ? ' <span style="color:var(--tep-red);font-weight:700;" title="Latency excluded from the ISP average — the delay showed up on this agent’s own local subnet, not the ISP">(LAN)</span>'
       : '';
     // Name stays plain white — the icon above already carries the health
     // color — EXCEPT when offline, where it matches the icon's dark grey so
     // the whole row reads as "off" at a glance rather than just its icon.
-    const nameStyle = isOffline ? ' style="color:#64748b"' : '';
+    const nameStyle = isOffline ? ' style="color:var(--tep-slate-500)"' : '';
     return `<div class="tep-saas-breakdown-row tep-isp-agents-row" role="button" tabindex="0" `
       + `data-kind="${tepEscapeHtmlText(it.kind)}" data-agentid="${tepEscapeHtmlText(String(it.agentId))}">`
       + `<span class="tep-saas-breakdown-title">${typeIcon}<span${nameStyle}>${tepEscapeHtmlText(it.name)}</span>${lanTag}</span>`
@@ -19845,8 +20712,10 @@
     if (tepIspPopoverEl) { hideIspAgentsPopover(); return; }
     const list = ispHealthAgentsFor(ispName);
     if (!list.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideIspAgentsPopover);
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop';
+    // Fullscreen-widgets-only popover — always dark (see tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-fs-pop';
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(ispName)} — worst latency first`
       + '<span class="tep-saas-breakdown-hint">click an agent to locate it on the map</span></div>'
       + `<div class="tep-saas-breakdown-list">${list.map(tepIspAgentRowHtml).join('')}</div>`;
@@ -19991,9 +20860,11 @@
   function toggleAgentsListPopover(anchorEl, kind) {
     if (tepAgentsListPopoverEl) { hideAgentsListPopover(); return; }
     if (!tepAgentsListFor(kind).length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideAgentsListPopover);
     const label = kind === 'enterprise' ? 'Enterprise Agents' : 'Endpoint Agents';
     const pop = document.createElement('div');
-    pop.className = 'tep-saas-breakdown-pop';
+    // Fullscreen-widgets-only popover — always dark (see tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-fs-pop';
     pop.innerHTML = agentsListPopoverBodyHtml(kind, label);
     document.documentElement.appendChild(pop);
     tepAgentsListPopoverEl = pop;
@@ -20226,11 +21097,16 @@
    *  windowed), and on the periodic refresh. Does NOT re-render the map
    *  itself — callers do that once this resolves. */
   async function refreshDashMapColorScores(force) {
-    const [entSaasByAgent, epSaasByAgent, entNetByAgent, epNetByAgent] = await Promise.all([
+    const [entSaasByAgent, epSaasByAgent, entNetByAgent, epNetByAgent, epNetLatByTest, epNetLossByTest] = await Promise.all([
       tepFetchHttpAvailabilityByAgent(force).catch(() => null),
       tepFetchAllEndpointAgentAppScores(force).catch(() => null),
       tepFetchNetworkHealthByAgent(force).catch(() => null),
       tepFetchAllEndpointAgentNetScores(force).catch(() => null),
+      // Fallback source for the merge below — same per-test breakdown
+      // Network Health / the Tests popover already use, so it's usually
+      // served from THEIR warm 2-minute cache rather than a fresh request.
+      tepFetchEndpointNetLatencyByTest(force).catch(() => null),
+      tepFetchEndpointNetLossByTest(force).catch(() => null),
     ]);
     const saasByName = new Map();
     if (entSaasByAgent) {
@@ -20242,7 +21118,36 @@
     dashMapEntSaasScoreByName = saasByName;
     dashMapEpSaasScoreByAgentId = epSaasByAgent || new Map();
     dashMapEntNetScoreByName = entNetByAgent || new Map();
-    dashMapEpNetScoreByAgentId = epNetByAgent || new Map();
+    // ENDPOINT_TEST_APPLICATION_SCORE (what epNetByAgent comes from, despite
+    // its name — see tepFetchAllEndpointAgentNetScores) doesn't reliably
+    // cover every agent that genuinely has Network test data — CONFIRMED
+    // via user screenshot: an agent whose own Tests popover showed real
+    // NETWORK rows (100% latency/loss, from the exact per-test source
+    // Network Health uses) still had no "Net" badge on its hover card at
+    // all, because that one blended metric simply had nothing for it. Fill
+    // the gap from the per-test latency/loss breakdown instead of leaving
+    // it blank — same tepNetworkTestScore formula every other Network
+    // number in this file uses, so it's at least self-consistent with what
+    // the popover for that same agent already shows. The "official"
+    // blended metric still wins wherever it actually has data; this only
+    // fills agents it's missing entirely.
+    const epNet = new Map(epNetByAgent || []);
+    if (epNetLatByTest || epNetLossByTest) {
+      const fallbackAgentIds = new Set([
+        ...(epNetLatByTest ? epNetLatByTest.byAgent.keys() : []),
+        ...(epNetLossByTest ? epNetLossByTest.byAgent.keys() : []),
+      ]);
+      for (const agentId of fallbackAgentIds) {
+        if (epNet.has(agentId)) continue;
+        const latRows = epNetLatByTest && epNetLatByTest.byAgent.get(agentId);
+        const lossRows = epNetLossByTest && epNetLossByTest.byAgent.get(agentId);
+        const avgLat = latRows && latRows.length ? latRows.reduce((s, r) => s + r.value, 0) / latRows.length : null;
+        const avgLoss = lossRows && lossRows.length ? lossRows.reduce((s, r) => s + r.value, 0) / lossRows.length : null;
+        if (avgLat == null && avgLoss == null) continue;
+        epNet.set(agentId, tepNetworkTestScore(avgLat, avgLoss).score);
+      }
+    }
+    dashMapEpNetScoreByAgentId = epNet;
   }
   const TEP_ALERTS_SEARCH_PATH = '/namespace/alerts/alert-service/alerts/_search';
   const TEP_ALERTS_LIST_PATH = '/namespace/alerts/alert-service/alerts';
@@ -20746,6 +21651,12 @@
     if (countEl) countEl.textContent = `Showing ${filtered.length} of ${allEndpointAgents.length} agent(s)`;
     updateEpNearSortChip(listEl);
     if (!filtered.length) {
+      // Map view: keep rendering the (now marker-less) small map instead of
+      // replacing it with this text — a search with zero matches used to
+      // blow away the whole map, which read as the map itself breaking
+      // rather than "no results". renderEndpointAgentsMap handles an empty
+      // agents array fine (just the bare basemap, no markers/clusters).
+      if (epAgentsMapView) { renderEndpointAgentsMap(listEl, filtered, countEl); return; }
       listEl.innerHTML = allEndpointAgents.length
         ? '<span class="tep-log-info">No agents match filter.</span>'
         : '<span class="tep-log-info">No endpoint agents found.</span>';
@@ -21155,11 +22066,11 @@
    *  to match. */
   function tepBatteryHealthTier(healthPct) {
     if (healthPct == null) return null;
-    if (healthPct >= 98) return { label: 'Optimal', color: '#4ade80', bold: false };
+    if (healthPct >= 98) return { label: 'Optimal', color: 'var(--tep-green)', bold: false };
     if (healthPct >= 90) return { label: 'Good', color: '#86efac', bold: false };
     if (healthPct >= 85) return { label: 'Fair', color: '#fbbf24', bold: false };
-    if (healthPct >= 80) return { label: 'Degraded', color: '#f97316', bold: true };
-    return { label: 'Poor', color: '#f87171', bold: true };
+    if (healthPct >= 80) return { label: 'Degraded', color: 'var(--tep-orange)', bold: true };
+    return { label: 'Poor', color: 'var(--tep-red)', bold: true };
   }
 
   /** Battery charge + health as one HTML span: "🔋 NN% <tier>", tier label
@@ -21579,7 +22490,7 @@
       return;
     }
     const opts = {
-      probeMode: probeEl ? probeEl.value : 'AUTO',
+      probeMode: probeEl ? probeEl.value : 'AUTODETECT',
       interval: intervalEl ? parseInt(intervalEl.value, 10) : 60,
       maxMachines: Number.isFinite(maxMachines) ? maxMachines : 25
     };
@@ -21617,14 +22528,19 @@
     };
   }
 
+  /** Default (Auto-detect) shape — CONFIRMED via a real bulk-save capture:
+   *  {"networkProtocol":"AUTODETECT","pathtraceInSession":false,
+   *  "tcpProbeMode":"UNKNOWN","tcpConnect":false}. tcpProbeMode is
+   *  'UNKNOWN' here, not 'AUTO' — a previous assumption this session got
+   *  corrected by that capture. */
   function buildEndpointNetworkConfig() {
     return {
       flagPing: true,
       flagTraceroute: true,
       ipVersion: 'V4_ONLY',
       networkProtocol: 'AUTODETECT',
-      pathtraceInSession: true,
-      tcpProbeMode: 'AUTO',
+      pathtraceInSession: false,
+      tcpProbeMode: 'UNKNOWN',
       tcpConnect: false
     };
   }
@@ -22035,7 +22951,7 @@
 
   /** Node colour by latency vs the 20ms baseline: ≤20 green, ≤60 amber, >60 red. */
   function tepLatencyColor(ms) {
-    if (ms == null || !Number.isFinite(ms)) return { fill: '#64748b', stroke: '#cbd5e1' };
+    if (ms == null || !Number.isFinite(ms)) return { fill: 'var(--tep-slate-500)', stroke: 'var(--tep-slate-300)' };
     const green = [34, 197, 94], amber = [245, 158, 11], red = [239, 68, 68];
     const base = LIVE_TEST_LATENCY_BASELINE_MS;
     let rgb;
@@ -22073,20 +22989,23 @@
   }
   /** ISP widget's own latency scale — deliberately separate from
    *  tepLatencySeverity (used for marker colours/hover badges elsewhere,
-   *  and unchanged): a fixed 0–312ms range regardless of agent kind, no
-   *  longer baseline-relative (was ISP_HEALTH_LATENCY_GOAL_MS for endpoint
-   *  vs LIVE_TEST_LATENCY_BASELINE_MS for enterprise). 0ms → 0 (best),
-   *  104ms → 0.5 (an average this bad is exactly half health), 312ms+ → 1
-   *  (worst), linear on each side of that midpoint. Shared by both ISP
-   *  Health and Network Health (tepFetchAllNetworkHealth and friends), so
-   *  tuning it here moves both at once — anchors bumped 4% higher (was
-   *  100/300) per user request, to be a little more forgiving of normal
-   *  latency across both widgets. */
+   *  and unchanged): a fixed range regardless of agent kind, no longer
+   *  baseline-relative (was ISP_HEALTH_LATENCY_GOAL_MS for endpoint vs
+   *  LIVE_TEST_LATENCY_BASELINE_MS for enterprise). CONFIRMED via user
+   *  request: 0–30ms is now a flat "perfect" floor (was linear from 0,
+   *  which meant even a good 30ms reading already registered ~14%
+   *  severity) — anything at or under 30ms is fully healthy, then severity
+   *  rises from there, still reaching 0.5 at 104ms and 1 at 312ms+ (those
+   *  two anchors unchanged from the last tuning pass, just now measured
+   *  from the 30ms floor instead of from 0). Shared by both ISP Health and
+   *  Network Health (tepFetchAllNetworkHealth and friends), so tuning it
+   *  here moves both at once. */
   function tepIspLatencySeverity(ms) {
     if (!Number.isFinite(ms) || ms <= 0) return 0;
-    const mid = 104, max = 312;
+    const floor = 30, mid = 104, max = 312;
+    if (ms <= floor) return 0;
     if (ms >= max) return 1;
-    if (ms <= mid) return 0.5 * (ms / mid);
+    if (ms <= mid) return 0.5 * ((ms - floor) / (mid - floor));
     return 0.5 + 0.5 * ((ms - mid) / (max - mid));
   }
   // Any packet loss degrades health: >0 starts at amber, ≥10% → full red.
@@ -22130,7 +23049,7 @@
   /** Combined node colour from latency + loss (whichever is more severe). */
   function tepLiveNodeColor(ms, loss, baselineMs) {
     const hasLat = Number.isFinite(ms), hasLoss = Number.isFinite(loss) && loss > 0;
-    if (!hasLat && !hasLoss) return { fill: '#64748b', stroke: '#cbd5e1' };
+    if (!hasLat && !hasLoss) return { fill: 'var(--tep-slate-500)', stroke: 'var(--tep-slate-300)' };
     const sev = Math.max(tepLatencySeverity(ms, baselineMs) || 0, tepLossSeverity(loss));
     return tepSeverityColor(sev);
   }
@@ -22241,7 +23160,7 @@
     if (!el) return;
     el.innerHTML = html || '';
     el.style.display = html ? 'block' : 'none';
-    el.style.borderColor = isError ? '#7f1d1d' : '#334155';
+    el.style.borderColor = isError ? '#7f1d1d' : 'var(--tep-slate-700)';
   }
 
   // Lazily-created, reused across runs — one AudioContext per page, not one
@@ -22329,6 +23248,33 @@
       g.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
       osc.connect(g); g.connect(ctx.destination);
       osc.start(now); osc.stop(now + 0.04);
+    } catch (_) { /* */ }
+  }
+
+  /** Quick pitch-bent "bubble pop" for the cluster maximize view opening
+   *  (bends up) or closing (bends down) — one of ten candidates demoed for
+   *  the user, picked as #3. 30% of its demo volume per user request (peak
+   *  0.25 there → 0.075 here), same fully-synthesized idiom as
+   *  tepPlayDigitalBlip/tepPlaySonarPing. Purely decorative — any failure
+   *  here (no Web Audio, autoplay blocked, etc.) never affects the view
+   *  itself. */
+  function tepPlayClusterMaxPop(open) {
+    const ctx = tepEnsureAudioCtx();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const vol = 0.075; // 30% of the demo's 0.25 peak
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(open ? 220 : 640, now);
+      osc.frequency.exponentialRampToValueAtTime(open ? 640 : 220, now + 0.14);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(vol, now + 0.01);
+      g.gain.setValueAtTime(vol, now + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.17);
+      osc.connect(g); g.connect(ctx.destination);
+      osc.start(now); osc.stop(now + 0.2);
     } catch (_) { /* */ }
   }
 
@@ -23870,10 +24816,10 @@
 
     // Result links appear immediately (as soon as each test is created/triggered).
     const liveTestLinksHtml = () => (results.entView
-      ? `<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open enterprise results →</a>`
+      ? `<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:var(--tep-blue-soft);">Open enterprise results →</a>`
       : '')
       + (results.epView
-        ? `<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open endpoint results →</a>`
+        ? `<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:var(--tep-blue-soft);">Open endpoint results →</a>`
         : '');
 
     // 90-second progress timer with a 5-second per-agent latency poll.
@@ -23908,14 +24854,14 @@
       if (!badgeBuilt) {
         badgeBuilt = true;
         liveTestSetBadge(
-          `<div style="font-weight:800;letter-spacing:.5px;color:#fca5a5;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><span class="tep-livetest-badge-dot" id="tep-livetest-badge-dot"></span>LIVE TEST · <span id="tep-livetest-badge-clock">${liveTestClock(elapsed, true)}</span> / ${totalLabel}</div>`
-          + `<div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden;margin-bottom:6px;"><div id="tep-livetest-badge-bar" style="height:100%;width:${pct}%;background:#dc2626;transition:width .3s;"></div></div>`
-          + `<div id="tep-livetest-badge-phase" style="color:#94a3b8;font-style:italic;margin-bottom:4px;${phaseMsg ? '' : 'display:none;'}">${tepEscapeHtmlText(phaseMsg)}</div>`
-          + `<div>Enterprise: ${results.entOk ? '✓ running' : '—'} <span style="color:#64748b;">(${tepEscapeHtmlText(results.entMsg)})</span></div>`
-          + `<div>Endpoint: ${results.epOk ? '✓ running' : '—'} <span style="color:#64748b;">(${tepEscapeHtmlText(results.epMsg)})</span></div>`
-          + `<div>Agents Reporting: <span id="tep-livetest-badge-count" style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`
+          `<div style="font-weight:800;letter-spacing:.5px;color:var(--tep-red-soft);margin-bottom:4px;display:flex;align-items:center;gap:6px;"><span class="tep-livetest-badge-dot" id="tep-livetest-badge-dot"></span>LIVE TEST · <span id="tep-livetest-badge-clock">${liveTestClock(elapsed, true)}</span> / ${totalLabel}</div>`
+          + `<div style="height:5px;background:var(--tep-slate-800);border-radius:3px;overflow:hidden;margin-bottom:6px;"><div id="tep-livetest-badge-bar" style="height:100%;width:${pct}%;background:#dc2626;transition:width .3s;"></div></div>`
+          + `<div id="tep-livetest-badge-phase" style="color:var(--tep-slate-400);font-style:italic;margin-bottom:4px;${phaseMsg ? '' : 'display:none;'}">${tepEscapeHtmlText(phaseMsg)}</div>`
+          + `<div>Enterprise: ${results.entOk ? '✓ running' : '—'} <span style="color:var(--tep-slate-500);">(${tepEscapeHtmlText(results.entMsg)})</span></div>`
+          + `<div>Endpoint: ${results.epOk ? '✓ running' : '—'} <span style="color:var(--tep-slate-500);">(${tepEscapeHtmlText(results.epMsg)})</span></div>`
+          + `<div>Agents Reporting: <span id="tep-livetest-badge-count" style="color:var(--tep-slate-200);font-weight:700;">${liveTestLatency.size}</span></div>`
           + liveTestLinksHtml()
-          + `<div id="tep-livetest-badge-done" style="margin-top:5px;color:#4ade80;${remaining <= 0 ? '' : 'display:none;'}">Done — final refresh</div>`
+          + `<div id="tep-livetest-badge-done" style="margin-top:5px;color:var(--tep-green);${remaining <= 0 ? '' : 'display:none;'}">Done — final refresh</div>`
         );
       }
       const dotEl = document.getElementById('tep-livetest-badge-dot');
@@ -24043,17 +24989,17 @@
     let dismissed = false;
     const renderDoneBadge = () => {
       const parts = [];
-      parts.push(`<div style="font-weight:800;letter-spacing:.5px;color:#4ade80;margin-bottom:4px;">LIVE TEST complete (${liveTestClock(LIVE_TEST_DURATION_MS)})</div>`);
-      parts.push(`<div>Enterprise: ${results.entOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.entMsg)}</span></div>`);
-      parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:#64748b;">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
-      parts.push(`<div>Agents Reporting: <span style="color:#e2e8f0;font-weight:700;">${liveTestLatency.size}</span></div>`);
+      parts.push(`<div style="font-weight:800;letter-spacing:.5px;color:var(--tep-green);margin-bottom:4px;">LIVE TEST complete (${liveTestClock(LIVE_TEST_DURATION_MS)})</div>`);
+      parts.push(`<div>Enterprise: ${results.entOk ? '✓' : '✗'} <span style="color:var(--tep-slate-500);">${tepEscapeHtmlText(results.entMsg)}</span></div>`);
+      parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:var(--tep-slate-500);">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
+      parts.push(`<div>Agents Reporting: <span style="color:var(--tep-slate-200);font-weight:700;">${liveTestLatency.size}</span></div>`);
       if (results.entView) {
-        parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:#93c5fd;">Open enterprise results →</a>`);
+        parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:var(--tep-blue-soft);">Open enterprise results →</a>`);
       }
       if (results.epView) {
-        parts.push(`<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:#93c5fd;">Open endpoint results →</a>`);
+        parts.push(`<a href="${tepEscapeHtmlText(results.epView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:4px;color:var(--tep-blue-soft);">Open endpoint results →</a>`);
       }
-      parts.push('<div style="margin-top:6px;"><span id="tep-livetest-dismiss" style="cursor:pointer;color:#94a3b8;text-decoration:underline;">dismiss</span></div>');
+      parts.push('<div style="margin-top:6px;"><span id="tep-livetest-dismiss" style="cursor:pointer;color:var(--tep-slate-400);text-decoration:underline;">dismiss</span></div>');
       liveTestSetBadge(parts.join(''));
       const dismiss = document.getElementById('tep-livetest-dismiss');
       if (dismiss) {
@@ -24084,13 +25030,25 @@
 
   wireEnterpriseManageFilterListeners();
 
-  // Log toggle
-  const logToggleBtn = $('#tep-log-toggle');
-  if (logToggleBtn) logToggleBtn.addEventListener('click', () => {
-    const btn = $('#tep-log-toggle');
-    const logPanel = $('#tep-log');
-    btn.classList.toggle('open');
-    logPanel.classList.toggle('open');
+  // Log — CONFIRMED via user report that a trigger button pointing at
+  // content sitting elsewhere doesn't actually read as "inside" anything;
+  // this physically moves the one shared #tep-log-wrap into whichever
+  // Diagnostics <details> is open, using the native 'toggle' event every
+  // <details> fires on open/close. No manual open/close bookkeeping needed
+  // beyond that: a closed <details> already hides its own children
+  // natively, so the log disappears for free when you collapse it, and
+  // there's nothing left showing when you switch to a tab whose
+  // Diagnostics you haven't opened.
+  root.querySelectorAll('.tep-dash-details').forEach((details) => {
+    details.addEventListener('toggle', () => {
+      if (!details.open) return;
+      const wrap = $('#tep-log-wrap');
+      const inner = details.querySelector('.tep-dash-details-inner');
+      if (!wrap || !inner) return;
+      if (wrap.parentElement !== inner) inner.appendChild(wrap);
+      wrap.style.display = '';
+      $('#tep-log').classList.add('open');
+    });
   });
 
   const logCopyBtn = $('#tep-log-copy');
@@ -24170,6 +25128,9 @@
 
 
   // Create panel listeners
+  $('#tep-theme-toggle').addEventListener('click', () => {
+    applyTheme(tepTheme === 'light' ? 'dark' : 'light');
+  });
   $('#tep-close').addEventListener('click', () => {
     stopPersistentIntercept();
     root.style.display = 'none';
@@ -24674,6 +25635,8 @@
   });
   const bulkApplyBtn = $('#tep-bulk-apply');
   if (bulkApplyBtn) bulkApplyBtn.addEventListener('click', bulkApply);
+  const bulkClearBtn = $('#tep-bulk-clear');
+  if (bulkClearBtn) bulkClearBtn.addEventListener('click', clearBulkSelection);
 
   // Lives in the persistent header (not the dashboard-tools-only markup
   // below), so it must be wired unconditionally — isDashboardToolsPage()
@@ -24726,19 +25689,6 @@
         }
       }
     });
-    const dashMapRefresh = root.querySelector('#tep-dash-map-refresh');
-    if (dashMapRefresh) dashMapRefresh.addEventListener('click', () => { void loadDashboardMapAgents(true); });
-    wireDashSectionToggle('tep-dash-toggle-tests', 'tep-dash-expand-tests', false, {
-      onExpand: () => showTestsPanelFromDashboard()
-    });
-    const backToDashBtn = root.querySelector('#tep-dash-back-to-tools');
-    if (backToDashBtn) {
-      backToDashBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        showDashboardPanelFromTests();
-      });
-    }
-
     $('#tep-dash-refresh').addEventListener('click', () => { refreshDashboardEditor(); });
     $('#tep-dash-download').addEventListener('click', downloadDashboardBackup);
     const cleanupLoad = root.querySelector('#tep-dash-cleanup-load');
@@ -24755,6 +25705,8 @@
     }
     const cleanupBulkApply = root.querySelector('#tep-dash-bulk-apply');
     if (cleanupBulkApply) cleanupBulkApply.addEventListener('click', () => { dashBulkApply(); });
+    const cleanupBulkClear = root.querySelector('#tep-dash-bulk-clear');
+    if (cleanupBulkClear) cleanupBulkClear.addEventListener('click', clearDashCleanupSelection);
     syncDashCleanupScopeFromUi();
     updateDashCleanupBulkUI();
     syncDashCleanupMeta();
@@ -24870,16 +25822,6 @@
         }
       }
     });
-    wireEndpointSectionToggle('tep-ep-toggle-cloud-tests', 'tep-ep-expand-cloud-tests', false, {
-      onExpand: () => showTestsPanelFromEndpoint()
-    });
-    const backToEpBtn = root.querySelector('#tep-endpoint-back-to-tools');
-    if (backToEpBtn) {
-      backToEpBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        showEndpointPanelFromTests();
-      });
-    }
     const epCreateBtn = root.querySelector('#tep-ep-create');
     if (epCreateBtn) {
       epCreateBtn.addEventListener('click', () => {
@@ -24923,6 +25865,8 @@
     }
     const epBulkApply = root.querySelector('#tep-ep-bulk-apply');
     if (epBulkApply) epBulkApply.addEventListener('click', () => { void endpointBulkApply(); });
+    const epBulkClear = root.querySelector('#tep-ep-bulk-clear');
+    if (epBulkClear) epBulkClear.addEventListener('click', clearEndpointBulkSelection);
     const epRestoreChoose = root.querySelector('#tep-ep-restore-choose-file');
     const epRestoreInput = root.querySelector('#tep-ep-restore-import-file');
     if (epRestoreChoose && epRestoreInput) {
