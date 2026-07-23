@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.60';
+  const TEP_VERSION = '3.61';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2495,6 +2495,7 @@
       font-size: 13.5px; line-height: 1.5; text-align: center;
     }
     .tep-confirm-msg { margin-bottom: 16px; color: var(--tep-slate-100); font-weight: 600; }
+    .tep-confirm-hot { color: inherit; font: inherit; text-decoration: none; cursor: inherit; }
     .tep-confirm-btns { display: flex; gap: 10px; justify-content: center; }
     .tep-confirm-btn {
       border: none; border-radius: 8px; padding: 8px 18px; font-size: 12.5px; font-weight: 700;
@@ -4007,7 +4008,10 @@
     if (!liveTestRunning) {
       tepEnsureAudioCtx();
       tepPlayPadSwellLow(0.3);
-      void tepConfirmModal('Are you sure you want to test all agents?').then((ok) => {
+      void tepConfirmModal('Are you sure you want to test all agents?', {
+        hotword: 'all',
+        onHotword: () => { liveTestAgentCapOverride = !liveTestAgentCapOverride; },
+      }).then((ok) => {
         if (ok) liveTestBeginRun();
       });
       return;
@@ -5318,12 +5322,24 @@
    *  piece of floating chrome in this file — body sits inside dark mode's
    *  filtered/lower-stacking subtree). Resolves true (OK/Enter) or false
    *  (Cancel/Escape/backdrop click). */
-  function tepConfirmModal(message) {
+  /** opts.hotword + opts.onHotword: wrap the first occurrence of a word in
+   *  the message in a clickable span that fires onHotword WITHOUT resolving
+   *  the modal — deliberately styled exactly like the surrounding text (no
+   *  underline, color, or cursor change), so it reads as an ordinary part
+   *  of the sentence. Used for a hidden toggle; see its one caller. */
+  function tepConfirmModal(message, opts) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.className = 'tep-confirm-overlay';
+      let msgHtml = tepEscapeHtmlText(message);
+      const hotword = opts && opts.hotword;
+      if (hotword && message.indexOf(hotword) !== -1) {
+        const escHot = tepEscapeHtmlText(hotword);
+        // Replace only the first occurrence in the already-escaped string.
+        msgHtml = msgHtml.replace(escHot, `<span class="tep-confirm-hot">${escHot}</span>`);
+      }
       overlay.innerHTML = '<div class="tep-confirm-box">'
-        + `<div class="tep-confirm-msg">${tepEscapeHtmlText(message)}</div>`
+        + `<div class="tep-confirm-msg">${msgHtml}</div>`
         + '<div class="tep-confirm-btns">'
         + '<button type="button" class="tep-confirm-btn tep-confirm-cancel">Cancel</button>'
         + '<button type="button" class="tep-confirm-btn tep-confirm-ok">OK</button>'
@@ -5342,6 +5358,10 @@
       overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
       overlay.querySelector('.tep-confirm-cancel').addEventListener('click', () => finish(false));
       overlay.querySelector('.tep-confirm-ok').addEventListener('click', () => finish(true));
+      const hotEl = overlay.querySelector('.tep-confirm-hot');
+      if (hotEl && opts && typeof opts.onHotword === 'function') {
+        hotEl.addEventListener('click', (e) => { e.stopPropagation(); opts.onHotword(); });
+      }
     });
   }
 
@@ -8650,7 +8670,7 @@
         if (teInitData._currentAid != null && teInitData._currentAid !== '') {
           log(`Dashboard mode: using account group aid=${teInitData._currentAid} for API calls.`, 'tep-log-ok');
         } else {
-          log('Dashboard mode: aid still unknown — dashboard probes run without ?aid= (may 404).', 'tep-log-err');
+          log('Dashboard mode: no trusted aid — sending no aid header; TE resolves the account group from the session (same as its own dashboard page).', 'tep-log-info');
         }
         applyDefaultAuthenticatedStatus();
         // List fetch is cheap; start it before agents + JSON merge so Manage Dashboards fills sooner.
@@ -8784,8 +8804,21 @@
   }
 
   /**
-   * Dashboard mode skips loadAgents(), which used to infer _currentAid from virtual-agents.
-   * Without aid, many /ajax URLs return HTML 404 shells — resolve aid before dashboard probes.
+   * Resolves the current account group aid from TRUSTED sources only (the
+   * teAccount cookie / URL param handled in loadAccountGroups, plus the
+   * init JSON here). Deliberately does NOT fall back to guessing from the
+   * virtual-agents list anymore — CONFIRMED via user testing on a
+   * multi-account-group org: that majority-vote guess picked the WRONG
+   * group (the account switch left the viewed group unresolvable client-
+   * side, and virtual-agents returns agents whose primaryAid points at a
+   * different group), and sending that wrong aid as the x-thousandeyes-aid
+   * header made TE reject every dash-data call with 479 Forbidden. Sending
+   * NO aid header instead — which is what happens when _currentAid stays
+   * unset — lets TE resolve the account group from the session cookie
+   * exactly as its own dashboard page does (CONFIRMED: the same calls
+   * return 200/204 with no aid header at all). A wrong guess is strictly
+   * worse than no guess here, so when no trusted source has it, we leave it
+   * unset and defer to the session.
    */
   async function ensureCurrentAidForDashboard() {
     if (!teInitData || typeof teInitData !== 'object') return;
@@ -8799,34 +8832,8 @@
       return;
     }
 
-    log('Resolving account group via /ajax/settings/tests/virtual-agents (dashboard mode)…', 'tep-log-info');
-    try {
-      const vResp = await ajax('/ajax/settings/tests/virtual-agents');
-      if (!vResp.ok) {
-        log(`virtual-agents (aid lookup) → HTTP ${vResp.status}`, 'tep-log-info');
-        return;
-      }
-      const vData = await vResp.json();
-      const vAgents = vData.vAgents || vData.virtualAgents || (Array.isArray(vData) ? vData : []);
-      if (!vAgents.length) {
-        log('virtual-agents: empty; cannot infer aid.', 'tep-log-info');
-        return;
-      }
-      const aidCounts = {};
-      for (const a of vAgents) {
-        if (a.primaryAid != null) aidCounts[a.primaryAid] = (aidCounts[a.primaryAid] || 0) + 1;
-      }
-      const sorted = Object.entries(aidCounts).sort((a, b) => b[1] - a[1]);
-      if (sorted.length) {
-        teInitData._currentAid = parseInt(sorted[0][0], 10) || sorted[0][0];
-        log(`Account group auto-detected (virtual-agents): ${teInitData._currentAid}`, 'tep-log-ok');
-        dashConsole('info', 'resolved aid from virtual-agents', { aid: teInitData._currentAid });
-      } else {
-        log('virtual-agents: no primaryAid on agents; cannot infer aid.', 'tep-log-info');
-      }
-    } catch (e) {
-      log('ensureCurrentAidForDashboard: ' + e.message, 'tep-log-err');
-    }
+    log('Account group not in any trusted source — deferring to the session (no aid header sent); TE resolves it server-side.', 'tep-log-info');
+    dashConsole('info', 'aid unresolved from trusted sources; deferring to session');
   }
 
   // ---------------------------------------------------------------------------
@@ -8898,8 +8905,17 @@
           const vData = await vResp.json();
           const vAgents = vData.vAgents || vData.virtualAgents || (Array.isArray(vData) ? vData : []);
 
-          // Auto-detect current aid from agents if not set
-          if (!teInitData._currentAid && vAgents.length) {
+          // Local best-guess aid used ONLY to tag agents Enterprise vs Cloud
+          // below — NOT written to teInitData._currentAid (and so never sent
+          // as the x-thousandeyes-aid header). CONFIRMED via user testing
+          // that letting this majority-vote guess drive the header made TE
+          // 479 every dash-data call when it guessed the wrong group after
+          // an account-group switch; the header now comes only from trusted
+          // sources (see ensureCurrentAidForDashboard). This purely visual
+          // classification can still use the guess since a wrong split just
+          // mislabels a marker's type, it never breaks a request.
+          let classifyAid = teInitData._currentAid;
+          if ((classifyAid == null || classifyAid === '') && vAgents.length) {
             // Find the most common primaryAid among non-cloud agents (those with a primaryAid)
             const aidCounts = {};
             for (const a of vAgents) {
@@ -8908,12 +8924,12 @@
             // The current account group's enterprise agents share the same primaryAid
             const sorted = Object.entries(aidCounts).sort((a, b) => b[1] - a[1]);
             if (sorted.length) {
-              teInitData._currentAid = parseInt(sorted[0][0], 10) || sorted[0][0];
-              log(`Auto-detected account group ID: ${teInitData._currentAid} (${sorted[0][1]} agents)`, 'tep-log-info');
+              classifyAid = parseInt(sorted[0][0], 10) || sorted[0][0];
+              log(`Enterprise/Cloud split using inferred account group ${classifyAid} (${sorted[0][1]} agents) — for display only, not sent to the API.`, 'tep-log-info');
             }
           }
 
-          const activeAid = teInitData._currentAid;
+          const activeAid = classifyAid;
           let enterpriseCount = 0, cloudCount = 0;
 
           for (const a of vAgents) {
@@ -23845,6 +23861,18 @@
   // prioritizes recency and geographic spread (see liveTestSpreadSelect)
   // over an arbitrary source-order slice.
   const LIVE_TEST_MAX_PER_KIND = 100;
+  const LIVE_TEST_MAX_PER_KIND_OVERRIDE = 250;
+  // Off by default; flipped by a hidden interaction (see tepConfirmModal's
+  // hotword wiring on the LIVE TEST confirm prompt). When on, the per-kind
+  // cap goes to 250. The ONLY surfaced tell is the results badge switching
+  // its "Agents Reporting" label to "Agent(s) Reporting".
+  let liveTestAgentCapOverride = false;
+  function liveTestAgentCap() {
+    return liveTestAgentCapOverride ? LIVE_TEST_MAX_PER_KIND_OVERRIDE : LIVE_TEST_MAX_PER_KIND;
+  }
+  function liveTestAgentsReportingLabel() {
+    return liveTestAgentCapOverride ? 'Agent(s) Reporting' : 'Agents Reporting';
+  }
   /** Resolves an agent's map coordinates the same way buildDashboardMapAgents
    *  does — real lat/lng first, falling back to geocoding its location text
    *  (cached per-agent for endpoint via epAgentGeo; enterprise has no
@@ -23903,7 +23931,7 @@
         online.push(a);
       }
     }
-    const picked = liveTestSpreadSelect(online, LIVE_TEST_MAX_PER_KIND, false);
+    const picked = liveTestSpreadSelect(online, liveTestAgentCap(), false);
     if (picked.length < online.length) {
       log(`LIVE TEST: ${online.length} online enterprise agent(s) — capped to ${picked.length} (most recent, spread geographically)`, 'tep-log-info');
     }
@@ -23913,7 +23941,7 @@
 
   function onlineEndpointAgentIdsForLiveTest() {
     const online = allEndpointAgents.filter((a) => tepEndpointHealth(a.lastSeenMs) === 'healthy');
-    const picked = liveTestSpreadSelect(online, LIVE_TEST_MAX_PER_KIND, true);
+    const picked = liveTestSpreadSelect(online, liveTestAgentCap(), true);
     if (picked.length < online.length) {
       log(`LIVE TEST: ${online.length} online endpoint agent(s) — capped to ${picked.length} (most recent, spread geographically)`, 'tep-log-info');
     }
@@ -25013,7 +25041,7 @@
           + `<div id="tep-livetest-badge-phase" style="color:var(--tep-slate-400);font-style:italic;margin-bottom:4px;${phaseMsg ? '' : 'display:none;'}">${tepEscapeHtmlText(phaseMsg)}</div>`
           + `<div>Enterprise: ${results.entOk ? '✓ running' : '—'} <span style="color:var(--tep-slate-500);">(${tepEscapeHtmlText(results.entMsg)})</span></div>`
           + `<div>Endpoint: ${results.epOk ? '✓ running' : '—'} <span style="color:var(--tep-slate-500);">(${tepEscapeHtmlText(results.epMsg)})</span></div>`
-          + `<div>Agents Reporting: <span id="tep-livetest-badge-count" style="color:var(--tep-slate-200);font-weight:700;">${liveTestLatency.size}</span></div>`
+          + `<div>${liveTestAgentsReportingLabel()}: <span id="tep-livetest-badge-count" style="color:var(--tep-slate-200);font-weight:700;">${liveTestLatency.size}</span></div>`
           + liveTestLinksHtml()
           + `<div id="tep-livetest-badge-done" style="margin-top:5px;color:var(--tep-green);${remaining <= 0 ? '' : 'display:none;'}">Done — final refresh</div>`
         );
@@ -25146,7 +25174,7 @@
       parts.push(`<div style="font-weight:800;letter-spacing:.5px;color:var(--tep-green);margin-bottom:4px;">LIVE TEST complete (${liveTestClock(LIVE_TEST_DURATION_MS)})</div>`);
       parts.push(`<div>Enterprise: ${results.entOk ? '✓' : '✗'} <span style="color:var(--tep-slate-500);">${tepEscapeHtmlText(results.entMsg)}</span></div>`);
       parts.push(`<div>Endpoint: ${results.epOk ? '✓' : '✗'} <span style="color:var(--tep-slate-500);">${tepEscapeHtmlText(results.epMsg)}</span></div>`);
-      parts.push(`<div>Agents Reporting: <span style="color:var(--tep-slate-200);font-weight:700;">${liveTestLatency.size}</span></div>`);
+      parts.push(`<div>${liveTestAgentsReportingLabel()}: <span style="color:var(--tep-slate-200);font-weight:700;">${liveTestLatency.size}</span></div>`);
       if (results.entView) {
         parts.push(`<a href="${tepEscapeHtmlText(results.entView)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:6px;color:var(--tep-blue-soft);">Open enterprise results →</a>`);
       }
