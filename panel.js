@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.61';
+  const TEP_VERSION = '3.62';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1886,6 +1886,16 @@
       color: var(--tep-slate-500);
       font-weight: 600;
     }
+    /* Live AJAX activity meter (status bar, right side) — in-flight (+queued)
+       and requests-in-last-60s, colour-graded as the rate climbs. Fed by the
+       ajax() instrumentation; full detail via window.__TEP_AJAX_STATS__. */
+    .tep-ajax-meter {
+      flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 10.5px; font-weight: 700;
+      letter-spacing: .01em; white-space: nowrap; padding: 2px 7px; border-radius: 4px;
+      color: var(--tep-slate-400); background: rgba(148,163,184,.10); border: 1px solid var(--tep-slate-600);
+    }
+    .tep-ajax-meter--warn { color: var(--tep-yellow); border-color: rgba(250,204,21,.5); background: rgba(250,204,21,.10); }
+    .tep-ajax-meter--hot { color: var(--tep-red); border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.12); }
     .tep-units-total { flex-shrink: 0; text-align: right; }
     .tep-units-plan { color: var(--tep-slate-50); font-weight: 600; }
     /* Units are hidden until the top-right "Units" toggle is enabled. */
@@ -4193,6 +4203,7 @@
     </div>
     <div class="tep-status" id="tep-status">
       <span class="tep-status-msg" id="tep-status-msg">Detecting session&hellip;</span>
+      <span class="tep-ajax-meter" id="tep-ajax-meter" style="display:none;" title="Live AJAX activity: in-flight (+queued) · requests in the last 60s. Type window.__TEP_AJAX_STATS__ in the console for full detail (per-endpoint counts, errors, rates)."></span>
       <button type="button" class="tep-units-toggle" id="tep-units-toggle" style="display:none;" title="Show/hide TE usage unit estimates" aria-pressed="false">Units</button>
       <span class="tep-units tep-units-total" id="tep-manage-units-total" style="display:none;" aria-hidden="true" title="31-day unit projection (Used / Plan Units) for tests matching the current Manage filter"></span>
     </div>
@@ -5458,9 +5469,128 @@
     });
   }
 
-  // Internal AJAX caller — same-origin, cookies sent automatically
+  // ---------------------------------------------------------------------------
+  // AJAX gate — Tier 1 (instrumentation) + Tier 2 (concurrency cap + GET
+  // dedup). Everything in the panel routes through ajax() below, so gating it
+  // here covers the whole app with no per-call-site changes. Two goals: keep
+  // total request VOLUME observable/bounded (backend load) and stop bursty
+  // parallel fans (our Promise.all blocks) from looking like automation to
+  // Akamai Bot Manager (_abck) — the concurrency cap paces those into a
+  // steadier trickle. Live view: the status-bar meter chip; full detail:
+  // window.__TEP_AJAX_STATS__ in the console.
+  // ---------------------------------------------------------------------------
+  const TEP_AJAX_MAX_CONCURRENT = 5;   // max requests actually in flight at once
+  const TEP_AJAX_RATE_WARN = 40;       // 60s-window request count → amber chip
+  const TEP_AJAX_RATE_HOT = 80;        // 60s-window request count → red chip
+  const tepAjaxState = {
+    inFlight: 0, sessionTotal: 0, errorCount: 0,
+    events: [],            // request-START timestamps (ms), pruned to last 60s
+    byEndpoint: new Map(), // normalized path (no query) → count
+  };
+  const tepAjaxQueue = [];                  // jobs waiting for a concurrency slot
+  const tepAjaxInflightGets = new Map();    // dedup key → Promise<buffered response>
+
+  function tepAjaxNormalizePath(p) {
+    const q = p.indexOf('?');
+    return q === -1 ? p : p.slice(0, q);
+  }
+  function tepAjaxPrune(now) {
+    const cutoff = now - 60000;
+    const ev = tepAjaxState.events;
+    let i = 0;
+    while (i < ev.length && ev[i] < cutoff) i++;
+    if (i > 0) ev.splice(0, i);
+  }
+  function tepAjaxSnapshot() {
+    const now = Date.now();
+    tepAjaxPrune(now);
+    const ev = tepAjaxState.events;
+    const c10 = now - 10000;
+    let last10 = 0;
+    for (let i = ev.length - 1; i >= 0 && ev[i] >= c10; i--) last10++;
+    const byEndpoint = {};
+    for (const [k, v] of [...tepAjaxState.byEndpoint.entries()].sort((a, b) => b[1] - a[1])) byEndpoint[k] = v;
+    return {
+      inFlight: tepAjaxState.inFlight,
+      queued: tepAjaxQueue.length,
+      sessionTotal: tepAjaxState.sessionTotal,
+      errorCount: tepAjaxState.errorCount,
+      ratePer10s: last10,
+      ratePer60s: ev.length,
+      maxConcurrent: TEP_AJAX_MAX_CONCURRENT,
+      byEndpoint,
+    };
+  }
+  function tepAjaxUpdateChip() {
+    const el = document.getElementById('tep-ajax-meter');
+    if (!el) return;
+    if (tepAjaxState.sessionTotal === 0) { el.style.display = 'none'; return; }
+    const s = tepAjaxSnapshot();
+    el.style.display = '';
+    el.textContent = `⚡ ${s.inFlight}${s.queued ? '+' + s.queued : ''} · ${s.ratePer60s}/min`;
+    el.classList.remove('tep-ajax-meter--warn', 'tep-ajax-meter--hot');
+    if (s.ratePer60s >= TEP_AJAX_RATE_HOT) el.classList.add('tep-ajax-meter--hot');
+    else if (s.ratePer60s >= TEP_AJAX_RATE_WARN) el.classList.add('tep-ajax-meter--warn');
+  }
+
+  // Concurrency gate: hold jobs in a FIFO queue, only ever running up to
+  // TEP_AJAX_MAX_CONCURRENT at once. A "job" is a thunk returning the real
+  // fetch promise — nothing hits the network until drain() gives it a slot.
+  function tepAjaxSchedule(thunk) {
+    return new Promise((resolve, reject) => {
+      tepAjaxQueue.push({ thunk, resolve, reject });
+      tepAjaxDrain();
+    });
+  }
+  function tepAjaxDrain() {
+    while (tepAjaxState.inFlight < TEP_AJAX_MAX_CONCURRENT && tepAjaxQueue.length) {
+      const job = tepAjaxQueue.shift();
+      tepAjaxState.inFlight++;
+      tepAjaxUpdateChip();
+      Promise.resolve()
+        .then(job.thunk)
+        .then(job.resolve, job.reject)
+        .finally(() => { tepAjaxState.inFlight--; tepAjaxDrain(); tepAjaxUpdateChip(); });
+    }
+    tepAjaxUpdateChip();
+  }
+  // The instrumented network hit — counts at SEND time (when a slot frees and
+  // it actually leaves), so a queued-but-unsent request isn't yet counted as
+  // traffic, and a dedup'd GET (which never reaches here again) isn't
+  // double-counted.
+  function tepAjaxDoFetch(path, finalOptions, pathStr) {
+    const now = Date.now();
+    tepAjaxState.sessionTotal++;
+    tepAjaxState.events.push(now);
+    tepAjaxPrune(now);
+    const ep = tepAjaxNormalizePath(pathStr);
+    tepAjaxState.byEndpoint.set(ep, (tepAjaxState.byEndpoint.get(ep) || 0) + 1);
+    return fetch(path, finalOptions).then(
+      (resp) => { if (!resp.ok) tepAjaxState.errorCount++; return resp; },
+      (err) => { tepAjaxState.errorCount++; throw err; }
+    );
+  }
+  // Buffer a Response once so several dedup'd callers can each reconstruct an
+  // independent, still-readable Response — a fetch body can only be consumed
+  // once, so sharing the raw Response would break the 2nd caller's .json().
+  async function tepAjaxBufferResponse(resp) {
+    const text = await resp.text();
+    return { text, status: resp.status, statusText: resp.statusText, headers: resp.headers };
+  }
+  function tepAjaxBufferedToResponse(b) {
+    // 204/205/304 (and sub-200) are null-body statuses — the Response
+    // constructor throws if handed a body for them, so pass null there.
+    const nullBody = b.status < 200 || b.status === 204 || b.status === 205 || b.status === 304;
+    return new Response(nullBody ? null : b.text, { status: b.status, statusText: b.statusText, headers: b.headers });
+  }
+
+  // Internal AJAX caller — same-origin, cookies sent automatically. Now routed
+  // through the concurrency gate above; GETs are additionally deduped while an
+  // identical one is already in flight. Return contract is unchanged: a
+  // Promise<Response> the caller reads with .ok/.status/.json()/.text().
   function ajax(path, options = {}) {
     const pathStr = path == null ? '' : String(path);
+    const method = (options.method || 'GET').toUpperCase();
     const isDashNs = pathStr.includes('/namespace/dash-api');
     const headers = {
       'Accept': 'application/json',
@@ -5470,7 +5600,35 @@
     };
     if (options.body) headers['Content-Type'] = 'application/json';
     if (csrfToken) headers[csrfToken.headerName] = csrfToken.value;
-    return fetch(path, { ...options, headers, credentials: 'include' });
+    const finalOptions = { ...options, headers, credentials: 'include' };
+
+    // Dedup is only ever applied to GETs — idempotent, no body, safe to share.
+    // POSTs are left alone (they may mutate, and the heavy read-POSTs already
+    // have their own function-level caches upstream).
+    const canDedup = method === 'GET' && !options.body;
+    if (canDedup) {
+      const key = 'GET ' + pathStr;
+      const pending = tepAjaxInflightGets.get(key);
+      if (pending) return pending.then((b) => tepAjaxBufferedToResponse(b));
+      const bufferedP = tepAjaxSchedule(() => tepAjaxDoFetch(path, finalOptions, pathStr))
+        .then((resp) => tepAjaxBufferResponse(resp));
+      tepAjaxInflightGets.set(key, bufferedP);
+      const clear = () => { tepAjaxInflightGets.delete(key); };
+      bufferedP.then(clear, clear);
+      return bufferedP.then((b) => tepAjaxBufferedToResponse(b));
+    }
+    return tepAjaxSchedule(() => tepAjaxDoFetch(path, finalOptions, pathStr));
+  }
+  // Console monitor: `window.__TEP_AJAX_STATS__` returns a fresh snapshot each
+  // read (it's a getter) — in-flight, queued, session total, error count,
+  // 10s/60s rates, and a per-endpoint breakdown sorted heaviest-first.
+  try {
+    Object.defineProperty(window, '__TEP_AJAX_STATS__', { get: tepAjaxSnapshot, configurable: true });
+  } catch (_) { /* */ }
+  // Repaint the chip on a slow tick too, so the 60s rate visibly decays while
+  // idle (events age out) even when no new request fires an update.
+  if (!window.__tepAjaxMeterTimer) {
+    window.__tepAjaxMeterTimer = setInterval(() => { try { tepAjaxUpdateChip(); } catch (_) { /* */ } }, 2000);
   }
 
   function withAidQuery(path, aid) {
@@ -9665,6 +9823,14 @@
   /** Normalized endpoint agents from agent-management metadata search. */
   let allEndpointAgents = [];
   let endpointAgentsAutoLoaded = false;
+  // Timestamp of the last successful endpoint-roster load (any source —
+  // initial map open, sidebar open, manual, or periodic). The periodic tick
+  // uses it to re-poll the roster at most every TEP_ENDPOINT_ROSTER_MIN_
+  // INTERVAL_MS instead of every 2-min cycle — the roster (positions,
+  // lastSeen) barely changes minute-to-minute, so a slower cadence keeps
+  // "seen within" reasonably fresh at a fraction of the request volume.
+  let lastEndpointRosterLoadMs = 0;
+  const TEP_ENDPOINT_ROSTER_MIN_INTERVAL_MS = 5 * 60 * 1000;
   /** Endpoint test restore picker state (parsed backup file + selection). */
   let endpointRestoreImportData = null;
   let endpointRestoreImportName = '';
@@ -14931,7 +15097,10 @@
    *  fetchEndpointAgentBatteryStatus below). Cursor-based (searchAfter),
    *  same as this endpoint has always used. */
   async function fetchEndpointAgentsViaSearch() {
-    const pageSize = 500;
+    // 1000 (was 500) — halves the page count on a large fleet (~3900 live
+    // agents → ~4 pages instead of ~8), same data, fewer round-trips. If the
+    // server caps the page below this, pagination just continues normally.
+    const pageSize = 1000;
     const merged = [];
     let searchAfter = [];
     let totalCount = null;
@@ -17238,6 +17407,41 @@
       if (marker._cluster.items.length === 1) {
         void enrichEndpointAgentForTip(marker._cluster.items[0], marker._cluster, marker);
       }
+      // Battery isn't in segment-visualisation, so it's fetched per-agent on
+      // demand (tepFetchBatteryForAgent — one small targeted call each, not a
+      // fleet sweep). Reflect it onto this cluster's item snapshots and
+      // re-render the tip in place once each agent's reading lands. The `it`
+      // objects are pre-hover copies, so battery is copied across from the
+      // live allEndpointAgents entry. Only the rows actually shown are
+      // fetched (cluster tooltips display up to 60 — but this loops the
+      // items array; for a huge cluster that's bounded by tepFetchBattery's
+      // own per-agent _batteryTried guard on repeat hovers).
+      const clusterRef = marker._cluster;
+      const reflectBattery = () => {
+        let any = false;
+        for (const it of clusterRef.items) {
+          if (it.kind !== 'endpoint' || it.agentId == null || it.battery != null) continue;
+          const agent = allEndpointAgents.find((x) => String(x.id) === String(it.agentId));
+          if (agent && agent.battery != null) {
+            it.battery = agent.battery;
+            it.batteryHealthPct = agent.batteryHealthPct;
+            any = true;
+          }
+        }
+        if (any && tip._cluster === clusterRef && tip.style.display !== 'none') {
+          const bodyEl = tip.querySelector('.tep-map-tip-body');
+          const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
+          tip.innerHTML = tepDashTooltipHtml(clusterRef);
+          if (scrollTop) { const nb = tip.querySelector('.tep-map-tip-body'); if (nb) nb.scrollTop = scrollTop; }
+          if (marker && marker.isConnected) positionTip(marker);
+        }
+      };
+      for (const it of clusterRef.items) {
+        if (it.kind !== 'endpoint' || it.agentId == null || it.battery != null) continue;
+        const agent = allEndpointAgents.find((x) => String(x.id) === String(it.agentId));
+        if (!agent || agent._batteryTried) { if (agent && agent.battery != null) reflectBattery(); continue; }
+        void tepFetchBatteryForAgent(agent).then((found) => { if (found) reflectBattery(); });
+      }
     }
     // The agent-tests submenu lives outside `wrap` (appended to <html>, same
     // as every other popover in this panel), so moving the mouse from the row
@@ -18238,25 +18442,42 @@
       dashWidgetsRefreshTimer = null;
     }
   }
-  /** The 2-minute recurring tick: widget stats (Alerts/Events/SaaS) plus a
-   *  re-fetch of enterprise (status + lastSeen) and endpoint (lastSeen) agent
-   *  data, so online/offline counts and the "seen within" slider stay
+  /** The 2-minute recurring tick: widget/test-metric stats (Alerts/Events/
+   *  SaaS/Network via fillDashWidgetsAsync + per-agent scores via
+   *  refreshDashMapColorScores) plus the cheap enterprise roster (loadAgents
+   *  — status + lastSeen), so online/offline counts and the health rings stay
    *  current on a long-running fullscreen session. loadAgents() triggers its
    *  own map re-render as a side effect (via refreshDashMapViews, with no
    *  preserveZoom — it auto-fits), so the user's pan/zoom is snapshotted and
    *  restored around it here, same as the ISP/type filter radios do, so a
    *  silent background refresh never yanks their view back to the auto-fit.
-   *  loadEndpointAgents' tag-service fetch (skipEnrichment) is skipped here
-   *  unless the sidebar Endpoint Agents list has actually been opened this
-   *  session (endpointAgentsAutoLoaded) — tags only ever render there
-   *  (filter/grouping), never on the map itself. CPU/RAM/battery are NOT
-   *  skipped — the map's own hover card reads those directly too (see
-   *  loadEndpointAgents' own comment for the earlier attempt that broke
-   *  that). */
+   *  The endpoint roster IS re-polled to keep lastSeen fresh, but throttled
+   *  to ~5 min rather than every tick (see the body); the heavy battery
+   *  sweep is out entirely, now lazy/on-demand. */
   async function dashFullPeriodicRefresh() {
     void fillDashWidgetsAsync();
     const savedZoom = { s: epDashMapZoom.s, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
-    await Promise.all([loadAgents(), loadEndpointAgents({ skipEnrichment: !endpointAgentsAutoLoaded }), refreshDashMapColorScores()]);
+    // Refreshes the widget/test-metric data (fillDashWidgetsAsync for Alerts/
+    // Events/SaaS/Network, refreshDashMapColorScores for the per-agent scores
+    // that color markers + back the health rings), the cheap enterprise
+    // roster (loadAgents), AND the endpoint roster (loadEndpointAgents) — the
+    // roster re-poll is what keeps endpoint lastSeen / the "seen within"
+    // recency current, CONFIRMED via user request that it must stay fresh on
+    // refreshes. The endpoint roster is a multi-page metadata/search crawl
+    // but only over LIVE agents, and skipEnrichment drops the tag fetch when
+    // the sidebar list isn't open. Battery is NOT fetched here at all — it's
+    // pulled per-agent on demand when a specific agent is hovered/viewed
+    // (see tepFetchBatteryForAgent), since it only renders on hover cards.
+    // Endpoint roster re-poll is throttled to every ~5 min (not every 2-min
+    // tick) — see TEP_ENDPOINT_ROSTER_MIN_INTERVAL_MS. Widgets/scores + the
+    // cheap enterprise roster still refresh every tick; only the heavy
+    // endpoint metadata/search crawl is spaced out. lastSeen recency is
+    // therefore ~5-min-granular instead of 2, a deliberate volume tradeoff.
+    const jobs = [loadAgents(), refreshDashMapColorScores()];
+    if (Date.now() - lastEndpointRosterLoadMs >= TEP_ENDPOINT_ROSTER_MIN_INTERVAL_MS) {
+      jobs.push(loadEndpointAgents({ skipEnrichment: !endpointAgentsAutoLoaded }));
+    }
+    await Promise.all(jobs);
     epDashMapZoom = savedZoom;
     if (dashMapFullEl) {
       renderDashWidgets(dashMapFullEl.querySelector('#tep-dashmap-widgets'));
@@ -21892,6 +22113,7 @@
       const deletedDropped = elements.length - liveElements.length;
       if (deletedDropped > 0) log(`Endpoint agents: hid ${deletedDropped} deleted/recoverable agent(s).`, 'tep-log-info');
       allEndpointAgents = liveElements.map(normalizeEndpointAgent).filter((a) => a.id);
+      lastEndpointRosterLoadMs = Date.now(); // gates the periodic re-poll cadence
       const dropped = liveElements.length - allEndpointAgents.length;
       if (dropped > 0) log(`Endpoint agents: skipped ${dropped} element(s) with no resolvable id`, 'tep-log-info');
       if (liveElements.length) log(`Agent element keys: ${topLevelKeysLabel(epAgentPickRaw(liveElements[0]))}`, 'tep-log-info');
@@ -21937,24 +22159,29 @@
       log(`Loaded ${allEndpointAgents.length} endpoint agent(s)`, 'tep-log-ok');
       populateEndpointAgentTagFilter();
       renderEndpointAgents();
-      // CPU/RAM + battery for the whole fleet — fetched in the background so
-      // it doesn't delay the initial list paint; re-renders whatever's
-      // currently showing (sidebar list and/or fullscreen map) once the
-      // numbers land. Battery is its own sweep (fetchEndpointAgentBatteryStatus,
-      // a FULL PAGINATED settings/search sweep just to pull two numbers per
-      // agent) since the roster fetch (metadata/search) doesn't carry
-      // battery data. Always runs regardless of skipEnrichment — unlike
-      // tags, the fullscreen map's own hover card reads agent.cpu/ram/
-      // battery directly too (see showTip), not just the sidebar list.
+      // CPU/RAM for the whole fleet — fetched in the background so it doesn't
+      // delay the initial list paint; re-renders whatever's showing once the
+      // numbers land. This is only 2 requests (fleet-wide, not paginated), so
+      // it's kept up front.
+      //
+      // TEST BUILD — the fleet-wide BATTERY sweep is disabled here. It was a
+      // FULL PAGINATED settings/search crawl (page 0..N at 500/agent-records
+      // per page) that, on a large account, fired ~20+ heavy requests on
+      // every load just to surface battery for the handful of laptops that
+      // have it — the bulk of the AJAX volume. Battery only ever renders on
+      // the per-agent map hover card / sidebar cards, never in any health
+      // widget, so it's now expected to arrive on-demand via the existing
+      // per-agent segment-visualisation enrichment (applySegmentMetricsToAgent
+      // already extracts battery* fields from that response) instead of a
+      // fleet crawl. WHAT TO VERIFY: hover a laptop you know has a battery —
+      // if its battery % shows without the sweep, segment carries it and the
+      // sweep can be deleted for good; if it stays blank, segment doesn't
+      // carry battery and we'll fetch it per-agent a different way. To
+      // restore the old behavior for comparison, re-add the
+      // fetchEndpointAgentBatteryStatus()/applyBatteryStatusToAgents pair.
       void (async () => {
-        const [snap, batteryById] = await Promise.all([
-          tepFetchAllEyebrowMetrics(),
-          fetchEndpointAgentBatteryStatus().catch((e) => { log(`Endpoint agent battery fetch failed: ${e.message}`, 'tep-log-info'); return null; })
-        ]);
-        let changed = false;
-        if (snap && applyEyebrowMetricsToAgents(snap) > 0) changed = true;
-        if (batteryById && applyBatteryStatusToAgents(batteryById) > 0) changed = true;
-        if (changed) {
+        const snap = await tepFetchAllEyebrowMetrics().catch((e) => { log(`Endpoint eyebrow metrics failed: ${e.message}`, 'tep-log-info'); return null; });
+        if (snap && applyEyebrowMetricsToAgents(snap) > 0) {
           renderEndpointAgents();
           // preserveZoom: this background enrichment can land well after the
           // map is open and the user has zoomed/panned — CONFIRMED via user
@@ -22230,6 +22457,46 @@
     return applied;
   }
 
+  /** Battery for ONE agent, on demand — a single settings/search filtered by
+   *  the agent's hostname (searchTerm), so it returns just that agent's
+   *  record (with batteryMetrics) instead of the full-fleet sweep. Battery
+   *  ONLY renders on the per-agent hover card / sidebar card, never in a
+   *  health widget, and segment-visualisation doesn't carry it — so this
+   *  targeted fetch runs when (and only when) a specific agent is actually
+   *  looked at. The earlier lazy FULL-sweep approach was too slow (~24 pages
+   *  at this fleet size) to resolve before the hover ended, which is why
+   *  battery "wasn't pulling in" — CONFIRMED via user report. Cached per
+   *  agent via _batteryTried (set even on a miss, so desktops with no
+   *  battery aren't re-queried on every hover). Resolves true only when a
+   *  battery reading was actually found and applied. */
+  async function tepFetchBatteryForAgent(agent) {
+    if (!agent || !agent.id) return false;
+    if (agent._batteryTried) return agent.battery != null;
+    agent._batteryTried = true;
+    const term = agent.name || agent.hostname || '';
+    if (!term) return false;
+    try {
+      const url = `${ENDPOINT_AGENT_SETTINGS_SEARCH_PATH}?page=0&pageSize=25&sortDirection=DESCENDING&sortProperty=LAST_MODIFIED`;
+      const resp = await ajax(url, { method: 'POST', body: JSON.stringify({ searchTerm: term, searchTermFields: [], filters: [] }) });
+      if (!resp.ok) { log(`Battery (agent ${agent.id}): HTTP ${resp.status}`, 'tep-log-info'); return false; }
+      const data = await resp.json().catch(() => null);
+      const elements = Array.isArray(data && data.elements) ? data.elements : [];
+      // Hostnames aren't unique (the fleet has duplicates), so match the exact
+      // agent by id rather than trusting the first search hit.
+      const el = elements.find((e) => e && String(e.id) === String(agent.id));
+      const bm = el && el.batteryMetrics;
+      const levelPct = bm && Number(bm.batteryLevelNormalizedPercent);
+      if (!Number.isFinite(levelPct)) return false; // no battery (desktop) — fine
+      const healthPct = bm && Number(bm.batteryHealthNormalizedPercent);
+      agent.battery = `${Math.round(levelPct * 100)}%`;
+      agent.batteryHealthPct = Number.isFinite(healthPct) ? Math.round(healthPct * 100) : null;
+      return true;
+    } catch (e) {
+      log(`Battery (agent ${agent.id}) fetch error — ${e.message}`, 'tep-log-info');
+      return false;
+    }
+  }
+
   /** Battery health tiers (state-of-health %, wear-based): Optimal 98-100,
    *  Good 90-97, Fair 85-89, Degraded 80-84, Poor 79 and below. Colors step
    *  through the app's traffic-light palette (green → amber → orange → red)
@@ -22368,13 +22635,31 @@
         const card = entry.target;
         obs.unobserve(card);
         const agent = card.__tepAgent;
-        if (agent && agent.id && !agent._enriched && !agent._enriching) {
+        if (!agent || !agent.id) continue;
+        if (!agent._enriched && !agent._enriching) {
+          // Full enrichment (segment metrics/connKind/VPN) — this also kicks
+          // off the per-agent battery fetch internally.
           void enrichAgentAndUpdateCard(agent, card);
+        } else if (agent.battery == null && !agent._batteryTried) {
+          // Already segment-enriched (e.g. from a prior map hover) so the
+          // path above is skipped — still pull battery on its own when the
+          // card comes on screen, and swap the card in when it lands.
+          void tepFetchBatteryForAgent(agent).then((found) => {
+            if (found && card.isConnected && card.parentNode) {
+              card.replaceWith(buildEndpointAgentCard(agent, !!card.__tepPointer));
+            }
+          });
         }
       }
     }, { root: listEl, rootMargin: '150px 0px', threshold: 0.01 });
     listEl.querySelectorAll('.tep-test-card').forEach((c) => {
-      if (c.__tepAgent && !c.__tepAgent._enriched) endpointAgentObserver.observe(c);
+      const a = c.__tepAgent;
+      // Observe a card if it still needs EITHER segment enrichment OR a
+      // battery reading — so a card that's already segment-enriched but has
+      // no battery yet still gets observed and topped up when it scrolls in.
+      if (a && (!a._enriched || (a.battery == null && !a._batteryTried))) {
+        endpointAgentObserver.observe(c);
+      }
     });
   }
 
@@ -22409,9 +22694,22 @@
     } catch (_) { /* leave card as-is on failure */ }
     agent._enriched = true;
     agent._enriching = false;
+    let liveCard = card;
     if (card && card.isConnected && card.parentNode) {
       const fresh = buildEndpointAgentCard(agent, !!card.__tepPointer);
       card.replaceWith(fresh);
+      liveCard = fresh;
+    }
+    // Battery isn't in the segment payload — fetch it per-agent on demand
+    // (same targeted call the map hover uses) and swap just THIS card once it
+    // lands, so the sidebar list shows battery too, without a fleet sweep.
+    if (agent.battery == null && !agent._batteryTried) {
+      void tepFetchBatteryForAgent(agent).then((found) => {
+        if (!found) return;
+        if (liveCard && liveCard.isConnected && liveCard.parentNode) {
+          liveCard.replaceWith(buildEndpointAgentCard(agent, !!liveCard.__tepPointer));
+        }
+      });
     }
   }
 
