@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.62';
+  const TEP_VERSION = '3.63';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -19626,67 +19626,29 @@
     const sev = 1 - score / 100;
     return { score, sev };
   }
-  const tepOneWayNetCache = new Map(); // testId -> { ts, windowSec, row }
-  const TEP_ONEWAY_NET_CACHE_MS = 2 * 60 * 1000;
-  /** One metric's raw timeline for a single OneWayNetwork test — CONFIRMED
-   *  via live capture: GET /ajax/agent/view/timeline/one-way-net/
-   *  {latency|loss}?testId=X&metricId=oneWayNet{Latency|Loss}&direction=
-   *  BIDIRECTIONAL → { chunks:[{startRoundId,intervalLength}], values:[...] }.
-   *  A flat array covering TE's own default multi-day range (NOT scoped to
-   *  the panel's Data Window — no window param exists on this endpoint),
-   *  values null wherever that round didn't report. */
-  async function tepFetchOneWayNetTimeline(testId, metric) {
-    const metricId = metric === 'latency' ? 'oneWayNetLatency' : 'oneWayNetLoss';
-    const url = `/ajax/agent/view/timeline/one-way-net/${metric}?testId=${encodeURIComponent(testId)}&metricId=${metricId}&direction=BIDIRECTIONAL`;
-    let resp;
-    try { resp = await ajax(url); } catch (e) { return null; }
-    if (!resp || !resp.ok) return null;
-    let json;
-    try { json = await resp.json(); } catch (_) { return null; }
-    const chunk = json && Array.isArray(json.chunks) ? json.chunks[0] : null;
-    const values = json && Array.isArray(json.values) ? json.values : null;
-    if (!chunk || !chunk.intervalLength || !values) return null;
-    return { intervalLength: chunk.intervalLength, values };
-  }
-  /** OneWayNetwork ("Agent to Agent") tests — CONFIRMED via live capture to
-   *  report latency/loss under their own per-test timeline endpoint above,
-   *  NOT the NAS-NET_LATENCY/NAS-NET_LOSS metrics regular Network (Agent-
-   *  to-Server) tests use (tepFetchNasMetricRaw), so they never appeared in
-   *  Network Health at all before this. Since the timeline endpoint always
-   *  returns its own full default range regardless of the panel's Data
-   *  Window, only the trailing window's-worth of values (by intervalLength)
-   *  is averaged here, so this test's contribution stays scoped the same
-   *  way every other Network Health row already is. Returns
-   *  [{title,sev,score,testId,avgLat,avgLoss}]. */
+  /** OneWayNetwork ("Agent to Agent") tests, for Network Health — CONFIRMED
+   *  via a live agent-status capture that these report one-way loss under the
+   *  NAS metric NAS-ONE_WAY_NET_LOSS_TO_TARGET, so they're queried the exact
+   *  same batched, dashboard-independent way as regular Network tests
+   *  (tepFetchNasMetricAllTests) — ONE call, no per-test fan-out, and no
+   *  dependency on the test catalog (allTests is empty on the dashboard page,
+   *  which is why an earlier per-test-timeline approach found nothing there).
+   *  Loss-only scoring: no one-way LATENCY NAS metric is confirmed, and loss
+   *  is the dominant term in tepNetworkTestScore anyway (a clean A2A test at
+   *  0% loss still scores 100). Returns [{title,sev,score,testId,avgLat:null,
+   *  avgLoss}]; empty if the metric returns nothing (no worse than before). */
   async function tepFetchOneWayNetworkHealth(force) {
-    const windowSec = tepMetricsWindowSec();
-    const tests = (allTests || []).filter((t) => String(t.testType || '').toLowerCase() === 'onewaynetwork' && t.flagEnabled && !t.flagDeleted);
+    const loss = await tepFetchNasMetricAllTests('NAS-ONE_WAY_NET_LOSS_TO_TARGET', force).catch(() => null);
+    if (!loss || !loss.byTest.size) return [];
     const rows = [];
-    for (const t of tests) {
-      const testId = t.testId != null ? t.testId : t.id;
-      if (testId == null) continue;
-      const cached = tepOneWayNetCache.get(testId);
-      if (!force && cached && cached.windowSec === windowSec && (Date.now() - cached.ts) < TEP_ONEWAY_NET_CACHE_MS) {
-        rows.push(cached.row);
-        continue;
-      }
-      const [latT, lossT] = await Promise.all([
-        tepFetchOneWayNetTimeline(testId, 'latency').catch(() => null),
-        tepFetchOneWayNetTimeline(testId, 'loss').catch(() => null),
-      ]);
-      const avgOf = (series) => {
-        if (!series || !series.values.length) return null;
-        const n = Math.max(1, Math.round(windowSec / series.intervalLength));
-        const tail = series.values.slice(-n).filter((v) => Number.isFinite(v));
-        return tail.length ? tail.reduce((s, x) => s + x, 0) / tail.length : null;
-      };
-      const avgLat = avgOf(latT);
-      const avgLoss = avgOf(lossT);
-      if (avgLat == null && avgLoss == null) continue;
-      const { score, sev } = tepNetworkTestScore(avgLat, avgLoss);
-      const row = { title: t.name || `Test ${testId}`, sev, score, testId: String(testId), avgLat, avgLoss };
-      tepOneWayNetCache.set(testId, { ts: Date.now(), windowSec, row });
-      rows.push(row);
+    for (const [testId, vals] of loss.byTest) {
+      const avgLoss = vals && vals.length ? vals.reduce((s, x) => s + x, 0) / vals.length : null;
+      if (avgLoss == null) continue;
+      const { score, sev } = tepNetworkTestScore(null, avgLoss);
+      rows.push({
+        title: (loss.names && loss.names[testId]) || `Test ${testId}`,
+        sev, score, testId: String(testId), avgLat: null, avgLoss,
+      });
     }
     return rows;
   }
@@ -19930,11 +19892,16 @@
    *  already loaded. ENTERPRISE ONLY, same NAS-AGENT limitation as
    *  everywhere else in this file. */
   async function tepFetchNetworkAgentsByTest(force) {
-    const [latRaw, lossRaw] = await Promise.all([
+    const [latRaw, lossRaw, owRaw] = await Promise.all([
       tepFetchNasMetricRaw('NAS-NET_LATENCY', force).catch(() => null),
       tepFetchNasMetricRaw('NAS-NET_LOSS', force).catch(() => null),
+      // OneWayNetwork (A2A) tests' agents too, so the row badges + the
+      // Enterprise/Cloud count label classify them by their real agents
+      // rather than defaulting to Cloud. Cache hit — tepFetchOneWayNetwork-
+      // Health already fetched this metric's raw.
+      tepFetchNasMetricRaw('NAS-ONE_WAY_NET_LOSS_TO_TARGET', force).catch(() => null),
     ]);
-    if (!latRaw && !lossRaw) return null;
+    if (!latRaw && !lossRaw && !owRaw) return null;
     const byTest = new Map();
     const addFrom = (raw) => {
       if (!raw) return;
@@ -19952,6 +19919,7 @@
     };
     addFrom(latRaw);
     addFrom(lossRaw);
+    addFrom(owRaw);
     return byTest;
   }
 
@@ -21331,26 +21299,47 @@
    *  breakdown's total (no double-counting a mixed-agent test). A test not
    *  found in allTests (not yet loaded) falls into Cloud, matching that
    *  function's own default for anything it can't identify. */
-  function tepSplitBreakdownByAgentType(breakdown) {
+  /** testAgentsMap (testId → Set<UPPER agent name>, from the NAS/HTTP
+   *  per-test agent fetch — same cached data the row badges use) is the
+   *  PRIMARY classifier and works on the dashboard, where allTests is empty;
+   *  a test is Enterprise if any agent that ran it is an Enterprise agent
+   *  (tepEnterpriseAgentNameSet, built from the always-loaded `agents`),
+   *  else Cloud. Falls back to the allTests lookup only when the map has
+   *  nothing for a given test — CONFIRMED that without this the label read
+   *  "N Cloud + M endpoint" with zero Enterprise on the dashboard, since
+   *  allTests-based classification had no data to work with. */
+  function tepSplitBreakdownByAgentType(breakdown, testAgentsMap) {
     let ent = 0, cloud = 0, ep = 0;
     const byId = new Map(allTests.map((t) => [String(t.testId || t.id), t]));
+    const entNames = (testAgentsMap && testAgentsMap.size) ? tepEnterpriseAgentNameSet() : null;
     for (const r of breakdown) {
       if (r.isEndpoint) { ep++; continue; }
-      const t = byId.get(String(r.testId));
-      const counts = t ? countEnterpriseAndCloudByAgentIdList(getTestAgentIds(t)) : null;
-      if (counts && counts.ent > 0) ent++; else cloud++;
+      let isEnt = null;
+      if (entNames) {
+        const names = testAgentsMap.get(String(r.testId));
+        if (names && names.size) {
+          isEnt = false;
+          for (const n of names) { if (entNames.has(n)) { isEnt = true; break; } }
+        }
+      }
+      if (isEnt === null) {
+        const t = byId.get(String(r.testId));
+        const counts = t ? countEnterpriseAndCloudByAgentIdList(getTestAgentIds(t)) : null;
+        isEnt = !!(counts && counts.ent > 0);
+      }
+      if (isEnt) ent++; else cloud++;
     }
     return { ent, cloud, ep };
   }
-  /** "4 Enterprise, 3 Cloud + 7 endpoint tests" — comma-joins every non-zero
+  /** "3 Cloud + 4 Enterprise + 7 Endpoint tests" — comma-joins every non-zero
    *  bucket, swaps the final comma for " + ", and appends one shared
    *  "test(s)" suffix instead of repeating it per bucket. */
-  function tepAgentTypeCountLabel(breakdown, totalCount) {
-    const { ent, cloud, ep } = tepSplitBreakdownByAgentType(breakdown);
+  function tepAgentTypeCountLabel(breakdown, totalCount, testAgentsMap) {
+    const { ent, cloud, ep } = tepSplitBreakdownByAgentType(breakdown, testAgentsMap);
     const segs = [];
-    if (ent) segs.push(`${ent} Enterprise`);
     if (cloud) segs.push(`${cloud} Cloud`);
-    if (ep) segs.push(`${ep} endpoint`);
+    if (ent) segs.push(`${ent} Enterprise`);
+    if (ep) segs.push(`${ep} Endpoint`);
     if (!segs.length) return `${totalCount} test${totalCount === 1 ? '' : 's'}`;
     return segs.join(', ').replace(/, ([^,]*)$/, ' + $1') + ` test${totalCount === 1 ? '' : 's'}`;
   }
@@ -21369,7 +21358,13 @@
       if (fetched && fetched.count) {
         tepNetworkBreakdownData = { rows: fetched.breakdown, epCount: fetched.epCount };
         const score = Math.round((1 - fetched.avgSev) * 100);
-        const countLabel = tepAgentTypeCountLabel(fetched.breakdown, fetched.count);
+        // Cached NAS-agents map (the health fetch just pulled the same raw) —
+        // lets the label split Enterprise vs Cloud on the dashboard, where
+        // allTests is empty. Deliberately NOT forced: even on a force refresh
+        // the widget fetch above already repopulated the raw cache, so an
+        // unforced call here is a guaranteed cache hit — no new request.
+        const netAgents = await tepFetchNetworkAgentsByTest(false).catch(() => null);
+        const countLabel = tepAgentTypeCountLabel(fetched.breakdown, fetched.count, netAgents);
         const tip = `Average across ${countLabel} over ${tepMetricsWindowPhrase()} — click to see each one`;
         netEl.className = 'tep-w-saas-clickable';
         netEl.innerHTML = '<div class="tep-saas-health">'
@@ -21407,7 +21402,11 @@
       const fetched = await tepFetchAllHttpAvailability(force);
       if (fetched && fetched.count) {
         tepSaasBreakdownData = { rows: fetched.breakdown, epCount: fetched.epCount };
-        const countLabel = tepAgentTypeCountLabel(fetched.breakdown, fetched.count);
+        // Cached HTTP-agents map — same purpose as the Network side: split
+        // Enterprise vs Cloud in the label on the dashboard. Unforced so it's
+        // always a cache hit off the raw the widget fetch above just pulled.
+        const httpAgents = await tepFetchHttpAgentsByTest(false).catch(() => null);
+        const countLabel = tepAgentTypeCountLabel(fetched.breakdown, fetched.count, httpAgents);
         const tip = `Average across ${countLabel} over ${tepMetricsWindowPhrase()} — click to see each one`;
         saasEl.className = 'tep-w-saas-clickable';
         saasEl.innerHTML = '<div class="tep-saas-health">'
