@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.63';
+  const TEP_VERSION = '3.64';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -19847,16 +19847,27 @@
     if (!force && tepNetTestsByAgentCache && (Date.now() - tepNetTestsByAgentCache.ts) < TEP_NET_TESTS_BY_AGENT_CACHE_MS) {
       return tepNetTestsByAgentCache.byAgent;
     }
-    const [latByAgent, lossByAgent] = await Promise.all([
+    const [latByAgent, lossByAgent, owLossByAgent] = await Promise.all([
       tepFetchNasMetricPointsByAgent('NAS-NET_LATENCY', force),
       tepFetchNasMetricPointsByAgent('NAS-NET_LOSS', force),
+      // OneWayNetwork (A2A) tests' per-agent loss too, so Agent-to-Agent
+      // tests appear in the map hover card's per-agent Network test list —
+      // not just the fleet-wide Network Health widget. Loss-only scoring
+      // (same as the widget). Cache hit — the widget already fetched this
+      // metric's raw (tepFetchNasMetricRaw), so no extra request.
+      tepFetchNasMetricPointsByAgent('NAS-ONE_WAY_NET_LOSS_TO_TARGET', force),
     ]);
-    if (!latByAgent && !lossByAgent) return null;
-    const agentNames = new Set([...(latByAgent ? latByAgent.keys() : []), ...(lossByAgent ? lossByAgent.keys() : [])]);
+    if (!latByAgent && !lossByAgent && !owLossByAgent) return null;
+    const agentNames = new Set([
+      ...(latByAgent ? latByAgent.keys() : []),
+      ...(lossByAgent ? lossByAgent.keys() : []),
+      ...(owLossByAgent ? owLossByAgent.keys() : []),
+    ]);
     const byAgent = new Map();
     for (const agentName of agentNames) {
       const latTests = latByAgent && latByAgent.get(agentName);
       const lossTests = lossByAgent && lossByAgent.get(agentName);
+      const owTests = owLossByAgent && owLossByAgent.get(agentName);
       const testIds = new Set([...(latTests ? latTests.keys() : []), ...(lossTests ? lossTests.keys() : [])]);
       const rows = [];
       for (const testId of testIds) {
@@ -19871,6 +19882,13 @@
         const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
         const score = Math.max(0, Math.round(latencyScore - lossPenalty));
         rows.push({ title: (lat || loss).name, value: score, testId });
+      }
+      // A2A / OneWayNetwork tests for this agent — separate metric, loss-only.
+      if (owTests) {
+        for (const [testId, entry] of owTests) {
+          if (entry == null || entry.value == null) continue;
+          rows.push({ title: entry.name, value: tepNetworkTestScore(null, entry.value).score, testId });
+        }
       }
       if (rows.length) {
         rows.sort((a, b) => a.value - b.value);
