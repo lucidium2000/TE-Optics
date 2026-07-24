@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.64';
+  const TEP_VERSION = '3.65';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -18422,17 +18422,39 @@
   let dashMapFullEl = null;
   // Keeps the fullscreen map current while it's open: a quick widgets-only
   // refresh 3s after spawn (so the Alerts/Events/SaaS "pending" placeholders
-  // resolve fast), then everything — widgets + agent last-seen data — every
-  // 2 minutes.
+  // resolve fast), then a full periodic refresh on an ESCALATING cadence that
+  // backs off the longer the map's been open — to keep traffic down on a
+  // long-running session (CONFIRMED via user request):
+  //   • first 10 min:  every 2 min   (fresh, same as before)
+  //   • 10 min – 3 hr:  every 30 min
+  //   • after 3 hr:     every 1 hr
+  // Implemented as a self-rescheduling setTimeout (not a fixed setInterval) so
+  // each tick recomputes its own next delay from elapsed-since-open. Opening
+  // the map afresh resets the clock (see startDashWidgetsAutoRefresh setting
+  // dashRefreshStartMs), so a new session gets the fast window again.
   let dashWidgetsRefreshTimer = null;
+  let dashRefreshStartMs = 0;
+  function dashRefreshIntervalMs(elapsedMs) {
+    if (elapsedMs < 10 * 60 * 1000) return 2 * 60 * 1000;        // < 10 min → 2 min
+    if (elapsedMs < 3 * 60 * 60 * 1000) return 30 * 60 * 1000;   // < 3 hr  → 30 min
+    return 60 * 60 * 1000;                                       // ≥ 3 hr  → 1 hr
+  }
+  function scheduleNextDashRefresh() {
+    const delay = dashRefreshIntervalMs(Date.now() - dashRefreshStartMs);
+    dashWidgetsRefreshTimer = setTimeout(async () => {
+      try { await dashFullPeriodicRefresh(); } catch (_) { /* */ }
+      scheduleNextDashRefresh();
+    }, delay);
+  }
   function startDashWidgetsAutoRefresh() {
     stopDashWidgetsAutoRefresh();
+    dashRefreshStartMs = Date.now();
     dashWidgetsRefreshTimer = setTimeout(() => {
       void fillDashWidgetsAsync();
       void refreshDashMapColorScores().then(() => {
         if (dashMapFullEl) renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
       });
-      dashWidgetsRefreshTimer = setInterval(() => { void dashFullPeriodicRefresh(); }, 120000);
+      scheduleNextDashRefresh();
     }, 3000);
   }
   function stopDashWidgetsAutoRefresh() {
@@ -18442,11 +18464,13 @@
       dashWidgetsRefreshTimer = null;
     }
   }
-  /** The 2-minute recurring tick: widget/test-metric stats (Alerts/Events/
-   *  SaaS/Network via fillDashWidgetsAsync + per-agent scores via
-   *  refreshDashMapColorScores) plus the cheap enterprise roster (loadAgents
-   *  — status + lastSeen), so online/offline counts and the health rings stay
-   *  current on a long-running fullscreen session. loadAgents() triggers its
+  /** The recurring refresh tick (on the escalating cadence set by
+   *  scheduleNextDashRefresh — 2 min for the first 10 min, then 30 min, then
+   *  hourly): widget/test-metric stats (Alerts/Events/SaaS/Network via
+   *  fillDashWidgetsAsync + per-agent scores via refreshDashMapColorScores)
+   *  plus the cheap enterprise roster (loadAgents — status + lastSeen), so
+   *  online/offline counts and the health rings stay current on a
+   *  long-running fullscreen session. loadAgents() triggers its
    *  own map re-render as a side effect (via refreshDashMapViews, with no
    *  preserveZoom — it auto-fits), so the user's pan/zoom is snapshotted and
    *  restored around it here, same as the ISP/type filter radios do, so a
@@ -24234,6 +24258,36 @@
     return picked;
   }
 
+  const LIVE_TEST_MAX_PER_CLUSTER = 3;
+  /** Caps how many agents the LIVE TEST fires from any single fine-grained
+   *  location (~2-decimal coords ≈ one site/office, same granularity the map
+   *  clusters endpoint markers at), keeping the most-recently-seen up to
+   *  LIVE_TEST_MAX_PER_CLUSTER — so a dense office of N agents doesn't blast N
+   *  simultaneous probes at the same destination (redundant, and more likely
+   *  to read as abusive to that destination). Runs BEFORE the overall
+   *  per-kind spread-select cap. Agents whose coordinates can't be resolved
+   *  pass through uncapped — they may be genuinely distinct sites we just
+   *  can't cluster, and the overall cap still bounds the total either way. */
+  function liveTestCapPerCluster(list, isEndpoint) {
+    const byCluster = new Map();
+    const passthrough = [];
+    for (const a of list) {
+      const geo = liveTestAgentLatLng(a, isEndpoint);
+      if (!geo) { passthrough.push(a); continue; }
+      const key = `${geo.lat.toFixed(2)},${geo.lng.toFixed(2)}`;
+      if (!byCluster.has(key)) byCluster.set(key, []);
+      byCluster.get(key).push(a);
+    }
+    const out = passthrough.slice();
+    for (const arr of byCluster.values()) {
+      if (arr.length > LIVE_TEST_MAX_PER_CLUSTER) {
+        arr.sort((x, y) => (Number(y.lastSeenMs) || 0) - (Number(x.lastSeenMs) || 0));
+      }
+      for (let i = 0; i < Math.min(LIVE_TEST_MAX_PER_CLUSTER, arr.length); i++) out.push(arr[i]);
+    }
+    return out;
+  }
+
   function onlineEnterpriseVAgentIdsForLiveTest() {
     // Dedupe by agentId first (agents[] can carry more than one row per
     // physical agent) — otherwise a duplicate could eat a slot in the cap
@@ -24246,9 +24300,10 @@
         online.push(a);
       }
     }
-    const picked = liveTestSpreadSelect(online, liveTestAgentCap(), false);
+    const capped = liveTestCapPerCluster(online, false);
+    const picked = liveTestSpreadSelect(capped, liveTestAgentCap(), false);
     if (picked.length < online.length) {
-      log(`LIVE TEST: ${online.length} online enterprise agent(s) — capped to ${picked.length} (most recent, spread geographically)`, 'tep-log-info');
+      log(`LIVE TEST: ${online.length} online enterprise agent(s) — ${capped.length} after ≤${LIVE_TEST_MAX_PER_CLUSTER}/site, ${picked.length} after the overall cap (most recent, spread geographically)`, 'tep-log-info');
     }
     const set = new Set(picked.map((a) => a.agentId));
     return selectionSetToVAgentIds(set);
@@ -24256,9 +24311,10 @@
 
   function onlineEndpointAgentIdsForLiveTest() {
     const online = allEndpointAgents.filter((a) => tepEndpointHealth(a.lastSeenMs) === 'healthy');
-    const picked = liveTestSpreadSelect(online, liveTestAgentCap(), true);
+    const capped = liveTestCapPerCluster(online, true);
+    const picked = liveTestSpreadSelect(capped, liveTestAgentCap(), true);
     if (picked.length < online.length) {
-      log(`LIVE TEST: ${online.length} online endpoint agent(s) — capped to ${picked.length} (most recent, spread geographically)`, 'tep-log-info');
+      log(`LIVE TEST: ${online.length} online endpoint agent(s) — ${capped.length} after ≤${LIVE_TEST_MAX_PER_CLUSTER}/site, ${picked.length} after the overall cap (most recent, spread geographically)`, 'tep-log-info');
     }
     return picked.map((a) => a.id).filter(Boolean);
   }
