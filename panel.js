@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.77';
+  const TEP_VERSION = '3.78';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2171,7 +2171,7 @@
     }
     /* Map search box (bottom-middle, fullscreen only): matches get a pulsing
        gold glow and jump to the front; everything else dims so hits pop. */
-    .tep-agent-map-marker--searchdim { opacity: .25; }
+    .tep-agent-map-marker--searchdim:not(.tep-testdest-related) { opacity: .25; }
     /* LIVE TEST session (running, or results still showing) and this agent
        (or every member of this cluster) is neither confirmed part of the
        run's roster nor has a latency round back yet — darken it so
@@ -16975,7 +16975,7 @@
       const destLoc = dest && dest.location ? dest.location : (info.location || '');
       // Filter the test view to THIS source agent (its own loss/latency).
       const agId = it.agentId != null ? it.agentId : null;
-      const url = tepTestViewUrl(info.testId, info.roundId, agId);
+      const url = tepTestViewUrl(info.testId, info.roundId, agId, { endpoint: info.endpoint });
       const bits = [];
       if (t && t.totalMs != null) bits.push(esc(t.totalMs + ' ms'));
       if (destLoc) bits.push('→ ' + esc(destLoc));
@@ -17114,7 +17114,7 @@
     }
     if (info.testDetail) rows.push(row('Latency / loss', info.testDetail));
     // Link straight to the ThousandEyes test view (whole test, all agents).
-    const url = tepTestViewUrl(info.testId, info.roundId);
+    const url = tepTestViewUrl(info.testId, info.roundId, null, { endpoint: info.endpoint });
     const footer = url
       ? `<a class="tep-gcard-more tep-map-tip-metricrow--link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;">Open in ThousandEyes ↗</a>`
       : '<div class="tep-gcard-more">Click the pin to clear</div>';
@@ -17132,9 +17132,27 @@
    *  defaulted to the widest window / start-of-month). roundId (epoch SECONDS,
    *  the round we analysed) becomes startTime, with a timelineWindow bracketing
    *  it so it's the focused round. agentId filters to that one source agent. */
-  function tepTestViewUrl(testId, roundId, agentId) {
+  function tepTestViewUrl(testId, roundId, agentId, opts) {
     if (testId == null || testId === '') return '';
     const origin = window.location.origin || 'https://app.thousandeyes.com';
+    // Endpoint tests live under /endpoint/views/ — the enterprise
+    // network-app-synthetics view is blank/404 for an endpoint testId, which is
+    // why the trace card's link went nowhere for endpoint traces. The trace was
+    // pulled from the eyebrow NET graph, so the matching scenario is the network
+    // one (metric=latency); roundId is the exact eyebrow round the trace came
+    // from, and a single agent is scoped via the same lz-compressed machineId
+    // filter buildEndpointTestViewUrl uses.
+    if (opts && opts.endpoint) {
+      const eround = (roundId != null && roundId !== '' && Number.isFinite(Number(roundId))) ? Math.floor(Number(roundId)) : getEndpointViewRoundId();
+      const eparams = new URLSearchParams({
+        metric: 'latency',
+        roundId: String(eround),
+        scenarioId: 'eyebrowNetworkTest',
+        testId: String(testId),
+      });
+      if (agentId != null && agentId !== '') eparams.set('filters', tepEndpointFilterParam(String(agentId)));
+      return origin + '/endpoint/views/?' + eparams.toString();
+    }
     const round = (roundId != null && roundId !== '' && Number.isFinite(Number(roundId))) ? Math.floor(Number(roundId)) : Math.floor(Date.now() / 1000);
     const params = new URLSearchParams({
       testId: String(testId),
@@ -17551,12 +17569,24 @@
       const liveTestConfirmed = liveMapSession ? liveTestConfirmedAgentIds() : null;
       const noLiveReportYet = liveMapSession && !items.some((it) =>
         Number.isFinite(it.latencyMs) || (liveTestConfirmed && it.agentId != null && liveTestConfirmed.has(String(it.agentId))));
+      // Preserve the pinned-trace source illumination across the className
+      // rebuild. paintMarker rewrites className from scratch, so any repaint
+      // that ISN'T followed by buildSelectedTestDest (notably
+      // dashMapSearchHook.refresh(), which the endpoint test-row hover/mouseout
+      // both call) would otherwise silently drop tep-testdest-related — the
+      // whole map is in .tep-testdest-active, which dims every marker that
+      // isn't .tep-testdest-related, so the trace's own source agents went grey.
+      // Enterprise sources happened to survive by independently matching
+      // dashMapTestHighlight (→ --searchhit); endpoint sources have no such
+      // fallback, which is why "endpoint not lit up" was endpoint-specific.
+      const wasTestDestRelated = m.classList.contains('tep-testdest-related');
       m.className = 'tep-agent-map-marker tep-dash-map-marker'
         + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
         + (anyOnline ? ' tep-agent-map-marker--online' : '')
         + (isSrc ? ' tep-livetest-src' : '')
         + (highlightActive ? ((searchHit || testHit || alertHit || listHoverHit) ? ' tep-agent-map-marker--searchhit' : ' tep-agent-map-marker--searchdim') : '')
-        + (noLiveReportYet ? ' tep-agent-map-marker--pending' : '');
+        + (noLiveReportYet ? ' tep-agent-map-marker--pending' : '')
+        + (wasTestDestRelated ? ' tep-testdest-related' : '');
       const latVals = items.map((it) => it.latencyMs).filter((v) => Number.isFinite(v));
       const latAvg = latVals.length ? Math.round(latVals.reduce((s, v) => s + v, 0) / latVals.length) : null;
       const lossVals = items.map((it) => it.lossPct).filter((v) => Number.isFinite(v));
@@ -18138,7 +18168,7 @@
           // FILTERED to this source agent so its own loss/latency shows.
           const agIdMap = d.agentIdByName instanceof Map ? d.agentIdByName : null;
           const agId = (agIdMap && agIdMap.get(nameU)) != null ? agIdMap.get(nameU) : it.agentId;
-          hEl._testViewUrl = tepTestViewUrl(d.testId, d.roundId, agId);
+          hEl._testViewUrl = tepTestViewUrl(d.testId, d.roundId, agId, { endpoint: d.endpoint });
           hEl._traceRoundId = d.roundId;   // the round this trace was taken from (for the click-time message)
           overlay.appendChild(hEl);
           hopEls.push({ el: hEl, hopFraction: bn.hopFraction });
@@ -19158,7 +19188,7 @@
       // already shows the test name + health + the same link).
       if (tgt.closest && tgt.closest('.tep-testdest-node')) {
         const info = dashMapSelectedTestDest;
-        const url = info ? tepTestViewUrl(info.testId, info.roundId) : '';
+        const url = info ? tepTestViewUrl(info.testId, info.roundId, null, { endpoint: info.endpoint }) : '';
         if (url) { try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (_) { /* */ } }
         return;
       }
@@ -26673,6 +26703,7 @@
       testId: key,
       roundId: usedBin,          // for the "open in test view" deep link
       isOneWayNet: !!isOneWayNet,
+      endpoint: !!isEndpoint,    // endpoint tests deep-link to /endpoint/views/, not network-app-synthetics
       // primary dest mirrored at top level for the "active"/positioning gates:
       location: primary.location, lat: primary.lat, lng: primary.lng,
       asName: primary.asName, asn: primary.asn, ip: primary.ip,
