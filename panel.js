@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.65';
+  const TEP_VERSION = '3.66';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2018,6 +2018,122 @@
     .tep-agent-map-marker svg { display: block; overflow: visible; }
     .tep-agent-map-marker svg circle { fill: var(--tep-orange); stroke: #ffedd5; stroke-width: 2; }
     .tep-agent-map-marker:hover { filter: drop-shadow(0 0 6px rgba(249,115,22,.95)); }
+    /* EXPERIMENTAL (test-destinations MVP): the pinned test destination reuses
+       the LIVE TEST dest node's exact look (.tep-livetest-dest/.tep-livetest-g
+       — white disc, pulsing blue halo, pop-in) so it matches the flow it
+       anchors; a location-pin icon (single <path>, no <circle>) distinguishes
+       it from the live test's Google "G". The <path> icon means the generic
+       .tep-agent-map-marker svg circle recolor rule never touches it. */
+    .tep-testdest-node .tep-livetest-g svg path { fill: #1a73e8; }
+    /* EXPERIMENTAL (trace path nodes): small KEY-HOP nodes dropped ONTO a
+       test-destination flow line — the AS boundaries + biggest-jump hop of the
+       traceroute, each with its latency labelled beside it. They sit in the
+       overlay (so each gets the same hover-card treatment + click-through as
+       other markers), positioned per-frame in layoutMarkers at a fraction along
+       the Bézier arc. Regular hop = small blue dot; bottleneck = amber diamond
+       so the worst link reads instantly, distinct from an agent (round) or the
+       destination pin. Deliberately small — a line can show several. */
+    .tep-testdest-hop { z-index: 5; filter: none; }
+    .tep-testdest-hop-dot {
+      display: block; width: 7px; height: 7px; border-radius: 50%;
+      background: #1a73e8; border: 1.5px solid #e8f0fe;
+      box-shadow: 0 0 0 1px rgba(26,115,232,.5), 0 0 5px rgba(26,115,232,.8);
+    }
+    .tep-testdest-hop--bottle .tep-testdest-hop-dot {
+      width: 10px; height: 10px; border-radius: 2px; transform: rotate(45deg);
+      background: linear-gradient(135deg, #fbbf24, #f97316); border-color: #fff7ed;
+      box-shadow: 0 0 0 1px rgba(180,83,9,.6), 0 0 7px rgba(251,146,60,.9);
+      animation: tep-testdest-bottle-pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes tep-testdest-bottle-pulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(180,83,9,.6), 0 0 6px rgba(251,146,60,.75); }
+      50% { box-shadow: 0 0 0 1px rgba(180,83,9,.7), 0 0 11px rgba(251,146,60,1); }
+    }
+    .tep-testdest-hop--bottle:hover .tep-testdest-hop-dot { animation-play-state: paused; }
+    /* Loss node — a hop dropping packets. Red diamond + "N%" label, distinct
+       from the amber latency bottleneck. */
+    .tep-testdest-hop--loss .tep-testdest-hop-dot {
+      width: 10px; height: 10px; border-radius: 2px; transform: rotate(45deg);
+      background: linear-gradient(135deg, #f87171, #dc2626); border: 1.5px solid #fee2e2;
+      box-shadow: 0 0 0 1px rgba(153,27,27,.6), 0 0 7px rgba(239,68,68,.9);
+      animation: tep-testdest-loss-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes tep-testdest-loss-pulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(153,27,27,.6), 0 0 6px rgba(239,68,68,.75); }
+      50% { box-shadow: 0 0 0 1px rgba(153,27,27,.75), 0 0 12px rgba(239,68,68,1); }
+    }
+    .tep-testdest-hop--loss .tep-testdest-hop-lbl { color: #fecaca; border-color: rgba(239,68,68,.7); }
+    .tep-testdest-hop--loss:hover .tep-testdest-hop-dot { animation-play-state: paused; }
+    /* The hop just BEFORE the latency jump — small, muted blue, no label; its
+       info is on hover only, so it reads as a quiet secondary marker next to the
+       amber bottleneck. */
+    .tep-testdest-hop--before { opacity: .72; }
+    .tep-testdest-hop--before:hover { opacity: 1; }
+    .tep-testdest-hop--before .tep-testdest-hop-dot {
+      width: 7px; height: 7px; background: #3d6aa0; border: 1px solid rgba(191,219,254,.6);
+      box-shadow: 0 0 0 1px rgba(26,115,232,.35);
+    }
+    /* Latency label beside the node — anchored up-and-right of the dot so it
+       clears the flow line. Non-interactive; the dot owns hover/click. */
+    .tep-testdest-hop-lbl {
+      position: absolute; left: 8px; bottom: 8px; white-space: nowrap;
+      font-size: 9.5px; font-weight: 800; line-height: 1;
+      color: #dbeafe; padding: 1px 4px; border-radius: 5px;
+      background: rgba(15,23,42,.82); border: 1px solid rgba(96,165,250,.45);
+      pointer-events: none; font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 2px rgba(0,0,0,.6);
+    }
+    .tep-testdest-hop--bottle .tep-testdest-hop-lbl {
+      color: #ffedd5; border-color: rgba(251,146,60,.7); left: 9px; bottom: 9px;
+    }
+    /* Total path latency, shown floating just above the SOURCE agent marker.
+       Mint/green so it reads as neutral summary info, distinct from the amber
+       bottleneck delta. Non-interactive — the agent marker owns its own hover. */
+    .tep-testdest-total { z-index: 6; filter: none; pointer-events: none; }
+    .tep-testdest-total-lbl {
+      position: absolute; left: 50%; bottom: 15px; transform: translateX(-50%);
+      white-space: nowrap; font-size: 9.5px; font-weight: 800; line-height: 1;
+      color: #d1fae5; padding: 1px 5px; border-radius: 6px;
+      background: rgba(15,23,42,.85); border: 1px solid rgba(52,211,153,.5);
+      font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+    }
+    /* When the path has loss, the source total turns red-bordered and appends
+       the loss figure in red. */
+    .tep-testdest-total--loss .tep-testdest-total-lbl { border-color: rgba(239,68,68,.6); }
+    .tep-testdest-total-loss { color: #fecaca; margin-left: 5px; }
+    /* Pin view: dim every marker that isn't part of the pinned test — its
+       source agents (.tep-testdest-related) and its own nodes stay bright, so
+       the path stands out. Hover still works on dimmed markers. */
+    .tep-testdest-active .tep-agent-map-marker:not(.tep-testdest-related):not(.tep-testdest-node):not(.tep-testdest-hop):not(.tep-testdest-total):not(.tep-cloud-agent-marker) {
+      opacity: .18; filter: grayscale(.65);
+    }
+    /* ISP radio active: HIDE the non-matching fleet markers entirely (only that
+       ISP's source agents remain), rather than just dimming them. */
+    .tep-testdest-ispfiltered .tep-agent-map-marker:not(.tep-testdest-related):not(.tep-testdest-node):not(.tep-testdest-hop):not(.tep-testdest-total):not(.tep-cloud-agent-marker) {
+      display: none;
+    }
+    .tep-gcard-delta { color: var(--tep-orange-fg); font-weight: 800; }
+    /* Transient message over the fullscreen map (tepMapToast). */
+    .tep-map-toast {
+      position: fixed; top: 20px; left: 50%; z-index: 2147483000;
+      transform: translate(-50%, -10px); max-width: 70vw;
+      background: rgba(15,23,42,.96); border: 1px solid rgba(148,163,184,.4);
+      color: var(--tep-slate-200); padding: 9px 15px; border-radius: 9px;
+      font-size: 12.5px; font-weight: 600; line-height: 1.35; text-align: center;
+      white-space: pre-line; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+      opacity: 0; transition: opacity .25s ease, transform .25s ease; pointer-events: none;
+    }
+    .tep-map-toast--in { opacity: 1; transform: translate(-50%, 0); }
+    .tep-map-toast--err { border-color: var(--tep-red); color: #fecaca; }
+    .tep-map-toast--ok { border-color: rgba(52,211,153,.6); color: #d1fae5; }
+    /* EXPERIMENTAL (cloud-on-hover): transient CLOUD-agent markers shown only
+       while a test row is hovered — bright light-blue cloud, glowing, so they
+       pop against the darker fleet markers and read as "not your agents". */
+    .tep-cloud-agent-marker { z-index: 7; filter: none; pointer-events: auto; animation: tep-cloud-pop .18s ease-out; }
+    .tep-cloud-agent-ic { display: block; line-height: 0; }
+    .tep-cloud-agent-ic svg { display: block; filter: drop-shadow(0 0 6px rgba(56,189,248,.95)); }
+    .tep-cloud-agent-ic svg path { fill: #7dd3fc; stroke: #e0f2fe; stroke-width: 1; }
+    @keyframes tep-cloud-pop { from { opacity: 0; transform: translate(-50%, -50%) scale(.6); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
     /* One-shot entrance for a marker holding an agent never shown before
        this session (see markersFadedIn) — opacity only, deliberately not
        transform: the marker itself is already translate(-50%,-50%)-positioned
@@ -2149,12 +2265,16 @@
       100% { width: 300vmax; height: 300vmax; opacity: 0; }
     }
     /* Soft glowing base beneath the animated dashes for depth. */
-    .tep-livetest-flowsvg .tep-livetest-flow-glow {
+    /* :where(...) so the identical styling applies inside EITHER the LIVE
+       TEST flow overlay OR the pinned-test-destination flow overlay (phase 2)
+       — the test-dest flow was invisible/unstyled before, because these
+       rules were scoped to .tep-livetest-flowsvg only. */
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow-glow {
       fill: none; stroke: #4285F4; stroke-width: 6; opacity: .18;
       stroke-linecap: round;
       filter: drop-shadow(0 0 6px rgba(66,133,244,.9));
     }
-    .tep-livetest-flowsvg .tep-livetest-flow {
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow {
       /* The real stroke is set inline per-element (JS) to that rebuild's own
          uniquely-id'd gradient — see buildFlow()'s gradId. This is just a
          safe solid-colour fallback in case that inline stroke is ever
@@ -2171,7 +2291,7 @@
     }
     @keyframes tep-livetest-flow-dash { from { stroke-dashoffset: 28; } to { stroke-dashoffset: 0; } }
     /* Bright comet travelling along the path. */
-    .tep-livetest-flowsvg .tep-livetest-packet {
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-packet {
       fill: #fff;
       filter: drop-shadow(0 0 5px rgba(255,255,255,.95)) drop-shadow(0 0 9px rgba(66,133,244,.9));
       animation: tep-livetest-packet-glow 1.5s ease-in-out infinite;
@@ -2179,16 +2299,16 @@
     @keyframes tep-livetest-packet-glow { 0%,100% { opacity: .75; } 50% { opacity: 1; } }
     /* One-shot graceful "draw-in" the first time a flow appears: the glow line
        grows from the source agent, then the dashes, comet and G fade/pop in. */
-    .tep-livetest-flowsvg .tep-livetest-flow-glow.tep-draw {
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow-glow.tep-draw {
       stroke-dasharray: 100 100;
       animation: tep-flow-draw .8s ease-out forwards;
     }
     @keyframes tep-flow-draw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
-    .tep-livetest-flowsvg .tep-livetest-flow.tep-draw {
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow.tep-draw {
       animation: tep-flow-fadein .45s ease-out .6s both, tep-livetest-flow-dash var(--tep-flow-speed, .7s) linear .6s infinite;
     }
     @keyframes tep-flow-fadein { from { opacity: 0; } to { opacity: .98; } }
-    .tep-livetest-flowsvg .tep-livetest-packet.tep-draw {
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-packet.tep-draw {
       animation: tep-flow-fadein .4s ease-out .75s both, tep-livetest-packet-glow 1.5s ease-in-out .75s infinite;
     }
     .tep-livetest-dest.tep-draw .tep-livetest-g {
@@ -2265,10 +2385,10 @@
        so the line goes to the nearest Google edge as a guess, not real data.
        Amber + dashed (vs. the solid blue "confirmed" gradient) so it always
        reads as a guess at a glance. */
-    .tep-livetest-flowsvg .tep-livetest-flow--est {
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow--est {
       stroke: #f59e0b; stroke-dasharray: 3 6; filter: drop-shadow(0 0 4px rgba(245,158,11,.7));
     }
-    .tep-livetest-flowsvg .tep-livetest-flow-glow--est { stroke: #f59e0b; opacity: .14; }
+    :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow-glow--est { stroke: #f59e0b; opacity: .14; }
     .tep-livetest-dest--est .tep-livetest-g {
       box-shadow: 0 0 0 2px #f59e0b, 0 2px 8px rgba(0,0,0,.55);
     }
@@ -2459,6 +2579,14 @@
     .tep-isp-stack::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 3px; }
     .tep-isp-stack::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
     .tep-isp-widget { width: 100%; min-width: 0; padding: 8px 10px; pointer-events: auto; }
+    /* Trace Source-ISP stack (shown only while a test is pinned) — a small
+       header separates it from the LIVE TEST ISP Health stack above it. */
+    .tep-trace-isp-stack { margin-top: 8px; }
+    .tep-trace-isp-head {
+      font-size: 10px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+      color: var(--tep-blue-soft); margin: 2px 2px 5px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
     .tep-isp-widget .tep-dash-widget-title { margin-bottom: 4px; }
     .tep-isp-widget .tep-dash-widget-main { font-size: 18px; }
     .tep-isp-widget .tep-health-ring { width: 38px; height: 38px; flex: 0 0 38px; }
@@ -2491,6 +2619,14 @@
     .tep-saas-breakdown-pop::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
     .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: var(--tep-slate-100); }
     .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: var(--tep-slate-500); margin-top: 2px; }
+    /* Minimized breakdown list (after a pin click): collapse to just the header
+       so the map is interactable; click the header to restore. */
+    .tep-breakdown-min .tep-saas-breakdown-list { display: none; }
+    .tep-breakdown-min { width: auto !important; min-width: 0 !important; }
+    .tep-breakdown-min .tep-saas-breakdown-head { margin-bottom: 0; cursor: pointer; white-space: nowrap; }
+    .tep-breakdown-min .tep-saas-breakdown-hint { display: none; }
+    .tep-breakdown-min .tep-saas-breakdown-head::after { content: ' ▸ expand'; font-weight: 600; font-size: 10px; color: var(--tep-blue-soft); }
+    .tep-saas-breakdown-pop:not(.tep-breakdown-min) .tep-saas-breakdown-head { cursor: pointer; }
     /* Centered confirm modal (tepConfirmModal) — used in place of the
        browser's native confirm(), which anchors near the top of the
        viewport instead of the middle. Same dark palette as the popovers
@@ -2565,6 +2701,18 @@
     .tep-agentkind-badge--cloud { background: rgba(59,130,246,.18); color: var(--tep-blue-soft); }
     .tep-agentkind-badge--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
     .tep-agentkind-badge--endpoint { background: rgba(167,139,250,.18); color: #c4b5fd; }
+    /* EXPERIMENTAL (test-destinations MVP): the per-row "locate destination"
+       pin — subtle by default, orange on hover. */
+    .tep-testdest-locate {
+      display: inline-flex; align-items: center; vertical-align: middle; margin-left: 5px;
+      color: var(--tep-slate-500); cursor: pointer; transition: color .12s ease;
+    }
+    .tep-testdest-locate:hover { color: var(--tep-orange-fg); }
+    .tep-testdest-locate--loading { opacity: .4; pointer-events: none; }
+    /* Couldn't resolve this test's destination → blink the pin red as the
+       acknowledgement (see the locate-click handler). */
+    .tep-testdest-locate--fail { color: var(--tep-red) !important; animation: tep-testdest-fail-blink .5s ease-in-out 2; }
+    @keyframes tep-testdest-fail-blink { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
     .tep-agentkind-badge svg { fill: none; transition: fill .15s ease; }
     .tep-agentkind-count { line-height: 1; }
     /* "Cloud" wording only shows up alongside the count while its row is
@@ -3002,6 +3150,13 @@
     .tep-map-tip-body::-webkit-scrollbar-thumb { background: var(--tep-slate-600); border-radius: 4px; }
     .tep-map-tip-body::-webkit-scrollbar-track { background: transparent; }
     .tep-map-tip-foot { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(148,163,184,.18); color: var(--tep-slate-500); font-style: italic; }
+    /* Pinned-test row(s) in a source agent's hover card: test name + this
+       agent's latency, linking to the test view. */
+    .tep-map-tip-testdest-sec { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(148,163,184,.18); }
+    .tep-map-tip-testdest { justify-content: space-between; gap: 10px; background: rgba(26,115,232,.12); }
+    .tep-map-tip-testdest:hover { background: rgba(26,115,232,.22); }
+    .tep-map-tip-testdest-name { font-weight: 700; color: var(--tep-slate-200); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tep-map-tip-testdest b { color: var(--tep-blue-soft); white-space: nowrap; }
     /* Cluster hover card's maximize button — only rendered when the card
        covers more than one agent (see tepDashTooltipHtml/epAgentTooltipHtml). */
     .tep-map-tip-maxbtn {
@@ -15101,6 +15256,11 @@
     // agents → ~4 pages instead of ~8), same data, fewer round-trips. If the
     // server caps the page below this, pagination just continues normally.
     const pageSize = 1000;
+    // Hard cap on how many endpoint agents the map loads — bounds AJAX volume
+    // on very large fleets (each roster page is a POST; the server often caps a
+    // page at ~100 regardless of pageSize, so an uncapped fleet can be ~100
+    // pages). 5000 agents ≈ 50 pages at 100/page.
+    const MAX_ENDPOINT_AGENTS = 5000;
     const merged = [];
     let searchAfter = [];
     let totalCount = null;
@@ -15122,6 +15282,11 @@
       if (!Array.isArray(elements)) throw new Error(`unexpected shape keys: ${topLevelKeysLabel(data)}`);
       merged.push(...elements);
       if (data && data.totalCount != null) totalCount = Number(data.totalCount);
+      if (merged.length >= MAX_ENDPOINT_AGENTS) {
+        merged.length = MAX_ENDPOINT_AGENTS;
+        log(`Endpoint agents: capped at ${MAX_ENDPOINT_AGENTS} (of ${totalCount != null ? totalCount : '?'}) to keep AJAX volume down — stopping pagination.`, 'tep-log-info');
+        break;
+      }
       if (!elements.length) break; // truly empty page — nothing more to get
       // totalCount (when given) is authoritative, checked before the short-
       // page fallback — a page shorter than requested shouldn't be read as
@@ -15379,7 +15544,11 @@
   }
 
   function tepGeoToken(s) {
-    return String(s || '').trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
+    let t = String(s || '').trim().toLowerCase();
+    // Strip diacritics so "São Paulo"/"Bogotá"/"Zürich" match the unaccented
+    // table keys ("sao paulo"/"bogota"/"zurich").
+    try { t = t.normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), ''); } catch (_) { /* */ }
+    return t.replace(/\./g, '').replace(/\s+/g, ' ');
   }
 
   /**
@@ -15405,6 +15574,15 @@
     }
     // 3) plain city name (first known match)
     if (city && TEP_GEO.cities[city]) return hit(TEP_GEO.cities[city], 'city');
+    // 3b) City unknown, but the STATE/region part names a known city — common
+    //     outside the US where there's no state-centroid table and the capital
+    //     shares the state's name (e.g. "Campinas, São Paulo, Brazil" → São
+    //     Paulo). A nearby, correct-metro answer beats collapsing to the country
+    //     centroid. 'region' precision (a state-level approximation).
+    if (mid) {
+      if (cc && TEP_GEO.cities[mid + '|' + cc]) return hit(TEP_GEO.cities[mid + '|' + cc], 'region');
+      if (!cc && TEP_GEO.cities[mid]) return hit(TEP_GEO.cities[mid], 'region');
+    }
     // 4) country centroid
     if (cc && TEP_GEO.countries[cc]) return hit(TEP_GEO.countries[cc], 'country');
     if (TEP_GEO.countries[last]) return hit(TEP_GEO.countries[last], 'country');
@@ -15846,6 +16024,12 @@
   // null shows every ISP; an ISP name hides every agent not on that ISP
   // (per-tile radio on the ISP stack, same "show only" pattern as above).
   let dashMapIspFilter = null;
+  // Same idea for the TRACE (pinned-test) Source-ISP stack — null shows every
+  // source ISP; an ISP name keeps only that ISP's source agents illuminated.
+  let dashMapTraceIspFilter = null;
+  // Set<String agentId> | null — hovering a row in the trace ISP popover lights
+  // JUST that agent on the map (all other sources dim). Cleared on mouseout.
+  let dashMapTraceHoverAgentIds = null;
   // Sort order for the Enterprise/Endpoint Agents widget's click-through
   // agent list (toggleAgentsListPopover) — 'health' (default, lowest health
   // first, under whichever dashMapColorSource is currently in focus) or
@@ -15924,6 +16108,90 @@
   // highlights in place. Cleared on mouseout; ENTERPRISE ONLY, same
   // NAS-AGENT limitation as the fetches that build it.
   let dashMapTestHighlight = null;
+  // EXPERIMENTAL (cloud-on-hover): while a Network/SaaS test row is hovered,
+  // the CLOUD agents running that test (which are never plotted on the map —
+  // they're TE's global vantage points, not the customer's fleet) are shown as
+  // transient light-blue cloud icons at their own coordinates, then removed on
+  // mouseout. [{name,lat,lng,location}] | null. dashMapCloudHook is the
+  // in-place add/remove hook the fullscreen render exposes (no full re-render).
+  let dashMapHoverCloudAgents = null;
+  let dashMapCloudHook = null;
+  /** Cloud agents (from the loaded `agents` list — TE virtual-agents carries
+   *  agentType + coords) whose name is in this test's agent-name set. */
+  function tepTestCloudAgents(names) {
+    if (!names || !names.size || !Array.isArray(agents)) return [];
+    const out = [];
+    for (const a of agents) {
+      if (!a || a.agentType !== 'Cloud' || a.lat == null || a.lng == null || !a.agentName) continue;
+      if (names.has(String(a.agentName).toUpperCase())) out.push({ name: a.agentName, lat: a.lat, lng: a.lng, location: a.location });
+    }
+    return out;
+  }
+  function tepShowTestCloudAgents(names) {
+    const list = tepTestCloudAgents(names);
+    dashMapHoverCloudAgents = list.length ? list : null;
+    if (dashMapCloudHook) dashMapCloudHook.refresh();
+  }
+  function tepClearTestCloudAgents() {
+    if (!dashMapHoverCloudAgents) return;
+    dashMapHoverCloudAgents = null;
+    if (dashMapCloudHook) dashMapCloudHook.refresh();
+  }
+
+  // Hover-to-trace: a breakdown row shows its test's destination trace after a
+  // short dwell, WITHOUT closing/refreshing the test-list popover. This timer
+  // debounces so a quick pass over rows doesn't fire (or fetch) anything.
+  let tepTraceHoverTimer = null;
+  const TEP_TRACE_HOVER_DELAY_MS = 500;
+  function tepCancelTraceHover() { if (tepTraceHoverTimer) { clearTimeout(tepTraceHoverTimer); tepTraceHoverTimer = null; } }
+  /** Resolve + pin a test's destination trace on the map. Shared by the row
+   *  hover (delayed) and the locate-pin click. `ds` is the locate icon's dataset
+   *  (testName/testScore/…/onewaynet). Does NOT touch the popover — the test
+   *  list stays open. Returns a Promise<bool> (true if a trace was shown). */
+  function tepShowTraceForTest(tid, ds) {
+    ds = ds || {};
+    const isA2A = ds.onewaynet === '1';
+    const isEndpoint = ds.endpoint === '1';
+    return tepResolveTestDestination(tid, isEndpoint, isA2A, ds.round).then((info) => {
+      // If the user has already moved to a different pending trace, don't stomp.
+      if (!info) {
+        const why = dashMapTestDestFail.get(String(tid)) || 'Could not resolve this test’s destination';
+        tepMapToast('Can’t trace ' + (ds.testName || 'test') + ':\n' + why, 'err');
+        return false;
+      }
+      info.testName = ds.testName || info.testName || '';
+      info.testScore = ds.testScore != null ? ds.testScore : info.testScore;
+      info.testScoreLabel = ds.testScorelabel || info.testScoreLabel || 'Health';
+      info.testScoreUnit = ds.testUnit || info.testScoreUnit || '';
+      info.testDetail = ds.testDetail || info.testDetail || '';
+      // Only replay the draw-in animation when switching to a DIFFERENT test.
+      if (!dashMapSelectedTestDest || String(dashMapSelectedTestDest.testId) !== String(info.testId)) {
+        testDestFlowDrawn.clear();
+        dashMapTraceIspFilter = null;   // a different test shouldn't inherit the last ISP filter
+        hideTraceIspPopover();
+        info._popped = false;
+        if (info.roundId != null && Number.isFinite(Number(info.roundId))) {
+          tepMapToast('Trace: ' + (info.testName || 'test') + '\nFrom ' + new Date(Number(info.roundId) * 1000).toLocaleString() + ' · ' + (info.dests ? info.dests.length : 1) + ' destination(s)', 'ok');
+        }
+      }
+      dashMapSelectedTestDest = info;
+      // In-place trace repaint (draws pins/flows/dim from dashMapSelectedTestDest
+      // WITHOUT rebuilding markers or their hover listeners — a full re-render on
+      // every hover was breaking cluster/agent hovers). The source-illumination
+      // (related/dim marking) still applies here via buildSelectedTestDest; the
+      // matching fixes are what make it work, not a full render. The test-list
+      // popover is a separate layer, untouched. Full render only as a fallback
+      // when the live-paint hook isn't set up yet.
+      if (dashMapFullEl) {
+        if (typeof dashMapLivePaint === 'function') dashMapLivePaint();
+        else renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+        const wEl = dashMapFullEl.querySelector('#tep-dashmap-widgets');
+        if (wEl) { try { renderDashWidgets(wEl); } catch (_) { /* */ } }
+      }
+      if (dashMapZoomHook && dashMapZoomHook.frameTestDest) dashMapZoomHook.frameTestDest();
+      return true;
+    });
+  }
   // Set<String agentId> | null — the single agent (enterprise OR endpoint)
   // whose row is currently hovered in the Enterprise/Endpoint Agents
   // widget's agent-list popover (toggleAgentsListPopover). Same
@@ -15946,6 +16214,27 @@
   // below (the CLICKED/locked single agent, which drives the hover card's
   // Alert Info row, not this map-wide dim/highlight).
   let dashMapAlertPreviewHighlight = null;
+  // EXPERIMENTAL (test-destinations MVP): the single test whose destination
+  // is currently pinned on the fullscreen map, or null. Set by clicking the
+  // "locate" icon on a Network/SaaS Health breakdown row; drawn as one
+  // destination pin (see the render's buildSelectedTestDest). Resolved
+  // per-test via path-vis and memoized in dashMapTestDestCache so repeat
+  // selections and re-renders never refetch.
+  let dashMapSelectedTestDest = null;    // resolved dest info { testId, location, lat, lng, asName, asn, ip } | null
+  const dashMapTestDestCache = new Map(); // testId(string) -> resolved dest | null (null = tried, unresolvable)
+  const dashMapTestDestFail = new Map();  // testId(string) -> human reason a pin couldn't be placed (for on-screen msg)
+
+  /** Transient message shown OVER the fullscreen map (panel toasts sit behind
+   *  it). Top-center, auto-dismiss. type: 'err' | 'ok' | undefined. */
+  function tepMapToast(msg, type) {
+    const el = document.createElement('div');
+    el.className = 'tep-map-toast' + (type === 'err' ? ' tep-map-toast--err' : type === 'ok' ? ' tep-map-toast--ok' : '');
+    el.textContent = msg;
+    (dashMapFullEl || document.body).appendChild(el);
+    requestAnimationFrame(() => el.classList.add('tep-map-toast--in'));
+    setTimeout(() => { el.classList.remove('tep-map-toast--in'); }, 6000);
+    setTimeout(() => { try { el.remove(); } catch (_) { /* */ } }, 6400);
+  }
   // Set once an alert row is actually CLICKED (as opposed to just
   // hovered) — while locked, the popover's own mouseout cleanup (fired
   // spuriously by Chrome when the hovered row's popover element is
@@ -16658,6 +16947,73 @@
       + `<button type="button" class="tep-cluster-max-close" title="Close" aria-label="Close">${closeIcon}</button></div></div>`
       + `<div class="tep-cluster-max-body">${cols}</div>`;
   }
+  /** EXPERIMENTAL (test-destinations): when a test is pinned, source agents get
+   *  an extra bottom row in their hover card — the pinned test's name, this
+   *  agent's total latency to its destination, and a link straight to the test
+   *  view. One row per source agent in the cluster. Empty when nothing's pinned
+   *  or the cluster holds no source agent. */
+  function tepTestDestTipRows(cluster) {
+    const info = dashMapSelectedTestDest;
+    if (!info || !cluster || !Array.isArray(cluster.items)) return '';   // no test pinned → nothing to add
+    const srcIds = info.sourceAgentIds instanceof Set ? info.sourceAgentIds : null;
+    const srcNames = info.sourceNames instanceof Set ? info.sourceNames : null;
+    if (!srcIds && !srcNames) return '';
+    const esc = tepEscapeHtmlText;
+    const trace = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : null;
+    const destByAgent = info.destByAgent instanceof Map ? info.destByAgent : null;
+    const rows = [];
+    const seen = new Set();
+    for (const it of cluster.items) {
+      if (!it) continue;
+      const aidS = it.agentId != null ? String(it.agentId) : '';
+      const nu = it.name ? String(it.name).toUpperCase() : '';
+      const isSrc = (srcIds && aidS && srcIds.has(aidS)) || (srcNames && nu && srcNames.has(nu));
+      const seenKey = aidS || nu;
+      if (!isSrc || !seenKey || seen.has(seenKey)) continue;
+      seen.add(seenKey);
+      const t = trace && aidS ? trace.get(aidS) : null;
+      const dest = destByAgent && aidS ? destByAgent.get(aidS) : null;
+      const destLoc = dest && dest.location ? dest.location : (info.location || '');
+      // Filter the test view to THIS source agent (its own loss/latency).
+      const agId = it.agentId != null ? it.agentId : null;
+      const url = tepTestViewUrl(info.testId, info.roundId, agId);
+      const bits = [];
+      if (t && t.totalMs != null) bits.push(esc(t.totalMs + ' ms'));
+      if (destLoc) bits.push('→ ' + esc(destLoc));
+      const tag = url ? 'a' : 'div';
+      const href = url ? ` href="${esc(url)}" target="_blank" rel="noopener noreferrer"` : '';
+      rows.push(`<${tag} class="tep-map-tip-metricrow tep-map-tip-metricrow--link tep-map-tip-testdest"${href} title="Open this test">`
+        + `<span class="tep-map-tip-testdest-name">${esc(info.testName || 'Test destination')}</span>`
+        + `<b>${bits.join(' ')}</b></${tag}>`);
+    }
+    return rows.length ? `<div class="tep-map-tip-testdest-sec">${rows.join('')}</div>` : '';
+  }
+
+  /** EXPERIMENTAL (cloud-on-hover): hover card for a CLOUD agent — its name +
+   *  location, plus the same SaaS + Network health scores an enterprise agent
+   *  shows, pulled from the same by-name score maps (NAS-AGENT covers cloud
+   *  agents too), so the numbers are for THIS account group's tests. Reuses the
+   *  .tep-gcard shell. */
+  function tepCloudAgentCardHtml(ca) {
+    ca = ca || {};
+    const esc = tepEscapeHtmlText;
+    const cloudIcon = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M18 18H7a4.5 4.5 0 0 1-.36-8.99A6 6 0 0 1 18.4 9.3 3.85 3.85 0 0 1 18 18Z" fill="currentColor"/></svg>';
+    const probe = { kind: 'enterprise', name: ca.name };
+    const saas = tepSaasScoreForItem(probe);
+    const net = tepNetScoreForItem(probe);
+    const head = `<div class="tep-gcard-head"><span class="tep-gcard-g" style="background:none;box-shadow:none;color:#7dd3fc;">${cloudIcon}</span>`
+      + `<div class="tep-gcard-heties"><div class="tep-gcard-title">${esc(ca.name || 'Cloud agent')}</div>`
+      + `<div class="tep-gcard-ip">Cloud Agent${ca.location ? ' · ' + esc(ca.location) : ''}</div></div></div>`;
+    const scoreRow = (label, score) => {
+      if (score == null || !Number.isFinite(score)) return `<div class="tep-gcard-row"><span>${label}</span><b style="color:var(--tep-slate-500)">no data</b></div>`;
+      const c = tepColorFromScore(score);
+      return `<div class="tep-gcard-row"><span>${label}</span><b style="color:${c.fill}">${score.toFixed(1)}%</b></div>`;
+    };
+    const rows = [scoreRow('SaaS Health', saas), scoreRow('Network Health', net)];
+    const footer = '<div class="tep-gcard-more">Cloud agent · scores for this account group’s tests</div>';
+    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${footer}</div>`;
+  }
+
   function tepDashTooltipHtml(cluster) {
     const loc = cluster.items[0].location || 'Unknown';
     const n = cluster.items.length;
@@ -16675,8 +17031,9 @@
     let body = ordered.slice(0, cap).map(({ it, idx }) => tepDashTipRow(it, idx)).join('');
     if (n > cap) body += `<div class="tep-map-tip-more">+${n - cap} more…</div>`;
     body = `<div class="tep-map-tip-body">${body}</div>`;
+    const testSection = tepTestDestTipRows(cluster);
     const foot = 'Click an agent to open it';
-    return `<div class="tep-map-tip-head">${head}</div>${body}<div class="tep-map-tip-foot">${foot}</div>`;
+    return `<div class="tep-map-tip-head">${head}</div>${body}${testSection}<div class="tep-map-tip-foot">${foot}</div>`;
   }
 
   /** Inline four-colour Google "G" mark (self-contained — no external asset/CSP issue). */
@@ -16730,6 +17087,266 @@
       agentsHtml = `<div class="tep-gcard-agents"><div class="tep-gcard-subhead">${agents.length} agent${agents.length > 1 ? 's' : ''} testing here</div>${items}${more}</div>`;
     }
     return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${agentsHtml}</div>`;
+  }
+
+  /** EXPERIMENTAL (test-destinations MVP): hover card for a pinned test
+   *  destination — reuses the .tep-gcard shell, but a generic target pin
+   *  instead of the Google "G". Shows the resolved location, network (ASN),
+   *  and target IP. */
+  function tepTestDestCardHtml(dest, info) {
+    dest = dest || {};
+    info = info || {};
+    const esc = tepEscapeHtmlText;
+    const pinIcon = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
+    const row = (label, val) => (val != null && val !== '')
+      ? `<div class="tep-gcard-row"><span>${esc(label)}</span><b>${esc(String(val))}</b></div>` : '';
+    // Title is the TEST NAME (destination pin belongs to a specific test).
+    const head = `<div class="tep-gcard-head"><span class="tep-gcard-g" style="background:none;box-shadow:none;color:var(--tep-orange-fg);">${pinIcon}</span>`
+      + `<div class="tep-gcard-heties"><div class="tep-gcard-title">${esc(info.testName || 'Test destination')}</div>`
+      + `<div class="tep-gcard-ip">${esc(dest.ip || info.ip || '')}</div></div></div>`;
+    const rows = [];
+    rows.push(row('Location', dest.location || info.location));
+    if (dest.asn != null || dest.asName) rows.push(row('Network', `AS${dest.asn != null ? dest.asn : '?'} · ${dest.asName || ''}`.trim()));
+    // Test health stats (captured from the breakdown row at pin time).
+    const scoreNum = info.testScore != null && info.testScore !== '' ? Number(info.testScore) : null;
+    if (scoreNum != null && Number.isFinite(scoreNum)) {
+      const c = tepColorFromScore(scoreNum);
+      rows.push(`<div class="tep-gcard-row"><span>${esc(info.testScoreLabel || 'Health')}</span><b style="color:${c.fill}">${esc(String(info.testScore))}${esc(info.testScoreUnit || '')}</b></div>`);
+    }
+    if (info.testDetail) rows.push(row('Latency / loss', info.testDetail));
+    // Link straight to the ThousandEyes test view (whole test, all agents).
+    const url = tepTestViewUrl(info.testId, info.roundId);
+    const footer = url
+      ? `<a class="tep-gcard-more tep-map-tip-metricrow--link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;">Open in ThousandEyes ↗</a>`
+      : '<div class="tep-gcard-more">Click the pin to clear</div>';
+    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${footer}</div>`;
+  }
+
+  /** EXPERIMENTAL (trace path nodes): deep link into the native ThousandEyes
+   *  enterprise test view — Path Visualization, loss + latency — for a given
+   *  test, at the TIME the trace was taken from. Used by the bottleneck node's
+   *  click-through and the source-agent tip row.
+   *
+   *  Uses the SAME param shape as buildEnterpriseNetworkTestAgentUrl (CONFIRMED
+   *  via live capture): startTime + timelineWindow are how this view takes an
+   *  absolute time — `roundId` is NOT honored here (that's why the old link
+   *  defaulted to the widest window / start-of-month). roundId (epoch SECONDS,
+   *  the round we analysed) becomes startTime, with a timelineWindow bracketing
+   *  it so it's the focused round. agentId filters to that one source agent. */
+  function tepTestViewUrl(testId, roundId, agentId) {
+    if (testId == null || testId === '') return '';
+    const origin = window.location.origin || 'https://app.thousandeyes.com';
+    const round = (roundId != null && roundId !== '' && Number.isFinite(Number(roundId))) ? Math.floor(Number(roundId)) : Math.floor(Date.now() / 1000);
+    const params = new URLSearchParams({
+      testId: String(testId),
+      startTime: String(round),
+      detailId: 'pathvis',
+      metrics: 'netLatency,netLoss',
+      timelineWindow: `${round - 3600},${round + 600}`,   // 1h before … 10m after → round is the focus
+    });
+    if (agentId != null && agentId !== '') params.set('agentId', String(agentId));
+    return origin + '/network-app-synthetics/views/?' + params.toString();
+  }
+
+  /** EXPERIMENTAL (trace path nodes): hover card for one KEY HOP plotted along a
+   *  test-destination flow line. Reuses the .tep-gcard shell. Shows the hop's
+   *  cumulative RTT, the latency it adds (delta), location, network (ASN),
+   *  hostname, prefix, IP — and that it's a shortcut into the test view. The
+   *  biggest-jump hop (isBottleneck) gets the warning icon + delta headline. */
+  function tepTestHopCardHtml(hop) {
+    hop = hop || {};
+    const esc = tepEscapeHtmlText;
+    const bottle = !!hop.isBottleneck;
+    const lossy = !!hop.isLoss;
+    const iconColor = lossy ? 'var(--tep-red)' : 'var(--tep-orange-fg)';
+    const icon = (bottle || lossy)
+      ? '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>';
+    const row = (label, val) => (val != null && val !== '')
+      ? `<div class="tep-gcard-row"><span>${esc(label)}</span><b>${esc(String(val))}</b></div>` : '';
+    const title = hop.name && hop.name !== hop.ip ? hop.name : (lossy ? 'Packet loss' : (bottle ? 'Highest-latency link' : (hop.location || 'Trace hop')));
+    const head = `<div class="tep-gcard-head"><span class="tep-gcard-g" style="background:none;box-shadow:none;color:${iconColor};">${icon}</span>`
+      + `<div class="tep-gcard-heties"><div class="tep-gcard-title">${esc(title)}</div>`
+      + `<div class="tep-gcard-ip">${esc(hop.ip || 'no IP (hidden hop)')}</div></div></div>`;
+    const rows = [];
+    if (hop.lossPct != null && hop.lossPct > 0) rows.push(`<div class="tep-gcard-row"><span>Loss</span><b style="color:var(--tep-red-soft)">${esc(String(hop.lossPct))}%</b></div>`);
+    if (hop.cumMs != null) rows.push(row('RTT here', hop.cumMs + ' ms' + (hop.totalMs != null ? ' of ' + hop.totalMs + ' ms total' : '')));
+    if (hop.deltaMs != null && hop.deltaMs > 0) rows.push(`<div class="tep-gcard-row"><span>Adds</span><b class="tep-gcard-delta">+${esc(String(hop.deltaMs))} ms</b></div>`);
+    rows.push(row('Location', hop.location));
+    if (hop.asn != null || hop.asName) rows.push(row('Network', `AS${hop.asn != null ? hop.asn : '?'} · ${hop.asName || ''}`.trim()));
+    rows.push(row('Prefix', hop.prefix));
+    const footer = lossy
+      ? '<div class="tep-gcard-more">Dropping packets on this path</div>'
+      : bottle
+        ? '<div class="tep-gcard-more">Biggest jump on this path · Click to open in the test view ↗</div>'
+        : '<div class="tep-gcard-more">Last hop before the added latency</div>';
+    return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${footer}</div>`;
+  }
+
+  /** EXPERIMENTAL (trace path nodes): given a path-vis graph's nodes/links/
+   *  routes, return — for each source agent's route — the SINGLE biggest-latency-
+   *  contributor hop plus that path's TOTAL latency. Keyed by UPPER source-agent
+   *  name -> { totalMs, bottleneck } where bottleneck is one hop object (see
+   *  tepTestHopCardHtml) or null when no jump is meaningful enough to flag.
+   *
+   *  Traceroute per-hop delay is NOISY: a router slow to answer one probe shows
+   *  a one-hop spike that recovers next hop, and some hops don't answer at all.
+   *  So we (a) carry the last known delay across non-responding hops, then
+   *  (b) median-3 smooth — erasing single-hop spikes while preserving a genuine
+   *  SUSTAINED step. The bottleneck is only flagged when its jump is both
+   *  absolutely (>=12ms) and relatively (>=40% of total) meaningful. */
+  function tepComputeTracePathNodes(nodes, links, routes) {
+    const out = new Map();
+    if (!Array.isArray(nodes) || !Array.isArray(links) || !Array.isArray(routes)) return out;
+    const median3 = (a, b, c) => a + b + c - Math.max(a, b, c) - Math.min(a, b, c);
+    const LOSS_SHOW_PCT = 2;   // a hop must lose at least this much to be flagged
+    for (const route of routes) {
+      if (!route || !Array.isArray(route.route) || route.route.length < 2) continue;
+      const srcNode = nodes[route.source];
+      // Key by agentId — reliable for BOTH enterprise (path-vis) and endpoint
+      // (eyebrow, which may not carry an agent display name).
+      const agentKey = srcNode && srcNode.agentId != null ? String(srcNode.agentId) : null;
+      if (!agentKey) continue;
+      const hops = route.route;
+      const delays = [];
+      let last = 0;
+      for (const h of hops) {
+        const dv = (h && typeof h.delay === 'number' && isFinite(h.delay)) ? h.delay : null;
+        if (dv != null) last = dv;
+        delays.push(last);
+      }
+      const sm = delays.slice();
+      for (let i = 1; i < delays.length - 1; i++) sm[i] = median3(delays[i - 1], delays[i], delays[i + 1]);
+      const totalDelay = sm[sm.length - 1] || 0;
+      const mkHop = (node, cum, frac, isBn, lossPct) => ({
+        hopFraction: Math.max(0.04, Math.min(0.95, frac)),
+        cumMs: cum != null ? Math.round(cum) : null,
+        totalMs: Math.round(totalDelay),
+        isBottleneck: !!isBn,
+        lossPct: (lossPct != null && Number.isFinite(lossPct)) ? Math.round(lossPct * 10) / 10 : null,
+        ip: node.publicIpAddress || node.ipAddress || '',
+        asn: node.asn != null ? node.asn : null,
+        asName: node.asName || '',
+        location: node.location || '',
+        name: node.name || '',
+        prefix: node.prefix || '',
+      });
+      // Walk the node sequence (hop i reaches the link's target): find the
+      // biggest smoothed latency jump AND every hop that's dropping packets.
+      let bnEntry = null, worstDelta = 0, maxLoss = 0;
+      let prevCum = 0;
+      const lossHops = [];
+      for (let i = 0; i < hops.length; i++) {
+        const cum = sm[i];
+        const delta = cum - prevCum;
+        prevCum = cum;
+        const link = links[hops[i].link];
+        const nodeIndex = link && link.target != null ? link.target : null;
+        const n = nodeIndex != null ? nodes[nodeIndex] : null;
+        if (!n || n.destination === true) continue;
+        // Loss can live on the route-hop entry OR the node it reaches.
+        const loss = Math.max(tepNodeLoss(hops[i]) || 0, tepNodeLoss(n) || 0);
+        if (loss > maxLoss) maxLoss = loss;
+        if (loss >= LOSS_SHOW_PCT) lossHops.push(Object.assign(mkHop(n, cum, (i + 1) / hops.length, false, loss), { isLoss: true }));
+        if (delta > worstDelta) {
+          worstDelta = delta;
+          const beforeIdx = link && link.source != null ? link.source : null;
+          const beforeN = beforeIdx != null ? nodes[beforeIdx] : null;
+          bnEntry = { n, cum, delta, fraction: (i + 1) / hops.length, loss,
+            beforeN, beforeCum: cum - delta, beforeFraction: i / hops.length };
+        }
+      }
+      const bnOk = bnEntry && (worstDelta >= 12 || (totalDelay > 0 && worstDelta >= totalDelay * 0.4));
+      // End-to-end loss for the ISP stack / dest card: route-level loss, else
+      // the route's destination-node loss, else the worst hop loss seen.
+      let agentLoss = tepNodeLoss(route);
+      if (agentLoss == null) {
+        for (let i = hops.length - 1; i >= 0; i--) {
+          const lk = links[hops[i].link];
+          const nn = lk && lk.target != null ? nodes[lk.target] : null;
+          if (nn && nn.destination === true) { agentLoss = tepNodeLoss(nn); break; }
+        }
+      }
+      if (agentLoss == null && maxLoss > 0) agentLoss = maxLoss;
+      out.set(agentKey, {
+        totalMs: Math.round(totalDelay),
+        lossPct: agentLoss != null ? Math.round(agentLoss * 10) / 10 : null,
+        bottleneck: bnOk ? Object.assign(mkHop(bnEntry.n, bnEntry.cum, bnEntry.fraction, true, bnEntry.loss), {
+          deltaMs: Math.round(bnEntry.delta),
+          before: bnEntry.beforeN ? mkHop(bnEntry.beforeN, bnEntry.beforeCum, bnEntry.beforeFraction, false, null) : null,
+        }) : null,
+        lossNodes: lossHops,
+      });
+    }
+    return out;
+  }
+
+  /** EXPERIMENTAL (trace path nodes): resolve a hop's reported location string
+   *  to coordinates for GEOGRAPHIC marker placement. Unlike liveTestResolveDestGeo
+   *  (city-only, so anycast PoPs don't collapse onto a country), a trace hop is a
+   *  single real router — placing it at its STATE centroid when the city is
+   *  unknown is genuinely more accurate than ignoring the location, so this also
+   *  accepts 'region' precision. Returns {lat,lng} or null. */
+  function tepHopGeo(locationName) {
+    if (!locationName) return null;
+    const city = liveTestResolveDestGeo(locationName);   // curated metros + city-precision gazetteer
+    if (city) return city;
+    try {
+      const g = epGeocode(locationName);
+      // Accept city, state/region, AND country as a last resort. A named target
+      // (e.g. "Bilbao, Spain") whose city we don't have should still land in the
+      // right COUNTRY rather than falling through to a wrong-continent estimate —
+      // country-centroid is coarse but honest, and the card still shows the real
+      // reported string. Only a location with no resolvable country at all stays
+      // null (→ estimate to nearest detected dest).
+      if (g && Number.isFinite(g.lat) && Number.isFinite(g.lng)
+        && (g.precision === 'city' || g.precision === 'region' || g.precision === 'country')) return { lat: g.lat, lng: g.lng };
+    } catch (_) { /* */ }
+    return null;
+  }
+
+  /** EXPERIMENTAL (trace loss): read a loss value off a path-vis node or route,
+   *  trying the field names TE uses for forwarding/packet loss. Returns loss as
+   *  a PERCENT (0..100) or null. Values <=1 are treated as a fraction (×100). */
+  function tepNodeLoss(o) {
+    if (!o || typeof o !== 'object') return null;
+    const cands = ['serverLoss', 'forwardingLoss', 'loss', 'lossPercentage', 'packetLoss', 'pktLoss', 'lossPct'];
+    for (const k of cands) {
+      let v = o[k];
+      if (v == null) continue;
+      v = Number(v);
+      if (Number.isFinite(v)) return v <= 1 ? v * 100 : v;
+    }
+    return null;
+  }
+
+  /** EXPERIMENTAL (test-destinations): does this map agent `it` belong to the
+   *  pinned test's source set? Matches by agentId OR physicalId (enterprise
+   *  agents can be keyed on either between path-vis and the map) OR display
+   *  name — whichever hits. The reliable path is the id; name is the fallback. */
+  function tepAgentMatchesSrcSet(it, srcIds, srcNames) {
+    if (!it) return false;
+    if (srcIds) {
+      if (it.agentId != null && srcIds.has(String(it.agentId))) return true;
+      if (it.physicalId != null && srcIds.has(String(it.physicalId))) return true;
+    }
+    if (srcNames && it.name && srcNames.has(String(it.name).toUpperCase())) return true;
+    return false;
+  }
+
+  /** EXPERIMENTAL (test-destinations): nearest destination in `dests` to a point
+   *  — used to estimate where an agent tests to when its own target node didn't
+   *  resolve to a city ("go to the closest detected destination"). */
+  function tepClosestDest(dests, lat, lng) {
+    if (!Array.isArray(dests) || !dests.length) return null;
+    if (lat == null || lng == null) return dests[0];
+    let best = null, bestKm = Infinity;
+    for (const dd of dests) {
+      if (!dd || dd.lat == null || dd.lng == null) continue;
+      const km = tepHaversineKm(lat, lng, dd.lat, dd.lng);
+      if (km < bestKm) { bestKm = km; best = dd; }
+    }
+    return best || dests[0];
   }
 
   // Shared, persistent land/water lookup for marker-nudge placement — keyed
@@ -16822,11 +17439,20 @@
     wrap.appendChild(overlay);
 
     // Cluster agents (any type) within 5 miles of each other into one marker.
+    // EXCEPTION: while a test is pinned, a source (originating) agent is pulled
+    // OUT of any cluster onto its own marker, so a lone tester buried in a
+    // cluster of non-testers is visible and its trace clearly originates there.
     const CLUSTER_MI = 5;
+    const pinActive = !!(dashMapSelectedTestDest && dashMapSelectedTestDest.lat != null);
+    const pinSrcIds = pinActive && dashMapSelectedTestDest.sourceAgentIds instanceof Set ? dashMapSelectedTestDest.sourceAgentIds : null;
+    const pinSrcNames = pinActive && dashMapSelectedTestDest.sourceNames instanceof Set ? dashMapSelectedTestDest.sourceNames : null;
+    const isPinnedSource = (it) => pinActive && tepAgentMatchesSrcSet(it, pinSrcIds, pinSrcNames);
     const clusters = [];
     for (const it of list) {
+      if (isPinnedSource(it)) { clusters.push({ lat: it.lat, lng: it.lng, items: [it], _soloSource: true }); continue; }
       let placed = false;
       for (const cl of clusters) {
+        if (cl._soloSource) continue;   // never merge a non-source into a solo'd source marker
         if (tepHaversineKm(cl.lat, cl.lng, it.lat, it.lng) * 0.621371 <= CLUSTER_MI) {
           cl.items.push(it);
           placed = true;
@@ -17037,6 +17663,17 @@
     const XLINKNS = 'http://www.w3.org/1999/xlink';
     let liveFlowLines = [];   // { pathEl, glowEl, packetEl, srcFx, srcFy, destFx, destFy }
     let liveDestEls = [];     // { el, fx, fy }
+    // EXPERIMENTAL (test-destinations MVP): the pinned test destination, if
+    // any — same {el, fx, fy} shape as liveDestEls so layoutMarkers positions
+    // it identically. Rebuilt each render from dashMapSelectedTestDest.
+    let testDestEls = [];
+    // EXPERIMENTAL (cloud-on-hover): transient cloud-agent markers, positioned
+    // in layoutMarkers like testDestEls; rebuilt by buildCloudHover.
+    let cloudHoverEls = [];
+    // Phase 2: animated agent→destination flow lines for the pinned test,
+    // same {pathEl,glowEl,packetEl,srcFx,srcFy,destFx,destFy} shape (and
+    // layoutMarkers positioning) as liveFlowLines.
+    let testDestFlowLines = [];
     let liveFlowSeq = 0;      // unique ids for <mpath> targets
     // liveFlowDrawn/liveDestDrawn (which agents/PoPs already played their
     // one-shot "draw-in") are module-level, not declared here — see their
@@ -17212,14 +17849,350 @@
     }
     buildFlow();
 
+    // EXPERIMENTAL (test-destinations MVP): (re)build the pinned test
+    // destination marker from dashMapSelectedTestDest. Fullscreen only — the
+    // pin is placed via layoutMarkers alongside the live-test dest nodes.
+    // Clicking the pin clears the selection and re-renders.
+    function buildSelectedTestDest() {
+      for (const de of testDestEls) { try { de.el.remove(); } catch (_) { /* */ } }
+      testDestEls = [];
+      // Dim everything NOT part of the pinned test: while a test is pinned, the
+      // whole map fades except this test's source agents + its own nodes, so the
+      // path reads clearly. Runs every render/live-paint; a no-op (and undims)
+      // when nothing is pinned.
+      if (full) {
+        const active = !!(dashMapSelectedTestDest && dashMapSelectedTestDest.lat != null);
+        wrap.classList.toggle('tep-testdest-active', active);
+        const srcNames = active && dashMapSelectedTestDest.sourceNames instanceof Set ? dashMapSelectedTestDest.sourceNames : null;
+        const srcIds = active && dashMapSelectedTestDest.sourceAgentIds instanceof Set ? dashMapSelectedTestDest.sourceAgentIds : null;
+        const ispFilter = active ? dashMapTraceIspFilter : null;
+        const hoverIds = active && dashMapTraceHoverAgentIds instanceof Set ? dashMapTraceHoverAgentIds : null;
+        // An ISP radio HIDES the other markers (only that ISP's sources show),
+        // vs the plain pin view which just dims. Hovering an agent in the ISP
+        // list narrows "related" to that one agent — it stays lit, the rest dim.
+        wrap.classList.toggle('tep-testdest-ispfiltered', active && !!ispFilter);
+        const idMatch = (it) => (it.agentId != null && hoverIds.has(String(it.agentId))) || (it.physicalId != null && hoverIds.has(String(it.physicalId)));
+        for (const m of markerEls) {
+          let rel = false;
+          if ((srcNames || srcIds) && m._cluster && Array.isArray(m._cluster.items)) {
+            rel = m._cluster.items.some((it) => tepAgentMatchesSrcSet(it, srcIds, srcNames)
+              && (!ispFilter || tepSourceAgentIsp(it, dashMapSelectedTestDest) === ispFilter)
+              && (!hoverIds || idMatch(it)));
+          }
+          m.classList.toggle('tep-testdest-related', rel);
+        }
+      }
+      if (!full || !dashMapSelectedTestDest || dashMapSelectedTestDest.lat == null) return;
+      const d = dashMapSelectedTestDest;
+      // One pin PER unique destination (a test can fan out to several). Each
+      // pops in once (per-dest _popped flag) so periodic re-renders don't re-pop.
+      const dests = Array.isArray(d.dests) && d.dests.length ? d.dests : [d];
+      for (const dest of dests) {
+        if (dest.lat == null || dest.lng == null) continue;
+        const pos = tepLonLatToPct(dest.lng, dest.lat);
+        const isNew = !dest._popped;
+        dest._popped = true;
+        const el = document.createElement('div');
+        el.className = 'tep-agent-map-marker tep-livetest-dest tep-testdest-node' + (isNew ? ' tep-draw' : '');
+        el.innerHTML = '<span class="tep-livetest-g"><svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6c0 4.2 6 12 6 12s6-7.8 6-12a6 6 0 0 0-6-6Zm0 8.2A2.2 2.2 0 1 1 12 5.8a2.2 2.2 0 0 1 0 4.4Z"/></svg></span>';
+        el._gcard = tepTestDestCardHtml(dest, d);
+        el.setAttribute('aria-label', 'Test destination — ' + (dest.location || ''));
+        el.style.cursor = 'pointer';
+        // Clear-on-click is handled in the wrap `pointerup` handler (same reason
+        // as the hop nodes — a plain click on an overlay child is eaten by the
+        // pointer-capture pan flow).
+        overlay.appendChild(el);
+        testDestEls.push({ el, fx: pos.xPct / 100, fy: pos.yPct / 100 });
+      }
+    }
+    // Guard the trace-overlay builders: they run BEFORE the marker hover
+    // listener is attached below, so an exception here would silently kill ALL
+    // cluster/agent hovers. Never let that happen — log and carry on.
+    try { buildSelectedTestDest(); } catch (e) { log('Trace dest render error: ' + (e && e.message), 'tep-log-err'); }
+
+    // EXPERIMENTAL (cloud-on-hover): (re)build the transient cloud-agent markers
+    // for the currently-hovered test row (dashMapHoverCloudAgents). Fullscreen
+    // only, positioned in layoutMarkers. Cleared when nothing's hovered.
+    function buildCloudHover() {
+      for (const ce of cloudHoverEls) { try { ce.el.remove(); } catch (_) { /* */ } }
+      cloudHoverEls = [];
+      if (!full || !Array.isArray(dashMapHoverCloudAgents) || !dashMapHoverCloudAgents.length) return;
+      for (const ca of dashMapHoverCloudAgents) {
+        if (ca.lat == null || ca.lng == null) continue;
+        const pos = tepLonLatToPct(ca.lng, ca.lat);
+        const el = document.createElement('div');
+        el.className = 'tep-agent-map-marker tep-cloud-agent-marker';
+        el.innerHTML = '<span class="tep-cloud-agent-ic"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M18 18H7a4.5 4.5 0 0 1-.36-8.99A6 6 0 0 1 18.4 9.3 3.85 3.85 0 0 1 18 18Z"/></svg></span>';
+        el.setAttribute('aria-label', 'Cloud agent — ' + (ca.name || ''));
+        el._gcard = tepCloudAgentCardHtml(ca);   // rich hover card: info + SaaS/Net health
+        overlay.appendChild(el);
+        cloudHoverEls.push({ el, fx: pos.xPct / 100, fy: pos.yPct / 100 });
+      }
+    }
+    try { buildCloudHover(); } catch (e) { log('Cloud hover render error: ' + (e && e.message), 'tep-log-err'); }
+
+    // Phase 2: animated agent→destination flow lines for the pinned test —
+    // reuses the LIVE TEST's own flow CSS (.tep-livetest-flow*/.packet) so the
+    // shimmer + travelling-comet animation is identical, drawn from every
+    // plotted agent that runs this test (matched by name against its resolved
+    // sourceNames) to the destination pin. Its own SVG layer + gradient id, so
+    // it never collides with a live-test flow if both were ever up at once.
+    function buildTestDestFlow() {
+      const old = wrap.querySelector('.tep-testdest-flowsvg');
+      if (old) { try { old.remove(); } catch (_) { /* */ } }
+      // Key-hop nodes live in the overlay (not the flow svg), so removing the
+      // svg above doesn't take them — clear them explicitly before rebuild or
+      // repeated live-paints would stack duplicates.
+      for (const fl of testDestFlowLines) {
+        for (const hp of (fl.hopEls || [])) { try { hp.el.remove(); } catch (_) { /* */ } }
+        if (fl.srcLabelEl) { try { fl.srcLabelEl.remove(); } catch (_) { /* */ } }
+        if (fl.srcCloudEl) { try { fl.srcCloudEl.remove(); } catch (_) { /* */ } }
+      }
+      testDestFlowLines = [];
+      if (!full || !dashMapSelectedTestDest || dashMapSelectedTestDest.lat == null) return;
+      const d = dashMapSelectedTestDest;
+      const srcNames = d.sourceNames instanceof Set ? d.sourceNames : null;
+      const srcIds = d.sourceAgentIds instanceof Set ? d.sourceAgentIds : null;
+      // Endpoint traces may have only agent IDs (no display names) — gate on
+      // EITHER set having entries.
+      if ((!srcNames || !srcNames.size) && (!srcIds || !srcIds.size)) return;
+      const sources = [];
+      const seenSrc = new Set();
+      for (const it of list) {
+        if (it.lat == null || it.lng == null) continue;
+        const key = it.agentId != null ? 'i' + it.agentId : (it.name ? String(it.name).toUpperCase() : '');
+        if (key && tepAgentMatchesSrcSet(it, srcIds, srcNames) && !seenSrc.has(key)) { seenSrc.add(key); sources.push(it); }
+      }
+      // Cloud agents run these tests too but are never plotted on the map — add
+      // them as sources (from the loaded `agents` list, which carries their
+      // coords) so their traces draw as well. Tagged _cloud so buildTestDestFlow
+      // drops a cloud icon at the source (there's no fleet marker there).
+      if (Array.isArray(agents)) {
+        for (const a of agents) {
+          if (!a || a.agentType !== 'Cloud' || a.lat == null || a.lng == null || !a.agentName) continue;
+          const nu = String(a.agentName).toUpperCase();
+          const byId = srcIds && a.agentId != null && srcIds.has(String(a.agentId));
+          const byName = srcNames && srcNames.has(nu);
+          const key = a.agentId != null ? 'i' + a.agentId : nu;
+          if ((byId || byName) && !seenSrc.has(key)) {
+            seenSrc.add(key);
+            sources.push({ name: a.agentName, lat: a.lat, lng: a.lng, agentId: a.agentId, location: a.location, _cloud: true });
+          }
+        }
+      }
+      if (!sources.length) return;
+      const flowSvg = document.createElementNS(SVGNS, 'svg');
+      flowSvg.setAttribute('class', 'tep-testdest-flowsvg');
+      flowSvg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
+      const gradId = 'tep-testdest-grad-' + (liveFlowSeq++);
+      const defs = document.createElementNS(SVGNS, 'defs');
+      const grad = document.createElementNS(SVGNS, 'linearGradient');
+      grad.setAttribute('id', gradId);
+      grad.setAttribute('x1', '0%'); grad.setAttribute('y1', '0%');
+      grad.setAttribute('x2', '100%'); grad.setAttribute('y2', '0%');
+      // Identical blue shimmer to the LIVE TEST flow (user wants it to look
+      // exactly the same).
+      [['0%', '#1a73e8'], ['50%', '#e8f0fe'], ['100%', '#1a73e8']].forEach(([o, c]) => {
+        const s = document.createElementNS(SVGNS, 'stop');
+        s.setAttribute('offset', o); s.setAttribute('stop-color', c);
+        grad.appendChild(s);
+      });
+      defs.appendChild(grad);
+      flowSvg.appendChild(defs);
+      wrap.insertBefore(flowSvg, overlay);  // lines below markers
+      const destByAgent = d.destByAgent instanceof Map ? d.destByAgent : null;
+      const estAgents = d.estimatedAgents instanceof Set ? d.estimatedAgents : null;
+      const allDests = Array.isArray(d.dests) ? d.dests : [];
+      const fallbackDest = allDests[0] || d;
+      const flowIspFilter = dashMapTraceIspFilter;   // ISP radio → only that ISP's traces
+      for (const it of sources) {
+        // ISP radio active → draw ONLY that ISP's source traces.
+        if (flowIspFilter && tepSourceAgentIsp(it, d) !== flowIspFilter) continue;
+        // Each agent flows to ITS OWN destination. If its target node resolved to
+        // a city, that's its confirmed dest. If not, ESTIMATE to the closest
+        // DETECTED destination and style the flow like the live test's estimate
+        // (amber), so it's visibly "best guess", not measured.
+        const nameU = it.name ? String(it.name).toUpperCase() : '';
+        const aidS = it.agentId != null ? String(it.agentId) : '';
+        let myDest = destByAgent && aidS ? destByAgent.get(aidS) : null;
+        let estimated = false;
+        if (!myDest) {
+          estimated = true;
+          myDest = tepClosestDest(allDests, it.lat, it.lng) || fallbackDest;
+        }
+        if (!myDest || myDest.lat == null || myDest.lng == null) continue;
+        const dp = tepLonLatToPct(myDest.lng, myDest.lat);
+        const sp = tepLonLatToPct(it.lng, it.lat);
+        const isNew = !testDestFlowDrawn.has(String(it.agentId));
+        if (isNew) testDestFlowDrawn.add(String(it.agentId));
+        const drawCls = isNew ? ' tep-draw' : '';
+        const estCls = estimated ? ' tep-livetest-flow--est' : '';
+        const pathId = 'tep-testdest-flow-' + (liveFlowSeq++);
+        const glow = document.createElementNS(SVGNS, 'path');
+        glow.setAttribute('class', 'tep-livetest-flow-glow' + (estimated ? ' tep-livetest-flow-glow--est' : '') + drawCls);
+        if (isNew) glow.setAttribute('pathLength', '100');
+        flowSvg.appendChild(glow);
+        const path = document.createElementNS(SVGNS, 'path');
+        path.setAttribute('class', 'tep-livetest-flow' + estCls + drawCls);
+        path.setAttribute('id', pathId);
+        path.style.setProperty('--tep-flow-speed', '0.9s');
+        // Estimated flows use the CSS amber stroke (like live test); confirmed
+        // flows use the blue gradient.
+        if (!estimated) path.style.stroke = `url(#${gradId})`;
+        flowSvg.appendChild(path);
+        // This agent's trace summary (single bottleneck + total) drives both the
+        // plotted node and the PACKET TIMING below.
+        const hopMap = d.pathNodesByAgent instanceof Map ? d.pathNodesByAgent : null;
+        const trace = hopMap && aidS ? hopMap.get(aidS) : null;
+        const bn = trace && trace.bottleneck ? trace.bottleneck : null;
+        const packet = document.createElementNS(SVGNS, 'circle');
+        packet.setAttribute('class', 'tep-livetest-packet' + drawCls);
+        packet.setAttribute('r', '3.6');
+        const motion = document.createElementNS(SVGNS, 'animateMotion');
+        // Packet speed models ACCUMULATED latency: the comet's speed at any
+        // point is inversely proportional to the RTT built up SO FAR along the
+        // path. Because latency only accumulates (never decreases), the speed is
+        // monotonically non-increasing — so the comet keeps its pace, decelerates
+        // hardest at the bottleneck's jump, and NEVER speeds back up after it.
+        // Overall pace scales with the FULL path latency (a 200ms path's comet is
+        // slower everywhere than a 20ms path's). rotate=auto keeps it oriented.
+        let motionDur = '1.7s', keyPoints = '0;1', keyTimes = '0;1';
+        const totMs = trace && trace.totalMs != null ? trace.totalMs : null;
+        if (totMs != null && totMs > 0) {
+          // Whole-path duration proportional to total latency (clamped sane).
+          const durSec = Math.max(1.1, Math.min(4.2, 1.1 + (totMs / 100) * 1.3));
+          motionDur = durSec.toFixed(2) + 's';
+          if (bn && bn.hopFraction != null) {
+            const f = Math.max(0.10, Math.min(0.90, bn.hopFraction));
+            const preLat = Math.max(0, bn.cumMs - bn.deltaMs);   // RTT before the jump
+            const atLat = Math.max(preLat, bn.cumMs);            // RTT after the jump
+            const w = 0.05;                                       // half-width of the decel ramp
+            const lo = Math.max(0.02, f - w), hi = Math.min(0.98, f + w);
+            // Cumulative-latency profile L(s): gentle rise to the jump, a steep
+            // ramp across [lo,hi] (the bottleneck link), then a gentle rise to T.
+            const Lat = (s) => {
+              if (s <= lo) return lo > 0 ? preLat * (s / lo) : 0;
+              if (s >= hi) return atLat + (totMs - atLat) * (hi < 1 ? (s - hi) / (1 - hi) : 0);
+              return preLat + (atLat - preLat) * (hi > lo ? (s - lo) / (hi - lo) : 0);
+            };
+            // Time to cross each slice ∝ latency-so-far × distance (speed ∝ 1/L).
+            // baseLat is a floor that both keeps the start speed finite and caps
+            // how extreme the end/start slowdown gets (~1+T/baseLat ratio).
+            const baseLat = Math.max(4, totMs * 0.4);
+            const N = 44;
+            const pts = ['0'], times = [0];
+            let cumT = 0, prevProxy = baseLat + Lat(0);
+            for (let i = 1; i <= N; i++) {
+              const s = i / N;
+              const proxy = baseLat + Lat(s);
+              cumT += ((prevProxy + proxy) / 2) * (1 / N);
+              pts.push(s.toFixed(4)); times.push(cumT);
+              prevProxy = proxy;
+            }
+            const norm = cumT || 1;
+            keyPoints = pts.join(';');
+            keyTimes = times.map((t, i) => i === times.length - 1 ? '1' : (t / norm).toFixed(4)).join(';');
+          }
+        }
+        motion.setAttribute('dur', motionDur);
+        motion.setAttribute('repeatCount', 'indefinite');
+        motion.setAttribute('rotate', 'auto');
+        motion.setAttribute('keyPoints', keyPoints);
+        motion.setAttribute('keyTimes', keyTimes);
+        motion.setAttribute('calcMode', 'linear');
+        const mpath = document.createElementNS(SVGNS, 'mpath');
+        mpath.setAttributeNS(XLINKNS, 'href', '#' + pathId);
+        mpath.setAttribute('href', '#' + pathId);
+        motion.appendChild(mpath);
+        packet.appendChild(motion);
+        flowSvg.appendChild(packet);
+        // For THIS source agent's path: (1) the SINGLE biggest-latency-
+        // contributor hop (amber diamond, "+Δms"), and (2) the path's TOTAL
+        // latency shown at the source agent. Both are overlay divs positioned in
+        // layoutMarkers — the hop along the arc, the total at the source point.
+        // See tepComputeTracePathNodes.
+        const hopEls = [];
+        let srcLabelEl = null;
+        if (bn) {
+          // The hop JUST BEFORE the latency jump — small, muted blue, no label.
+          // Its details (it's the last low-latency node before the delay) surface
+          // on hover; deliberately quiet so the amber bottleneck stays the focus.
+          if (bn.before) {
+            const preEl = document.createElement('div');
+            preEl.className = 'tep-agent-map-marker tep-testdest-hop tep-testdest-hop--before' + drawCls;
+            preEl.innerHTML = '<span class="tep-testdest-hop-dot"></span>';
+            preEl._gcard = tepTestHopCardHtml(bn.before);
+            preEl.setAttribute('aria-label', 'Hop before the latency — ' + (bn.before.location || bn.before.ip || ''));
+            overlay.appendChild(preEl);
+            hopEls.push({ el: preEl, hopFraction: bn.before.hopFraction });
+          }
+          const hEl = document.createElement('div');
+          hEl.className = 'tep-agent-map-marker tep-testdest-hop tep-testdest-hop--bottle' + drawCls;
+          const lbl = '+' + bn.deltaMs + 'ms';
+          hEl.innerHTML = '<span class="tep-testdest-hop-dot"></span><span class="tep-testdest-hop-lbl">' + tepEscapeHtmlText(lbl) + '</span>';
+          hEl._gcard = tepTestHopCardHtml(bn);
+          hEl.setAttribute('aria-label', 'Highest-latency link ' + lbl + ' — ' + (bn.location || bn.ip || ''));
+          hEl.style.cursor = 'pointer';
+          // Opening the test view is handled in the wrap `pointerup` handler
+          // (same path agent-marker clicks use) — a standalone `click` listener
+          // is swallowed by the map's pointer-capture pan flow. Stash the URL,
+          // FILTERED to this source agent so its own loss/latency shows.
+          const agIdMap = d.agentIdByName instanceof Map ? d.agentIdByName : null;
+          const agId = (agIdMap && agIdMap.get(nameU)) != null ? agIdMap.get(nameU) : it.agentId;
+          hEl._testViewUrl = tepTestViewUrl(d.testId, d.roundId, agId);
+          hEl._traceRoundId = d.roundId;   // the round this trace was taken from (for the click-time message)
+          overlay.appendChild(hEl);
+          hopEls.push({ el: hEl, hopFraction: bn.hopFraction });
+        }
+        // Loss nodes: every hop on this path that's dropping packets — red ring,
+        // "N%" label — so you can SEE where loss happens along the trace.
+        for (const ln of (trace && Array.isArray(trace.lossNodes) ? trace.lossNodes : [])) {
+          const lEl = document.createElement('div');
+          lEl.className = 'tep-agent-map-marker tep-testdest-hop tep-testdest-hop--loss' + drawCls;
+          lEl.innerHTML = '<span class="tep-testdest-hop-dot"></span><span class="tep-testdest-hop-lbl">' + tepEscapeHtmlText(ln.lossPct + '%') + '</span>';
+          lEl._gcard = tepTestHopCardHtml(ln);
+          lEl.setAttribute('aria-label', 'Packet loss ' + ln.lossPct + '% — ' + (ln.location || ln.ip || ''));
+          overlay.appendChild(lEl);
+          hopEls.push({ el: lEl, hopFraction: ln.hopFraction });
+        }
+        if (trace && trace.totalMs != null && trace.totalMs > 0) {
+          srcLabelEl = document.createElement('div');
+          const hasLoss = trace.lossPct != null && trace.lossPct > 0;
+          srcLabelEl.className = 'tep-agent-map-marker tep-testdest-total' + (hasLoss ? ' tep-testdest-total--loss' : '') + drawCls;
+          const lossSpan = hasLoss ? '<span class="tep-testdest-total-loss">' + tepEscapeHtmlText(trace.lossPct + '% loss') + '</span>' : '';
+          srcLabelEl.innerHTML = '<span class="tep-testdest-total-lbl">' + tepEscapeHtmlText(trace.totalMs + 'ms') + lossSpan + '</span>';
+          srcLabelEl.setAttribute('aria-label', 'Total ' + trace.totalMs + 'ms' + (hasLoss ? ', ' + trace.lossPct + '% loss' : '') + ' — ' + (it.name || 'agent'));
+          overlay.appendChild(srcLabelEl);
+        }
+        // Cloud sources have no fleet marker on the map — drop a light-blue
+        // cloud icon at the source so the trace visibly originates somewhere.
+        let srcCloudEl = null;
+        if (it._cloud) {
+          srcCloudEl = document.createElement('div');
+          srcCloudEl.className = 'tep-agent-map-marker tep-cloud-agent-marker';
+          srcCloudEl.innerHTML = '<span class="tep-cloud-agent-ic"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M18 18H7a4.5 4.5 0 0 1-.36-8.99A6 6 0 0 1 18.4 9.3 3.85 3.85 0 0 1 18 18Z"/></svg></span>';
+          srcCloudEl.setAttribute('aria-label', 'Cloud agent — ' + (it.name || ''));
+          srcCloudEl._gcard = tepCloudAgentCardHtml(it);   // rich hover card: info + SaaS/Net health
+          overlay.appendChild(srcCloudEl);
+        }
+        testDestFlowLines.push({ pathEl: path, glowEl: glow, packetEl: packet, hopEls, srcLabelEl, srcCloudEl,
+          srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
+      }
+    }
+    try { buildTestDestFlow(); } catch (e) { log('Trace flow render error: ' + (e && e.message), 'tep-log-err'); }
+
     // Expose an in-place repaint used by the LIVE TEST poll (never rebuilds DOM).
     // Only the fullscreen render owns this hook — that's where LIVE TEST lives.
     if (full) {
       dashMapLivePaint = function () {
         for (const m of markerEls) paintMarker(m);
         buildFlow();
+        try { buildSelectedTestDest(); buildTestDestFlow(); buildCloudHover(); } catch (e) { log('Trace live-paint error: ' + (e && e.message), 'tep-log-err'); }
         layoutMarkers();
       };
+      // EXPERIMENTAL (cloud-on-hover): in-place add/remove of the transient
+      // cloud markers when a test row is hovered — no full re-render.
+      dashMapCloudHook = { refresh: () => { buildCloudHover(); layoutMarkers(); } };
     }
 
     // --- Hover card (interactive; endpoint rows open on click) --------------
@@ -17798,6 +18771,21 @@
         de.el.style.top = y + 'px';
         destPx.push({ x, y, movable: false, radius: 13 }); // ~26px G marker
       });
+      // EXPERIMENTAL (test-destinations MVP): the pinned test destination is
+      // placed the same way — at its true position, never nudged.
+      testDestEls.forEach((de) => {
+        const x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
+        const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
+        de.el.style.left = x + 'px';
+        de.el.style.top = y + 'px';
+        destPx.push({ x, y, movable: false, radius: 11 });
+      });
+      // Cloud-on-hover markers: placed at their true position (no overlap
+      // nudging — they're transient hover decoration).
+      cloudHoverEls.forEach((ce) => {
+        ce.el.style.left = (epDashMapZoom.tx + ce.fx * w * epDashMapZoom.s) + 'px';
+        ce.el.style.top = (epDashMapZoom.ty + ce.fy * h * epDashMapZoom.s) + 'px';
+      });
 
       // Agent markers can genuinely coincide (or nearly so) with a G marker,
       // or — now that clustering only merges agents within 5 miles — with
@@ -17937,6 +18925,91 @@
         fl.pathEl.setAttribute('d', d);
         if (fl.glowEl) fl.glowEl.setAttribute('d', d);
       }
+      // Test-destination flow overlay (phase 2) — identical arc math; source
+      // follows the (possibly nudged) agent marker, destination is the pin's
+      // true position.
+      for (const fl of testDestFlowLines) {
+        const sKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
+        const spx = markerPxByKey.get(sKey);
+        const x1 = spx ? spx.x : (epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s);
+        const y1 = spx ? spx.y : (epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s);
+        const x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
+        const y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1;
+        const off = Math.min(90, len * 0.16);
+        const cx = mx + (-dy / len) * off, cy = my + (dx / len) * off;
+        const d = `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
+        fl.pathEl.setAttribute('d', d);
+        if (fl.glowEl) fl.glowEl.setAttribute('d', d);
+        // Hop nodes sit ON this trace line by HOP SEQUENCE (t = hopFraction) —
+        // position reflects how far down the trace the hop is, not its real
+        // geography.
+        const bezAt = (t) => {
+          const mt = 1 - t;
+          return { x: mt * mt * x1 + 2 * mt * t * cx + t * t * x2, y: mt * mt * y1 + 2 * mt * t * cy + t * t * y2 };
+        };
+        for (const hp of (fl.hopEls || [])) {
+          if (hp.hopFraction == null) continue;
+          const p = bezAt(hp.hopFraction);
+          hp.el.style.left = p.x + 'px';
+          hp.el.style.top = p.y + 'px';
+        }
+        // The total-latency label rides at the source agent (x1,y1), which
+        // already follows that marker's possibly-nudged position.
+        if (fl.srcLabelEl) { fl.srcLabelEl.style.left = x1 + 'px'; fl.srcLabelEl.style.top = y1 + 'px'; }
+        // A cloud source's own icon sits at the source point too.
+        if (fl.srcCloudEl) { fl.srcCloudEl.style.left = x1 + 'px'; fl.srcCloudEl.style.top = y1 + 'px'; }
+      }
+
+      // OVERLAP AVOIDANCE for the trace overlay: a hop node or total label must
+      // never be fully hidden — allowed to cover / be covered by at most ~25%,
+      // otherwise it nudges clear so it stays visible and clickable. Anchors
+      // (dest pins, agent markers, cloud icons) hold their true position; only
+      // the hop nodes + total labels move. Runs after everything is placed.
+      try {
+        const readXY = (el) => ({ x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 });
+        const anchors = placedPx.map((p) => ({ x: p.x, y: p.y, r: p.radius != null ? p.radius : 12 }));
+        for (const ce of cloudHoverEls) { const q = readXY(ce.el); anchors.push({ x: q.x, y: q.y, r: 11 }); }
+        const movers = [];
+        for (const fl of testDestFlowLines) {
+          if (fl.srcCloudEl) { const q = readXY(fl.srcCloudEl); anchors.push({ x: q.x, y: q.y, r: 11 }); }
+          for (const hp of (fl.hopEls || [])) {
+            const q = readXY(hp.el);
+            movers.push({ el: hp.el, x: q.x, y: q.y, r: (hp.el.className.indexOf('--bottle') >= 0) ? 8 : 6 });
+          }
+          if (fl.srcLabelEl) { const q = readXY(fl.srcLabelEl); movers.push({ el: fl.srcLabelEl, x: q.x, y: q.y, r: 11 }); }
+        }
+        // Cap the O(n²) relaxation so a test with hundreds of source agents (all
+        // their hop/total markers) can't freeze layoutMarkers on every pan.
+        const COVER = 0.75;   // centers must be ≥ 0.75·(r1+r2) apart → ≤25% overlap
+        if (movers.length && movers.length <= 400) {
+          for (let pass = 0; pass < 5; pass++) {
+            let moved = false;
+            for (let i = 0; i < movers.length; i++) {
+              const m = movers[i];
+              for (const o of anchors) { if (nudgeApart(m, o, COVER)) moved = true; }
+              for (let j = 0; j < movers.length; j++) if (j !== i && nudgeApart(m, movers[j], COVER)) moved = true;
+            }
+            if (!moved) break;
+          }
+          for (const m of movers) { m.el.style.left = m.x + 'px'; m.el.style.top = m.y + 'px'; }
+        }
+      } catch (e) { log('Trace overlap layout error: ' + (e && e.message), 'tep-log-err'); }
+    }
+    /** If two placed nodes overlap by more than (1-cover), push the MOVABLE one
+     *  (m) just far enough to sit at the cover threshold. Returns true if moved. */
+    function nudgeApart(m, o, cover) {
+      const sep = (m.r + o.r) * cover;
+      let dx = m.x - o.x, dy = m.y - o.y;
+      let dist = Math.hypot(dx, dy);
+      if (dist >= sep) return false;
+      if (dist < 0.01) { dx = 1; dy = 0; dist = 1; }   // exact coincidence → arbitrary bearing
+      const push = sep - dist;
+      m.x += (dx / dist) * push;
+      m.y += (dy / dist) * push;
+      return true;
     }
     function apply() {
       clampPan();
@@ -18041,7 +19114,10 @@
       if (e.target.closest('.tep-agent-map-zoom') || e.target.closest('.tep-agent-map-tip')) return;
       cancelZoomAnim();
       hideTip();
-      down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
+      // Record the REAL element under the press now — setPointerCapture below
+      // retargets every later pointer event (incl. pointerup) to `wrap`, so
+      // pointerup's own e.target is useless for figuring out what was clicked.
+      down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: e.target };
       moved = false;
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     });
@@ -18057,19 +19133,60 @@
     });
     wrap.addEventListener('pointerup', (e) => {
       if (!down) return;
+      // Use the element recorded at pointerdown — pointer capture retargets
+      // this event's own e.target to `wrap`, so it can't identify what was
+      // clicked (see the pointerdown handler).
+      const tgt = down.target || e.target;
       down = null;
       try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
       if (moved) return;
+      // EXPERIMENTAL (test-destinations): a bottleneck hop node opens that
+      // test's native view. Handled here (not via the node's own click
+      // listener) because the pointer-capture pan flow above eats a plain
+      // click on an overlay child.
+      const hopHit = tgt.closest && tgt.closest('.tep-testdest-hop');
+      if (hopHit && hopHit._testViewUrl) {
+        // Surface WHICH round this trace came from — the link opens that round.
+        if (hopHit._traceRoundId != null && Number.isFinite(Number(hopHit._traceRoundId))) {
+          const rid = Number(hopHit._traceRoundId);
+          const ts = new Date(rid * 1000);
+          tepMapToast('Trace from ' + ts.toLocaleString() + '\n(roundId ' + rid + ') — opening test view', 'ok');
+        }
+        try { window.open(hopHit._testViewUrl, '_blank', 'noopener,noreferrer'); } catch (_) { /* */ }
+        return;
+      }
+      // Clicking a pinned destination pin OPENS that test's view (its hover card
+      // already shows the test name + health + the same link).
+      if (tgt.closest && tgt.closest('.tep-testdest-node')) {
+        const info = dashMapSelectedTestDest;
+        const url = info ? tepTestViewUrl(info.testId, info.roundId) : '';
+        if (url) { try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (_) { /* */ } }
+        return;
+      }
       // A lone endpoint marker opens that agent directly on a single click; a
       // multi-agent cluster marker click does nothing (unchanged no-op;
       // that cluster's already explorable via hover). Blank-space
       // center+zoom (centerZoomAt) needs a DOUBLE click — see the dblclick
       // listener below — a single click there used to trigger it, which
       // made stray clicks while exploring the map jump/zoom unexpectedly.
-      const marker = e.target.closest('.tep-agent-map-marker');
+      const marker = tgt.closest && tgt.closest('.tep-agent-map-marker');
       if (marker && marker._cluster && marker._cluster.items.length === 1) {
         const it = marker._cluster.items[0];
         if (it.url && it.url !== '#') window.open(it.url, '_blank', 'noopener');
+        return;
+      }
+      // Clicking EMPTY map (no marker) clears an active pinned trace — the new
+      // way to dismiss it now that the dest pin opens the test instead.
+      if (!marker && dashMapSelectedTestDest) {
+        testDestFlowDrawn.clear();
+        dashMapSelectedTestDest = null;
+        dashMapTraceIspFilter = null;
+        hideTraceIspPopover();
+        if (dashMapFullEl) {
+          renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+          const wEl = dashMapFullEl.querySelector('#tep-dashmap-widgets');
+          if (wEl) { try { renderDashWidgets(wEl); } catch (_) { /* */ } }
+        }
       }
     });
     wrap.addEventListener('dblclick', (e) => {
@@ -18096,6 +19213,48 @@
       dashMapZoomHook = {
         in: () => { const r = wrap.getBoundingClientRect(); zoomAt(1.4, r.left + r.width / 2, r.top + r.height / 2); },
         out: () => { const r = wrap.getBoundingClientRect(); zoomAt(1 / 1.4, r.left + r.width / 2, r.top + r.height / 2); },
+        // Phase 2: smooth-frame the pinned test destination + its source
+        // agents so the whole flow is on-screen (agents can be plotted far
+        // from the target). Reads dashMapSelectedTestDest + the plotted list
+        // — both in scope here — and reuses the same fit math the default
+        // framing uses. Called right after a pin lands.
+        frameTestDest: () => {
+          const d = dashMapSelectedTestDest;
+          if (!d || d.lat == null) return;
+          // Frame ALL destinations (a test can fan out to several) plus every
+          // source agent, so the whole pin view fits.
+          const coords = [];
+          const dests = Array.isArray(d.dests) && d.dests.length ? d.dests : [d];
+          for (const dest of dests) if (dest.lat != null && dest.lng != null) coords.push({ lat: dest.lat, lng: dest.lng });
+          const srcNames = d.sourceNames instanceof Set ? d.sourceNames : null;
+          const srcIds = d.sourceAgentIds instanceof Set ? d.sourceAgentIds : null;
+          if (srcNames || srcIds) for (const it of list) {
+            if (it.lat == null || it.lng == null) continue;
+            if (tepAgentMatchesSrcSet(it, srcIds, srcNames)) coords.push({ lat: it.lat, lng: it.lng });
+          }
+          const w = wrap.clientWidth, h = wrap.clientHeight;
+          if (!(w > 0 && h > 0)) return;
+          const vh = full ? host.clientHeight : h;
+          let minFx = 1, maxFx = 0, minFy = 1, maxFy = 0;
+          for (const c of coords) {
+            const p = tepLonLatToPct(c.lng, c.lat);
+            const fx = p.xPct / 100, fy = p.yPct / 100;
+            if (fx < minFx) minFx = fx; if (fx > maxFx) maxFx = fx;
+            if (fy < minFy) minFy = fy; if (fy > maxFy) maxFy = fy;
+          }
+          const EDGE = 0.22, spanTarget = 1 - 2 * EDGE;
+          const fxSpan = Math.max(1e-4, maxFx - minFx), fySpan = Math.max(1e-4, maxFy - minFy);
+          const sx = spanTarget / fxSpan;
+          const sy = (h > 0 && vh > 0) ? (spanTarget * vh) / (fySpan * h) : sx;
+          const s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
+          const cfx = (minFx + maxFx) / 2, cfy = (minFy + maxFy) / 2;
+          // While a breakdown list is open (hover/click trace), it covers the
+          // upper area — bias the framed trace an extra 15% DOWN so it clears
+          // the list. Only in that case; a normal frame keeps the base 5%.
+          const listOpen = !!(tepSaasPopoverEl || tepNetworkPopoverEl);
+          const topShift = full ? (0.05 + (listOpen ? 0.15 : 0)) * vh : 0;
+          animateZoomTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift }, 700);
+        },
       };
       // ISP widget's agent-list popover reaches in here the same way: locate
       // the marker holding this agent, smooth-zoom to it (same easing as a
@@ -18655,6 +19814,87 @@
     }).join('');
     return `<div class="tep-isp-stack" id="tep-dashmap-isp-stack">${tiles}</div>`;
   }
+
+  /** EXPERIMENTAL (trace ISP stack): group the PINNED test's source agents by
+   *  their access ISP (hop-0 network), with avg end-to-end latency to the
+   *  destination + agent count — the trace-view parallel of the LIVE TEST ISP
+   *  Health stack. Latency is per-agent from pathNodesByAgent; ISP from the
+   *  resolver's ispByAgent (falling back to the agents list, then Unknown). */
+  function tepTraceIspAggregates(info) {
+    if (!info) return [];
+    const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
+    const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
+    const agentIsp = new Map();   // agentId -> ISP fallback from the loaded agents list
+    if (Array.isArray(agents)) for (const a of agents) { if (a && a.agentId != null && a.isp) agentIsp.set(String(a.agentId), a.isp); }
+    const groups = new Map();
+    // Iterate the UNIQUE per-agent trace entries (keyed by the primary agentId)
+    // — NOT sourceAgentIds, which also holds physical/virtual alt ids and would
+    // double-count enterprise agents.
+    for (const [aid, t] of paths) {
+      const isp = ispBy.get(aid) || agentIsp.get(aid) || 'Unknown ISP';
+      const lat = t && t.totalMs != null ? t.totalMs : null;
+      const loss = t && t.lossPct != null ? t.lossPct : null;
+      let g = groups.get(isp);
+      if (!g) { g = { isp, count: 0, latSum: 0, latN: 0, lossSum: 0, lossN: 0 }; groups.set(isp, g); }
+      g.count++;
+      if (lat != null) { g.latSum += lat; g.latN++; }
+      if (loss != null) { g.lossSum += loss; g.lossN++; }
+    }
+    const out = [];
+    for (const g of groups.values()) out.push({
+      isp: g.isp, count: g.count,
+      avgLat: g.latN ? Math.round(g.latSum / g.latN) : null,
+      avgLoss: g.lossN ? Math.round((g.lossSum / g.lossN) * 10) / 10 : null,
+    });
+    // Worst first — loss dominates the ordering, then latency.
+    out.sort((a, b) => ((b.avgLoss || 0) - (a.avgLoss || 0)) || ((b.avgLat || 0) - (a.avgLat || 0)));
+    return out;
+  }
+  /** The Source ISP of one map agent under the pinned trace — resolved the same
+   *  way tepTraceIspAggregates groups (ispByAgent by id, then the agents list,
+   *  then Unknown), so the tile radio filter matches the dimming exactly. */
+  function tepSourceAgentIsp(it, info) {
+    const ispBy = info && info.ispByAgent instanceof Map ? info.ispByAgent : null;
+    const ids = [it && it.agentId, it && it.physicalId].filter((v) => v != null).map(String);
+    if (ispBy) for (const id of ids) if (ispBy.has(id)) return ispBy.get(id);
+    if (it && it.isp) return it.isp;
+    if (Array.isArray(agents)) for (const id of ids) { const a = agents.find((x) => x && String(x.agentId) === id); if (a && a.isp) return a.isp; }
+    return 'Unknown ISP';
+  }
+  function tepTraceIspStackHtml() {
+    const info = dashMapSelectedTestDest;
+    if (!info) return '';
+    const aggs = tepTraceIspAggregates(info);
+    if (!aggs.length) return '';
+    // Score blends latency (lenient 0…350ms end-to-end scale — agent→dest reads
+    // far higher than last-mile) with a hard, proportional LOSS penalty (2 pts
+    // per 1% loss), same spirit as the LIVE TEST ISP Health score.
+    const tiles = aggs.map((g, i) => {
+      const latSev = g.avgLat != null ? Math.max(0, Math.min(1, g.avgLat / 350)) : 0.4;
+      const lossPenalty = g.avgLoss != null ? Math.min(1, g.avgLoss * 0.02) : 0;
+      const sev = Math.max(0, Math.min(1, latSev + lossPenalty));
+      const latTxt = g.avgLat != null ? `${g.avgLat}ms to dest` : 'no latency';
+      const lossTxt = g.avgLoss != null && g.avgLoss > 0 ? ` · ${g.avgLoss}% loss` : '';
+      // Parity with the LIVE TEST ISP tiles: a per-tile radio filters the pin
+      // view to just this ISP's source agents; clicking the tile opens its
+      // source-agent list (data-traceisp).
+      const radio = tepWidgetFilterCheckbox(`tep-dashmap-traceisp-filter-${i}`, dashMapTraceIspFilter === g.isp,
+        'tep-dashmap-traceisp-filter', `Show only ${g.isp} source agents`, g.isp);
+      return tepWidgetCard(tepEscapeHtmlText(g.isp),
+        radio
+        + '<div class="tep-isp-health">'
+        + `<div><div class="tep-dash-widget-main">${g.avgLat != null ? g.avgLat : '–'}<small> ms</small>${g.avgLoss != null && g.avgLoss > 0 ? ` <small style="color:var(--tep-red-soft)">${g.avgLoss}% loss</small>` : ''}</div>`
+        + `<div class="tep-dash-widget-sub">${g.count} agent${g.count === 1 ? '' : 's'}</div>`
+        + `<div class="tep-dash-widget-sub">${latTxt}${lossTxt}</div></div>`
+        + tepSeverityRingHtml(sev, '', undefined, false)
+        + '</div>',
+        'tep-isp-widget tep-trace-isp-widget tep-isp-widget--clickable',
+        null,
+        ` data-traceisp="${tepEscapeHtmlText(g.isp)}" title="Click to see ${tepEscapeHtmlText(g.isp)}'s source agents"`);
+    }).join('');
+    return `<div class="tep-isp-stack tep-trace-isp-stack" id="tep-dashmap-trace-isp-stack">`
+      + `<div class="tep-trace-isp-head">Source ISPs → ${tepEscapeHtmlText(info.testName || 'test')}</div>${tiles}</div>`;
+  }
   function renderDashWidgets(container) {
     if (!container) return;
     const s = tepAgentWidgetStats();
@@ -18677,7 +19917,7 @@
       + `<div class="tep-dash-widget-sub">${s.entOnline} online · ${s.entOffline} offline${s.entUnknown ? ` · ${s.entUnknown} unknown` : ''}</div>`,
       'tep-dash-widget--matchheight tep-dash-widget--clickable' + entDimCls, null,
       ' id="tep-dashmap-widget-ent" title="Click to see Enterprise agents, worst latency first"');
-    const col1Html = `<div class="tep-dashmap-col1" id="tep-dashmap-col1">${entWidget}${tepIspStackHtml()}</div>`;
+    const col1Html = `<div class="tep-dashmap-col1" id="tep-dashmap-col1">${entWidget}${tepIspStackHtml()}${tepTraceIspStackHtml()}</div>`;
     const epHtml = tepWidgetCard(epTitleIcon + 'Endpoint Agents',
       tepWidgetFilterCheckbox('tep-dashmap-filter-ep', dashMapAgentTypeFilter === 'endpoint')
       + `<div class="tep-dash-widget-main">${s.epOnline}<small> / ${s.epTotal} online</small></div>${epBar}`
@@ -18795,6 +20035,7 @@
         radio.checked = false;
         tepPlaySignalLock(0.25); // half the Last Seen slider's tepPlayDigitalBlip(0.5)
         if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = null;
+        else if (radio.name === 'tep-dashmap-traceisp-filter') dashMapTraceIspFilter = null;
         // Clicking the already-checked color-source radio turns it back off
         // — unlike type/ISP (which fall back to "show everything" with no
         // filter), that "off" state here IS a real mode: 'combined' colors
@@ -18825,6 +20066,7 @@
           void fillNetworkHealthWidget(true);
         }
         else if (radio.name === 'tep-dashmap-isp-filter') dashMapIspFilter = radio.dataset.value || null;
+        else if (radio.name === 'tep-dashmap-traceisp-filter') dashMapTraceIspFilter = radio.dataset.value || null;
         else if (radio.id === 'tep-dashmap-color-saas') { dashMapColorSource = 'saas'; hideAgentTestsPopover(); }
         else if (radio.id === 'tep-dashmap-color-network') { dashMapColorSource = 'network'; hideAgentTestsPopover(); }
         else return;
@@ -18850,6 +20092,11 @@
         // The radio has its own click handler above (deselect-if-checked) —
         // don't also pop the agent list open underneath it.
         if (e.target.closest('.tep-dash-widget-filter')) return;
+        // Trace Source-ISP tiles carry data-traceisp (not data-isp) and open
+        // their OWN source-agent popover — check them first so the live-test ISP
+        // handler below doesn't also fire on the shared .tep-isp-widget class.
+        const tispEl = e.target.closest('.tep-trace-isp-widget');
+        if (tispEl && tispEl.dataset.traceisp) { toggleTraceIspAgentsPopover(tispEl, tispEl.dataset.traceisp); return; }
         const ispEl = e.target.closest('.tep-isp-widget');
         if (ispEl && ispEl.dataset.isp) toggleIspAgentsPopover(ispEl, ispEl.dataset.isp);
       });
@@ -19672,6 +20919,11 @@
       rows.push({
         title: (loss.names && loss.names[testId]) || `Test ${testId}`,
         sev, score, testId: String(testId), avgLat: null, avgLoss,
+        // Agent-to-Agent tests report timing under oneWayNetLatency, not the
+        // netLatency metric the destination resolver keys off — so a locate
+        // pin can't resolve them. Flagged so the breakdown row hides its pin
+        // rather than offering one that would silently fail.
+        isOneWayNet: true,
       });
     }
     return rows;
@@ -20018,21 +21270,22 @@
       if (!names || !names.size) return;
       const titleEl = row.querySelector('.tep-saas-breakdown-title');
       if (!titleEl || titleEl.querySelector('.tep-agentkind-badge')) return;
+      // Count BOTH kinds — a mixed cloud+enterprise test shows BOTH badges, not
+      // just one. Names in the enterprise set are Enterprise; the rest are Cloud
+      // (endpoint agents never appear in the NAS-AGENT map these rows use).
       let entCount = 0;
       for (const n of names) { if (entNames.has(n)) entCount++; }
-      const cloudOnly = entCount === 0;
-      const kind = cloudOnly ? 'cloud' : 'enterprise';
-      const icon = cloudOnly ? TEP_CLOUD_ONLY_ICON_SVG : TEP_ENTERPRISE_ICON_SVG;
-      const n = cloudOnly ? names.size : entCount;
-      const title = cloudOnly
-        ? `${n} Cloud Agent${n === 1 ? '' : 's'} only — no Enterprise Agent ran this test`
-        : `${n} Enterprise Agent${n === 1 ? '' : 's'} ran this test`;
-      // Cloud-only badge stays icon+count at rest — the "Cloud" wording only
-      // appears alongside it while the row is hovered (see .tep-agentkind-label,
-      // shown via a.tep-saas-breakdown-row:hover), so the count is always
-      // visible but the row hover confirms what kind it's counting.
-      const labelHtml = cloudOnly ? '<span class="tep-agentkind-label">Cloud</span>' : '';
-      titleEl.insertAdjacentHTML('beforeend', ` <span class="tep-agentkind-badge tep-agentkind-badge--${kind}" title="${tepEscapeHtmlText(title)}">${icon}<span class="tep-agentkind-count">${n}</span>${labelHtml}</span>`);
+      const cloudCount = names.size - entCount;
+      const mk = (kind, icon, cnt, title) => ` <span class="tep-agentkind-badge tep-agentkind-badge--${kind}" title="${tepEscapeHtmlText(title)}">${icon}<span class="tep-agentkind-count">${cnt}</span></span>`;
+      let badgeHtml = '';
+      if (entCount > 0) badgeHtml += mk('enterprise', TEP_ENTERPRISE_ICON_SVG, entCount, `${entCount} Enterprise Agent${entCount === 1 ? '' : 's'} ran this test`);
+      if (cloudCount > 0) badgeHtml += mk('cloud', TEP_CLOUD_ONLY_ICON_SVG, cloudCount, `${cloudCount} Cloud Agent${cloudCount === 1 ? '' : 's'} ran this test`);
+      if (!badgeHtml) return;
+      // Insert the agent icon+count BEFORE the locate pin (which sits at the end
+      // of the title) so the order reads: name · agent badges · pin.
+      const locateEl = titleEl.querySelector('.tep-testdest-locate');
+      if (locateEl) locateEl.insertAdjacentHTML('beforebegin', badgeHtml);
+      else titleEl.insertAdjacentHTML('beforeend', badgeHtml);
     });
   }
   /** Circular health ring whose arc length is the availability percent and
@@ -20117,7 +21370,7 @@
    *  every call site. */
   function hideOtherBreakdownPopovers(exceptHideFn) {
     const all = [hideSaasBreakdownPopover, hideNetworkBreakdownPopover, hideAlertsPopover,
-      hideAgentTestsPopover, hideIspAgentsPopover, hideAgentsListPopover];
+      hideAgentTestsPopover, hideIspAgentsPopover, hideAgentsListPopover, hideTraceIspPopover];
     for (const fn of all) { if (fn !== exceptHideFn) fn(); }
   }
 
@@ -20133,6 +21386,7 @@
     // A hovered row's map highlight shouldn't survive the popover closing —
     // covers both the enterprise (name-based) and endpoint (agentId-based)
     // test-row hover mechanisms.
+    tepClearTestCloudAgents();
     if (dashMapTestHighlight) {
       dashMapTestHighlight = null;
       if (dashMapSearchHook) dashMapSearchHook.refresh();
@@ -20194,11 +21448,18 @@
       const epBadge = r.isEndpoint
         ? ` <span class="tep-agentkind-badge tep-agentkind-badge--endpoint" title="${tepEscapeHtmlText(String(r.agentCount))} endpoint agent${r.agentCount === 1 ? '' : 's'} ran this test">${TEP_ENDPOINT_ICON_SVG}<span class="tep-agentkind-count">${r.agentCount}</span></span>`
         : '';
-      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${epBadge}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${url ? 'a' : 'div'}>`;
+      // Phase 2: "locate destination" pin — RIGHT of the name, after the agent
+      // icon+count badge (the async agent badge inserts itself before this icon,
+      // see tepMarkBreakdownRowAgentBadges). Enterprise HTTP tests resolve via
+      // the same path-vis graph.
+      const locateIcon = r.testId
+        ? ` <span class="tep-testdest-locate" role="button" tabindex="0" title="Show this test's destination on the map" data-locate-test="${tepEscapeHtmlText(String(r.testId))}" data-test-name="${tepEscapeHtmlText(r.title || '')}" data-test-score="${p.toFixed(1)}" data-test-scorelabel="Availability" data-test-unit="%"${r.isEndpoint ? ` data-endpoint="1" data-round="${tepEscapeHtmlText(String(r.round != null ? r.round : ''))}"` : ''}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></span>`
+        : '';
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${epBadge}${locateIcon}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${url ? 'a' : 'div'}>`;
     }).join('');
     const headTitle = epCount ? 'Tests behind this average' : 'HTTP tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${headTitle}`
-      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test</span></div>'
+      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · pin to map its destination</span></div>'
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     // Mounted on <html>, not <body> — same reason as the rest of this panel's
     // floating chrome (toggle button, fullscreen overlay, etc.): body is
@@ -20206,6 +21467,30 @@
     // appended there would render tinted or hidden behind the map overlay.
     document.documentElement.appendChild(pop);
     tepSaasPopoverEl = pop;
+    // Phase 2: locate-pin click → resolve + pin this test's destination.
+    pop.addEventListener('click', (e) => {
+      const loc = e.target.closest('.tep-testdest-locate');
+      if (!loc) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const tid = loc.dataset.locateTest;
+      if (!tid) return;
+      tepCancelTraceHover();   // a click supersedes any pending hover trace
+      loc.classList.add('tep-testdest-locate--loading');
+      const popToMin = loc.closest('.tep-saas-breakdown-pop');
+      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset)).then((ok) => {
+        loc.classList.remove('tep-testdest-locate--loading');
+        if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
+        // Committing to a trace (pin click) MINIMIZES the list so the map is
+        // interactable — click the collapsed header to bring it back.
+        else if (popToMin) popToMin.classList.add('tep-breakdown-min');
+      });
+    }, true);
+    // Click the header to toggle minimize/restore (the pin also minimizes).
+    pop.addEventListener('click', (e) => {
+      if (e.target.closest('.tep-testdest-locate')) return;
+      if (e.target.closest('.tep-saas-breakdown-head')) pop.classList.toggle('tep-breakdown-min');
+    });
     // Resolved once eagerly (reuses the already-cached raw fetch behind the
     // widget itself — see tepFetchHttpAgentsByTest), not per hover: a null
     // check in the mouseover handler below just means nothing highlights
@@ -20215,6 +21500,17 @@
     pop.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
       if (!row || !row.dataset.testId) return;
+      // Hover-to-trace: after a short dwell, draw this test's destination trace
+      // on the map (popover stays open) — for BOTH enterprise and endpoint rows,
+      // so it runs BEFORE the endpoint highlight branch returns. Cancelled on
+      // mouseout below.
+      const locEl = row.querySelector('.tep-testdest-locate');
+      if (locEl && row.dataset.testId) {
+        tepCancelTraceHover();
+        const tid = row.dataset.testId;
+        const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
+        tepTraceHoverTimer = setTimeout(() => { tepTraceHoverTimer = null; void tepShowTraceForTest(tid, ds); }, TEP_TRACE_HOVER_DELAY_MS);
+      }
       if (row.dataset.endpoint) {
         if (dashMapAgentsListHoverLocked) return;
         const agentIds = byTestAgentIds.get(row.dataset.testId);
@@ -20228,6 +21524,7 @@
       const names = byTestAgents.get(row.dataset.testId);
       if (!names || !names.size) return;
       dashMapTestHighlight = names;
+      tepShowTestCloudAgents(names);   // light-blue cloud icons for this test's Cloud agents
       if (dashMapSearchHook) dashMapSearchHook.refresh();
     });
     pop.addEventListener('mouseout', (e) => {
@@ -20243,6 +21540,8 @@
         }
         return;
       }
+      tepCancelTraceHover();   // a pending (not-yet-shown) trace shouldn't fire after leaving the row
+      tepClearTestCloudAgents();
       if (dashMapTestHighlight) {
         dashMapTestHighlight = null;
         if (dashMapSearchHook) dashMapSearchHook.refresh();
@@ -20471,6 +21770,7 @@
     // A hovered row's map highlight shouldn't survive the popover closing —
     // covers both the enterprise (name-based) and endpoint (agentId-based)
     // test-row hover mechanisms.
+    tepClearTestCloudAgents();
     if (dashMapTestHighlight) {
       dashMapTestHighlight = null;
       if (dashMapSearchHook) dashMapSearchHook.refresh();
@@ -20531,19 +21831,66 @@
         Number.isFinite(r.avgLat) ? `${Math.round(r.avgLat)}ms` : null,
         Number.isFinite(r.avgLoss) && r.avgLoss > 0 ? `${Math.round(r.avgLoss * 10) / 10}% loss` : null,
       ].filter(Boolean).join(' · ');
-      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:var(--tep-slate-500);font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
+      // EXPERIMENTAL (test-destinations MVP): enterprise rows get a "locate"
+      // pin — RIGHT of the name, after the agent icon+count badge (the async
+      // badge inserts before this icon, see tepMarkBreakdownRowAgentBadges).
+      // Skipped only for endpoint tests (different topology graph). Agent-to-
+      // Agent tests DO get a pin — they resolve via their own one-way-net
+      // timing metric + path-vis layer (data-onewaynet flags them so the
+      // handler hits the right endpoints).
+      const locateIcon = r.testId
+        ? ` <span class="tep-testdest-locate" role="button" tabindex="0" title="Show this test's destination on the map" data-locate-test="${tepEscapeHtmlText(String(r.testId))}" data-test-name="${tepEscapeHtmlText(r.title || '')}" data-test-score="${tepEscapeHtmlText(String(r.score))}" data-test-scorelabel="Health"${detail ? ` data-test-detail="${tepEscapeHtmlText(detail)}"` : ''}${r.isOneWayNet ? ' data-onewaynet="1"' : ''}${r.isEndpoint ? ` data-endpoint="1" data-round="${tepEscapeHtmlText(String(r.round != null ? r.round : ''))}"` : ''}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></span>`
+        : '';
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:var(--tep-slate-500);font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}${locateIcon}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
     }).join('');
     const headTitle = epCount ? 'Tests behind this average' : 'Network tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${headTitle}`
-      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test</span></div>'
+      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · pin to map its destination</span></div>'
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     document.documentElement.appendChild(pop);
     tepNetworkPopoverEl = pop;
+    // EXPERIMENTAL: clicking the locate pin resolves this test's destination
+    // and pins it on the map (capture phase + preventDefault so the row's own
+    // <a> link never fires). Closes the popover so the pin is visible.
+    pop.addEventListener('click', (e) => {
+      const loc = e.target.closest('.tep-testdest-locate');
+      if (!loc) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const tid = loc.dataset.locateTest;
+      if (!tid) return;
+      tepCancelTraceHover();   // a click supersedes any pending hover trace
+      loc.classList.add('tep-testdest-locate--loading');
+      const popToMin = loc.closest('.tep-saas-breakdown-pop');
+      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset)).then((ok) => {
+        loc.classList.remove('tep-testdest-locate--loading');
+        if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
+        // Committing to a trace (pin click) MINIMIZES the list so the map is
+        // interactable — click the collapsed header to bring it back.
+        else if (popToMin) popToMin.classList.add('tep-breakdown-min');
+      });
+    }, true);
+    // Click the header to toggle minimize/restore (the pin also minimizes).
+    pop.addEventListener('click', (e) => {
+      if (e.target.closest('.tep-testdest-locate')) return;
+      if (e.target.closest('.tep-saas-breakdown-head')) pop.classList.toggle('tep-breakdown-min');
+    });
     let byTestAgents = null;
     tepFetchNetworkAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
     pop.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
       if (!row || !row.dataset.testId) return;
+      // Hover-to-trace: after a short dwell, draw this test's destination trace
+      // on the map (popover stays open) — for BOTH enterprise and endpoint rows,
+      // so it runs BEFORE the endpoint highlight branch returns. Cancelled on
+      // mouseout below.
+      const locEl = row.querySelector('.tep-testdest-locate');
+      if (locEl && row.dataset.testId) {
+        tepCancelTraceHover();
+        const tid = row.dataset.testId;
+        const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
+        tepTraceHoverTimer = setTimeout(() => { tepTraceHoverTimer = null; void tepShowTraceForTest(tid, ds); }, TEP_TRACE_HOVER_DELAY_MS);
+      }
       if (row.dataset.endpoint) {
         if (dashMapAgentsListHoverLocked) return;
         const agentIds = byTestAgentIds.get(row.dataset.testId);
@@ -20557,6 +21904,7 @@
       const names = byTestAgents.get(row.dataset.testId);
       if (!names || !names.size) return;
       dashMapTestHighlight = names;
+      tepShowTestCloudAgents(names);   // light-blue cloud icons for this test's Cloud agents
       if (dashMapSearchHook) dashMapSearchHook.refresh();
     });
     pop.addEventListener('mouseout', (e) => {
@@ -20572,6 +21920,8 @@
         }
         return;
       }
+      tepCancelTraceHover();   // a pending (not-yet-shown) trace shouldn't fire after leaving the row
+      tepClearTestCloudAgents();
       if (dashMapTestHighlight) {
         dashMapTestHighlight = null;
         if (dashMapSearchHook) dashMapSearchHook.refresh();
@@ -21125,6 +22475,92 @@
     setTimeout(() => {
       document.addEventListener('click', tepIspPopoverOutsideClick, true);
       document.addEventListener('keydown', tepIspPopoverEscHandler, true);
+    }, 0);
+  }
+
+  // Trace Source-ISP agents popover — parity with the LIVE TEST ISP popover but
+  // driven by the pinned trace's per-agent data (pathNodesByAgent) instead of
+  // ispHealthByAgent.
+  let tepTraceIspPopoverEl = null;
+  function hideTraceIspPopover() {
+    if (tepTraceIspPopoverEl) { try { tepTraceIspPopoverEl.remove(); } catch (_) { /* */ } }
+    tepTraceIspPopoverEl = null;
+    document.removeEventListener('click', tepTraceIspOutsideClick, true);
+    document.removeEventListener('keydown', tepTraceIspEscHandler, true);
+    if (dashMapTraceHoverAgentIds) { dashMapTraceHoverAgentIds = null; if (typeof dashMapLivePaint === 'function') dashMapLivePaint(); }
+  }
+  function tepTraceIspOutsideClick(e) { if (tepTraceIspPopoverEl && !tepTraceIspPopoverEl.contains(e.target) && !e.target.closest('.tep-trace-isp-widget')) hideTraceIspPopover(); }
+  function tepTraceIspEscHandler(e) { if (e.key === 'Escape') hideTraceIspPopover(); }
+  /** Source agents on one ISP under the pinned trace, with their end-to-end
+   *  latency + loss, worst first. */
+  function tepTraceIspAgentsFor(isp) {
+    const info = dashMapSelectedTestDest;
+    if (!info) return [];
+    const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
+    const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
+    const agentIsp = new Map();
+    if (Array.isArray(agents)) for (const a of agents) if (a && a.agentId != null && a.isp) agentIsp.set(String(a.agentId), a.isp);
+    const out = [];
+    for (const [aid, t] of paths) {
+      const agIsp = ispBy.get(aid) || agentIsp.get(aid) || 'Unknown ISP';
+      if (agIsp !== isp) continue;
+      let name = null, kind = 'enterprise';
+      const a = Array.isArray(agents) ? agents.find((x) => x && String(x.agentId) === aid) : null;
+      if (a) { name = a.agentName; kind = a.agentType === 'Cloud' ? 'cloud' : 'enterprise'; }
+      else { const ep = Array.isArray(allEndpointAgents) ? allEndpointAgents.find((x) => x && String(x.id) === aid) : null; if (ep) { name = ep.name; kind = 'endpoint'; } }
+      out.push({ agentId: aid, name: name || ('Agent ' + aid), kind, latencyMs: t && t.totalMs != null ? t.totalMs : null, lossPct: t && t.lossPct != null ? t.lossPct : null });
+    }
+    out.sort((a, b) => ((b.lossPct || 0) - (a.lossPct || 0)) || ((b.latencyMs || 0) - (a.latencyMs || 0)));
+    return out;
+  }
+  function toggleTraceIspAgentsPopover(anchorEl, isp) {
+    if (tepTraceIspPopoverEl) { hideTraceIspPopover(); return; }
+    const list = tepTraceIspAgentsFor(isp);
+    if (!list.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideTraceIspPopover);
+    const pop = document.createElement('div');
+    pop.className = 'tep-saas-breakdown-pop tep-fs-pop';
+    const rows = list.map((it) => {
+      const lat = it.latencyMs != null ? `<b style="color:${tepLiveNodeColor(it.latencyMs, it.lossPct).stroke}">${it.latencyMs}ms</b>` : '';
+      const loss = (it.lossPct != null && it.lossPct > 0) ? ` <span style="color:var(--tep-red-soft);font-weight:700;">${it.lossPct}% loss</span>` : '';
+      return `<div class="tep-saas-breakdown-row tep-isp-agents-row" role="button" tabindex="0" data-kind="${tepEscapeHtmlText(it.kind)}" data-agentid="${tepEscapeHtmlText(String(it.agentId))}"><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(it.name)}</span><span>${lat}${loss}</span></div>`;
+    }).join('');
+    pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(isp)} — source agents (worst first)`
+      + '<span class="tep-saas-breakdown-hint">click an agent to locate it on the map</span></div>'
+      + `<div class="tep-saas-breakdown-list">${rows}</div>`;
+    document.documentElement.appendChild(pop);
+    tepTraceIspPopoverEl = pop;
+    const rect = anchorEl.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    let top = rect.bottom + 6, left = rect.left;
+    const maxLeft = window.innerWidth - popRect.width - 8;
+    if (left > maxLeft) left = Math.max(8, maxLeft);
+    if (top + popRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - popRect.height - 6);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    pop.addEventListener('click', (e) => {
+      const row = e.target.closest('.tep-isp-agents-row');
+      if (!row) return;
+      hideTraceIspPopover();
+      const focused = dashMapFocusHook ? dashMapFocusHook.focusAgent(row.dataset.kind, row.dataset.agentid) : false;
+      if (!focused) toast('That agent isn’t currently shown on the map', 'err');
+    });
+    // Hovering a row lights JUST that agent on the map (others dim) — the trace
+    // dimming narrows to dashMapTraceHoverAgentIds. Repainted in place.
+    pop.addEventListener('mouseover', (e) => {
+      const row = e.target.closest('.tep-isp-agents-row');
+      if (!row || !row.dataset.agentid) return;
+      const id = String(row.dataset.agentid);
+      if (dashMapTraceHoverAgentIds && dashMapTraceHoverAgentIds.size === 1 && dashMapTraceHoverAgentIds.has(id)) return;
+      dashMapTraceHoverAgentIds = new Set([id]);
+      if (typeof dashMapLivePaint === 'function') dashMapLivePaint();
+    });
+    pop.addEventListener('mouseleave', () => {
+      if (dashMapTraceHoverAgentIds) { dashMapTraceHoverAgentIds = null; if (typeof dashMapLivePaint === 'function') dashMapLivePaint(); }
+    });
+    setTimeout(() => {
+      document.addEventListener('click', tepTraceIspOutsideClick, true);
+      document.addEventListener('keydown', tepTraceIspEscHandler, true);
     }, 0);
   }
 
@@ -23301,6 +24737,11 @@
   // dramatic entrance.
   const liveFlowDrawn = new Set();
   const liveDestDrawn = new Set();
+  // Phase 2 (test-destinations): which source-agent flow lines have already
+  // played their one-shot draw-in for the currently-pinned test. Cleared when
+  // the selection changes (see the locate-click handler + pin-clear) so a
+  // freshly pinned test animates its lines in fresh.
+  const testDestFlowDrawn = new Set();
 
   // ===========================================================================
   // ISP Health — folded into LIVE TEST rather than a separate mode/button:
@@ -24799,6 +26240,14 @@
   // per-source signal (it correctly varies across agents in the same capture),
   // so it's the only thing we resolve on.
   const METRO_COORDS = {
+    // Extra cloud/Microsoft-WAN PoP cities that show up as reported target
+    // locations but weren't in the base gazetteer (kept city-precise here so
+    // they don't fall back to a country centroid).
+    'bilbao': [43.2630, -2.9350], 'campinas': [-22.9099, -47.0626], 'cape town': [-33.9249, 18.4241],
+    'des moines': [41.5868, -93.6250], 'quincy': [47.2373, -119.8526], 'boydton': [36.6676, -78.3875],
+    'san antonio': [29.4241, -98.4936], 'cheyenne': [41.1400, -104.8202], 'chennai': [13.0827, 80.2707],
+    'busan': [35.1796, 129.0756], 'osaka': [34.6937, 135.5023], 'marseille': [43.2965, 5.3698],
+    'zurich': [47.3769, 8.5417], 'milan': [45.4642, 9.1900], 'johannesburg': [-26.2041, 28.0473],
     'atlanta': [33.7490, -84.3880], 'ashburn': [39.0437, -77.4875], 'mountain view': [37.3861, -122.0839],
     'new york': [40.7128, -74.0060], 'chicago': [41.8781, -87.6298], 'san francisco': [37.7749, -122.4194],
     'san jose': [37.3382, -121.8863], 'los angeles': [34.0522, -118.2437], 'dallas': [32.7767, -96.7970],
@@ -24974,6 +26423,272 @@
       }
     }
     return null;   // unresolved / no city-level match → no path drawn
+  }
+
+  /** EXPERIMENTAL (test-destinations MVP): resolve ONE test's destination
+   *  location for the map pin — reuses the same path-vis topology graph the
+   *  LIVE TEST uses (liveTestFetchPathVisDest), but generalized to find the
+   *  test's own `destination:true` node instead of the hardcoded 8.8.8.8
+   *  target, and to run standalone (not tied to a live session). Memoized in
+   *  dashMapTestDestCache: a null entry means "tried, unresolvable" so we
+   *  never refetch a dead one. Enterprise (path-vis) only for the MVP;
+   *  endpoint tests (a different `eyebrow` topology graph) resolve to null
+   *  for now — a graceful "couldn't locate", not an error. Returns the
+   *  resolved dest info or null. One heavy path-vis call per test, cached. */
+  async function tepResolveTestDestination(testId, isEndpoint, isOneWayNet, endpointRound) {
+    const key = String(testId);
+    if (dashMapTestDestCache.has(key)) return dashMapTestDestCache.get(key);
+    // Record WHY a pin can't be placed (surfaced on screen by the click handler).
+    const fail = (reason) => { dashMapTestDestFail.set(key, reason); dashMapTestDestCache.set(key, null); log(`Test destination: ${key} — ${reason}`, 'tep-log-info'); return null; };
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
+    const enc = encodeURIComponent;
+    let data = null, usedBin = null;
+    if (isEndpoint) {
+      // Endpoint tests use the "eyebrow" topology graph (POST) — NOT enterprise
+      // path-vis — but return the same nodes/links/routes/sourceIdToLocation
+      // shape, so all the downstream mapping/loss/ISP logic below is reused. The
+      // round comes from the breakdown row (data-round). Same method the LIVE
+      // TEST's liveTestFetchEndpointDest uses.
+      // The breakdown row's round is often a WINDOW-END, not an exact
+      // measurement round, so the eyebrow graph comes back empty for it. Like
+      // the LIVE TEST, try several CANDIDATE rounds: the given one plus fresh
+      // rounds computed from NOW at the common endpoint intervals (60/120/300/
+      // 600s) and one step back each — newest first, first-with-data wins.
+      const now = Math.floor(Date.now() / 1000);
+      const candSet = new Set();
+      if (endpointRound != null && endpointRound !== '' && Number.isFinite(Number(endpointRound))) candSet.add(Number(endpointRound));
+      for (const iv of [60, 120, 300, 600]) { const r0 = Math.floor(now / iv) * iv; candSet.add(r0); candSet.add(r0 - iv); }
+      const cands = Array.from(candSet).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => b - a);
+      const ediag = [];
+      for (const rnd of cands) {
+        const eurl = `/ajax/topology/eyebrow/test/${enc(testId)}/net/round/${enc(rnd)}/paged-graph`;
+        const ebody = JSON.stringify({ testId, savedEventId: null, layer: 'net', roundId: rnd, searchFilters: [], graphOptions: { sourcePagination: { page: 0, pageSize: 1000 }, agentGrouping: 'BY_AGENT' } });
+        let d = null, status = 'ok';
+        try {
+          const r = await ajax(eurl, { method: 'POST', headers, body: ebody });
+          if (!r.ok) { status = 'HTTP ' + r.status; }
+          else d = await r.json().catch(() => { status = 'bad-json'; return null; });
+        } catch (_) { status = 'error'; }
+        const ns = d && Array.isArray(d.nodes) ? d.nodes : [];
+        const rt = d && Array.isArray(d.routes) ? d.routes : [];
+        ediag.push(`${new Date(rnd * 1000).toLocaleTimeString()} → nodes=${ns.length} routes=${rt.length}${status !== 'ok' ? ' [' + status + ']' : ''}`);
+        if (ns.length && rt.length) { data = d; usedBin = rnd; break; }
+      }
+      log(`Test destination: ${key} — endpoint eyebrow round check:\n  ${ediag.join('\n  ')}`, 'tep-log-info');
+      if (!data) return fail(`No endpoint trace topology in ${cands.length} candidate round(s) — this test may run HTTP-only (no network layer), or its interval isn't 1/2/5/10-min (see log for per-round counts)`);
+    } else {
+    // Agent-to-Agent (OneWayNetwork) tests report on their OWN timing metric
+    // (oneWayNetLatency) and their OWN path-vis layer (layer=one-way-net,
+    // direction=BIDIRECTIONAL) — CONFIRMED via a user capture of test
+    // 7643632, whose graph's destination:true node is the TARGET AGENT with
+    // its city resolvable the same way. So A2A resolves fine once we hit the
+    // right endpoints, rather than being pinless.
+    const timelineUrl = isOneWayNet
+      ? `/ajax/agent/view/timeline/one-way-net/latency?testId=${enc(testId)}&metricId=oneWayNetLatency&direction=BIDIRECTIONAL`
+      : `/ajax/agent/view/timeline/net/latency?testId=${enc(testId)}&binSize=300&metricId=netLatency`;
+    let startBin = null, binSize = null;
+    try {
+      const tr = await ajax(timelineUrl, { method: 'GET', headers });
+      if (tr.ok) {
+        const tj = await tr.json().catch(() => null);
+        const ch = tj && Array.isArray(tj.chunks) ? tj.chunks : [];
+        if (ch.length) { const last = ch[ch.length - 1]; startBin = last.startRoundId; binSize = last.intervalLength; }
+      }
+    } catch (_) { /* */ }
+    if (startBin == null || binSize == null) return fail('No timing data — the net-latency timeline returned no rounds for this test in the current data window');
+    // ThousandEyes often has latency for the newest round but the TRACE
+    // (path-vis) for it isn't written yet — the graph comes back empty or
+    // without a destination node. CONFIRMED via user testing (cloud agents
+    // especially). So walk BACK one round at a time (startBin - k·binSize),
+    // taking the last interval that actually has a resolvable destination node,
+    // bounded by the current DATA WINDOW (never step outside what the user is
+    // even looking at) and a hard request cap so a test that genuinely never
+    // has path-vis doesn't fire a storm of heavy graph calls. Same for A2A.
+    const graphUrlFor = (bin) => isOneWayNet
+      ? `/ajax/topology/path-vis/graph/multi?testIds=${enc(testId)}&startBin=${enc(bin)}&binSize=${enc(binSize)}&serverIds=&direction=BIDIRECTIONAL&layer=one-way-net`
+      : `/ajax/topology/path-vis/graph/multi?testIds=${enc(testId)}&startBin=${enc(bin)}&binSize=${enc(binSize)}&serverIds=`;
+    const binCandidates = [startBin];
+    if (Number.isFinite(binSize) && binSize > 0) {
+      const windowSteps = Math.max(0, Math.floor((tepMetricsWindowSec() || 0) / binSize) - 1);
+      const steps = Math.min(windowSteps, 12);   // cap heavy graph calls
+      for (let k = 1; k <= steps; k++) binCandidates.push(startBin - k * binSize);
+    }
+    const tsOf = (b) => { try { return new Date(Number(b) * 1000).toLocaleString(); } catch (_) { return String(b); } };
+    log(`Test destination: ${key} — timeline startBin=${startBin} (${tsOf(startBin)}), binSize=${binSize}s, checking up to ${binCandidates.length} round(s) back`, 'tep-log-info');
+    // Walk newest→oldest. PREFER a bin with a destination:true node (complete
+    // trace) but FALL BACK to the newest bin that at least has nodes+routes —
+    // some tests carry a real trace whose target isn't flagged destination:true,
+    // and rejecting those was why "there IS trace data" still failed. Downstream
+    // dest resolution (backward-scan + sourceIdToLocation + last-link) handles
+    // the partial case. Every round's counts are logged for diagnosis.
+    let fallbackData = null, fallbackBin = null;
+    const diag = [];
+    for (const bin of binCandidates) {
+      let d = null, status = 'ok';
+      try {
+        const r = await ajax(graphUrlFor(bin), { method: 'GET', headers });
+        if (!r.ok) { status = 'HTTP ' + r.status; }
+        else d = await r.json().catch(() => { status = 'bad-json'; return null; });
+      } catch (_) { status = 'error'; }
+      const ns = d && Array.isArray(d.nodes) ? d.nodes : [];
+      const rt = d && Array.isArray(d.routes) ? d.routes : [];
+      const destCount = ns.filter((n) => n && n.destination === true).length;
+      diag.push(`${tsOf(bin)} → nodes=${ns.length} routes=${rt.length} dests=${destCount}${status !== 'ok' ? ' [' + status + ']' : ''}`);
+      if (ns.length && rt.length) {
+        if (destCount > 0) { data = d; usedBin = bin; break; }       // complete trace — best
+        if (!fallbackData) { fallbackData = d; fallbackBin = bin; }  // partial — keep newest
+      }
+    }
+    if (!data && fallbackData) { data = fallbackData; usedBin = fallbackBin; log(`Test destination: ${key} — no round had a destination:true node; using newest round WITH trace (nodes+routes) and resolving dests from routes/sourceIdToLocation`, 'tep-log-info'); }
+    log(`Test destination: ${key} — round-by-round trace check:\n  ${diag.join('\n  ')}`, 'tep-log-info');
+    if (!data) return fail(`No trace topology in any of ${binCandidates.length} round(s) — checked ${tsOf(binCandidates[binCandidates.length - 1])} … ${tsOf(startBin)}. All came back with no nodes/routes (see log for per-round counts).`);
+    log(`Test destination: ${key} — USING trace from round ${usedBin} (${tsOf(usedBin)})${usedBin !== startBin ? ' — ' + Math.round((startBin - usedBin) / binSize) + ' round(s) back from newest' : ' (newest)'}`, 'tep-log-ok');
+    }
+    const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    const links = Array.isArray(data.links) ? data.links : [];
+    const routes = Array.isArray(data.routes) ? data.routes : [];
+    // LOSS DIAG: surface any loss-related fields on the destination node, a
+    // sample hop node, and a route — so we can confirm the exact field name TE
+    // uses for forwarding/packet loss (tepNodeLoss tries the common ones).
+    try {
+      const lossKeys = (o) => o && typeof o === 'object' ? Object.keys(o).filter((k) => /loss/i.test(k)).map((k) => k + '=' + JSON.stringify(o[k])).join(', ') : '';
+      const dn0 = nodes.find((n) => n && n.destination === true);
+      const hn0 = nodes.find((n) => n && n.hop > 0);
+      const rt0 = routes[0];
+      const rh0 = rt0 && Array.isArray(rt0.route) ? rt0.route.find((h) => h && /loss/i.test(JSON.stringify(h))) : null;
+      log(`Test destination: ${key} — LOSS DIAG · dest[${lossKeys(dn0)}] · hop[${lossKeys(hn0)}] · route[${lossKeys(rt0)}]${rh0 ? ' · routeHop[' + lossKeys(rh0) + ']' : ''}`, 'tep-log-info');
+    } catch (_) { /* */ }
+    // Source agents for the flow lines: each agent's own vantage node in the
+    // graph is hop:0 with agentId + agent (display name). Matched by UPPER name
+    // against the map's plotted agents at draw time — see buildTestDestFlow.
+    const sourceNames = new Set();
+    const sourceAgentIds = new Set();  // String agentId — the reliable match key
+    const agentIdByName = new Map();   // UPPER agent name -> TE agentId (for filtered test-view links)
+    const ispByAgent = new Map();      // String agentId -> access ISP (hop-0 network asName)
+    const addSourceNode = (n) => {
+      if (!n || n.agentId == null) return;
+      const aidS = String(n.agentId);
+      sourceAgentIds.add(aidS);
+      // Some enterprise nodes carry BOTH a virtual and a physical agent id; the
+      // map may key on either, so index every id we can see.
+      for (const alt of [n.physicalAgentId, n.vAgentId, n.physicalId]) if (alt != null) sourceAgentIds.add(String(alt));
+      if (n.asName && !ispByAgent.has(aidS)) ispByAgent.set(aidS, n.asName);
+      if (n.agent) {   // endpoint eyebrow nodes may carry only an agentId, no display name
+        const nu = String(n.agent).toUpperCase();
+        sourceNames.add(nu);
+        if (!agentIdByName.has(nu)) agentIdByName.set(nu, n.agentId);
+      }
+    };
+    // hop:0 nodes are the agent vantage points in enterprise path-vis…
+    for (const n of nodes) if (n && n.hop === 0) addSourceNode(n);
+    // …but the endpoint eyebrow graph doesn't reliably tag them hop:0, so ALSO
+    // take every route's source node (which always IS the originating agent —
+    // it's exactly what destByAgent resolves against). Without this, endpoint
+    // pins resolved but no flows drew (empty source set).
+    for (const route of routes) if (route && route.source != null) addSourceNode(nodes[route.source]);
+    log(`Test destination: ${key} — sources: ${sourceAgentIds.size} agentId(s), ${sourceNames.size} name(s) · names: [${Array.from(sourceNames).slice(0, 10).join(' | ')}${sourceNames.size > 10 ? ' …' : ''}]`, 'tep-log-info');
+    // PER-AGENT destinations: a single test can fan out to SEVERAL distinct
+    // targets (anycast, per-location DNS, agent-to-agent), so each agent's route
+    // can end at its OWN destination node. Map every agent to its target via the
+    // routes (route.source = the agent's hop-0 node, route.target = that route's
+    // final node), and collect the unique destinations to pin.
+    const mkDestInfo = (dn, geo) => ({
+      location: dn.location || '', lat: geo.lat, lng: geo.lng,
+      asName: dn.asName || '', asn: dn.asn != null ? dn.asn : null,
+      ip: dn.publicIpAddress || dn.ipAddress || '',
+      key: dn.geonameId != null ? 'g' + dn.geonameId
+        : (dn.location || '') + '@' + geo.lat.toFixed(2) + ',' + geo.lng.toFixed(2),
+    });
+    const destByAgent = new Map();   // String agentId -> destInfo (confirmed city/state)
+    const destsByKey = new Map();    // stable key -> destInfo (unique pins)
+    const estimatedAgents = new Set(); // String agentId -> dest didn't resolve
+    for (const route of routes) {
+      if (!route || route.source == null || !Array.isArray(route.route) || !route.route.length) continue;
+      const srcN = nodes[route.source];
+      const agentName = srcN && srcN.agent ? String(srcN.agent).toUpperCase() : null;
+      const aId = srcN && srcN.agentId != null ? String(srcN.agentId) : null;
+      if (!aId) continue;   // key by agentId (endpoint eyebrow nodes may lack a name)
+      // Find THIS route's destination the way the live test does: scan BACKWARD
+      // for the last hop whose target node is flagged destination:true (routes
+      // can have trailing non-responding hops past the real target, so the last
+      // link isn't reliable), then fall back to the last-link target.
+      let destN = null;
+      for (let i = route.route.length - 1; i >= 0; i--) {
+        const hop = route.route[i];
+        const link = hop ? links[hop.link] : null;
+        const node = link && link.target != null ? nodes[link.target] : null;
+        if (node && node.destination === true) { destN = node; break; }
+      }
+      if (!destN) {
+        const lastHop = route.route[route.route.length - 1];
+        const lastLink = lastHop ? links[lastHop.link] : null;
+        const idx = lastLink && lastLink.target != null ? lastLink.target : route.target;
+        destN = idx != null ? nodes[idx] : null;
+      }
+      if (!destN) { if (!destByAgent.has(aId)) estimatedAgents.add(aId); continue; }
+      // The authoritative per-agent destination location is the "Reported by
+      // Agents" value — sourceIdToLocation[agentId].locationName — which is what
+      // the TE UI's Target Node popover shows. The node's own top-level
+      // `location` is IP-REGISTRATION based and can point somewhere entirely
+      // different (e.g. a Microsoft anycast IP registered in the US while the
+      // agent actually reaches Lisbon), so PREFER the reported location and only
+      // fall back to the node's own. City OR state geo.
+      const srcLoc = (aId && destN.sourceIdToLocation) ? destN.sourceIdToLocation[aId] : null;
+      const reportedLoc = srcLoc && srcLoc.locationName ? srcLoc.locationName : null;
+      const locName = reportedLoc || destN.location || null;
+      const geo = locName ? tepHopGeo(locName) : null;
+      log(`Test destination: ${key} — "${agentName}" (id ${aId}) → ${destN.publicIpAddress || destN.ipAddress || '?'} · reported="${reportedLoc || ''}" node.location="${destN.location || ''}" → ${geo ? locName + ' @ ' + geo.lat.toFixed(2) + ',' + geo.lng.toFixed(2) : 'UNRESOLVED (' + (locName || 'no location') + ')'}`, geo ? 'tep-log-ok' : 'tep-log-info');
+      if (!geo) { if (!destByAgent.has(aId)) estimatedAgents.add(aId); continue; }
+      const dnForInfo = {
+        location: locName, asName: destN.asName, asn: destN.asn,
+        publicIpAddress: destN.publicIpAddress, ipAddress: destN.ipAddress,
+        geonameId: (srcLoc && srcLoc.geonameId != null) ? srcLoc.geonameId : destN.geonameId,
+      };
+      const base = mkDestInfo(dnForInfo, geo);
+      const dinfo = destsByKey.get(base.key) || base;
+      if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
+      destByAgent.set(aId, dinfo);
+      estimatedAgents.delete(aId);   // a confirmed hit wins over any earlier miss
+    }
+    // Fallback for payloads where routes gave nothing: use every
+    // destination:true node as a pin (agents will estimate to the closest).
+    if (!destsByKey.size) {
+      for (const dn of nodes) {
+        if (!dn || dn.destination !== true) continue;
+        const geo = tepHopGeo(dn.location);
+        if (!geo) continue;
+        const dinfo = mkDestInfo(dn, geo);
+        if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
+      }
+    }
+    if (!destsByKey.size) return fail('Found the trace, but no destination location resolved to a known city/state — nothing to pin');
+    dashMapTestDestFail.delete(key);   // success — clear any prior reason
+    const dests = Array.from(destsByKey.values());
+    const primary = dests[0];
+    // Per-source-agent KEY-HOP analysis from this SAME graph payload — no extra
+    // fetch, just parsing the routes[] delays we already have.
+    const pathNodesByAgent = tepComputeTracePathNodes(nodes, links, routes);
+    let hopTotal = 0; for (const v of pathNodesByAgent.values()) if (v && v.bottleneck) hopTotal += 1;
+    const info = {
+      testId: key,
+      roundId: usedBin,          // for the "open in test view" deep link
+      isOneWayNet: !!isOneWayNet,
+      // primary dest mirrored at top level for the "active"/positioning gates:
+      location: primary.location, lat: primary.lat, lng: primary.lng,
+      asName: primary.asName, asn: primary.asn, ip: primary.ip,
+      dests,                     // all unique destinations to pin
+      destByAgent,               // UPPER agentName -> its own (confirmed) destination
+      estimatedAgents,           // UPPER agentName -> estimate to closest detected dest
+      sourceNames,
+      sourceAgentIds,            // String agentId set — reliable source match (name can differ)
+      agentIdByName,             // UPPER agentName -> TE agentId (filtered test-view links)
+      ispByAgent,                // UPPER agentName -> its access ISP (for the trace ISP stack)
+      pathNodesByAgent,
+    };
+    dashMapTestDestCache.set(key, info);
+    log(`Test destination: ${key} → ${dests.length} destination(s) · ${destByAgent.size} mapped + ${estimatedAgents.size} estimated of ${sourceNames.size} agent(s) · ${hopTotal} bottleneck(s)`, 'tep-log-ok');
+    return info;
   }
 
   /**
