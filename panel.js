@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.66';
+  const TEP_VERSION = '3.77';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4358,7 +4358,6 @@
     </div>
     <div class="tep-status" id="tep-status">
       <span class="tep-status-msg" id="tep-status-msg">Detecting session&hellip;</span>
-      <span class="tep-ajax-meter" id="tep-ajax-meter" style="display:none;" title="Live AJAX activity: in-flight (+queued) · requests in the last 60s. Type window.__TEP_AJAX_STATS__ in the console for full detail (per-endpoint counts, errors, rates)."></span>
       <button type="button" class="tep-units-toggle" id="tep-units-toggle" style="display:none;" title="Show/hide TE usage unit estimates" aria-pressed="false">Units</button>
       <span class="tep-units tep-units-total" id="tep-manage-units-total" style="display:none;" aria-hidden="true" title="31-day unit projection (Used / Plan Units) for tests matching the current Manage filter"></span>
     </div>
