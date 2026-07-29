@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Builds panel.min.js from panel.js — strips comments + whitespace only.
+ * Builds panel.min.js from src/panel.js — strips comments + whitespace only.
  * Identifiers and syntax are left untouched (minifyIdentifiers/minifySyntax
  * off) so the output is byte-for-byte semantically identical to the source,
  * just smaller. The leading license/disclaimer banner is preserved verbatim.
@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const srcPath = path.join(root, 'panel.js');
+const srcPath = path.join(root, 'src', 'panel.js');
 const outPath = path.join(root, 'panel.min.js');
 const src = fs.readFileSync(srcPath, 'utf8');
 

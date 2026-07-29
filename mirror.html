@@ -3,7 +3,7 @@
 <!--
   Mirror of the TE Optics install page.
   Unlike index.html, this page does NOT embed panel.js. The bookmarklet's
-  href is static and always loads the latest panel.min.js straight from
+  href is static and always loads the latest panel.js (a tiny loader for panel.min.js) straight from
   jsDelivr's GitHub CDN (cache-busted per click) — this page only fetches
   https://lucidium2000.github.io/TE-Optics/ live to display its build number.
 -->
@@ -334,7 +334,7 @@
             alt=""
             decoding="async"
             loading="lazy" />
-          <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(document.body.appendChild(document.createElement('script')).src='https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.min.js?'+Date.now())">TE Optics</a>
+          <a class="bookmarklet-link" id="bookmarklet-inline" href="javascript:void(document.body.appendChild(document.createElement('script')).src='https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js?'+Date.now())">TE Optics</a>
         </div>
         <span class="hint" id="bm-hint">
           Drag &amp; drop onto your bookmarks toolbar. If hidden, press <code>Ctrl+Shift+B</code> (Chrome/Edge) to show it.
@@ -429,7 +429,7 @@
   <script>
     // ---------------------------------------------------------------------------
     // The TE Optics button's href is static (see the <a> above) — it always
-    // loads the latest panel.min.js straight from jsDelivr's GitHub CDN, cache-busted
+    // loads the latest panel.js (loader) straight from jsDelivr's GitHub CDN, cache-busted
     // with a timestamp, so it never needs rebuilding here. This script only
     // fetches the live install page to read its displayed build number.
     // ---------------------------------------------------------------------------
