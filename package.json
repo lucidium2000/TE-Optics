@@ -1,0 +1,11 @@
+{
+  "name": "te-optics",
+  "private": true,
+  "description": "Build tooling for TE Optics — minifies panel.js (source) to panel.min.js (served).",
+  "scripts": {
+    "build": "node scripts/build-min.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
