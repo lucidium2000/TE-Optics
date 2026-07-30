@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.84';
+  const TEP_VERSION = '3.86';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2052,43 +2052,14 @@
     .tep-testdest-hop--bottle:hover .tep-testdest-hop-dot { animation-play-state: paused; }
     /* Loss node — a hop dropping packets. Red diamond + "N%" label, distinct
        from the amber latency bottleneck. */
+    /* Loss node — a plain, static RED RING (no blink/strobe), distinct from the
+       amber latency bottleneck. */
     .tep-testdest-hop--loss .tep-testdest-hop-dot {
-      width: 10px; height: 10px; border-radius: 2px; transform: rotate(45deg);
-      background: linear-gradient(135deg, #f87171, #dc2626); border: 1.5px solid #fee2e2;
-      box-shadow: 0 0 0 1px rgba(153,27,27,.6), 0 0 7px rgba(239,68,68,.9);
-      /* FLICKER like a failing signal — brief, irregular dropouts (only opacity
-         animates, so it's GPU-cheap). */
-      animation: tep-loss-flicker 2.4s linear infinite;
-    }
-    @keyframes tep-loss-flicker {
-      0%, 100% { opacity: 1; }
-      7% { opacity: 1; } 8% { opacity: .18; } 10% { opacity: 1; }
-      35% { opacity: 1; } 36% { opacity: .35; } 37.5% { opacity: 1; }
-      63% { opacity: 1; } 64% { opacity: .12; } 65% { opacity: .7; } 66% { opacity: 1; }
-      85% { opacity: 1; } 86% { opacity: .45; } 87% { opacity: 1; }
+      width: 11px; height: 11px; border-radius: 50%; transform: none;
+      background: rgba(127,29,29,.5); border: 2px solid #ef4444;
+      box-shadow: 0 0 0 1px rgba(153,27,27,.5), 0 0 6px rgba(239,68,68,.7);
     }
     .tep-testdest-hop--loss .tep-testdest-hop-lbl { color: #fecaca; border-color: rgba(239,68,68,.7); }
-    .tep-testdest-hop--loss:hover .tep-testdest-hop-dot { animation-play-state: paused; }
-    /* "Bits" spilling out of a loss node and falling away — each is a tiny red
-       square that fades in, drops, and fades out; staggered per particle. Only
-       transform + opacity animate. */
-    .tep-testdest-loss-bits { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; z-index: 4; }
-    .tep-testdest-loss-bit {
-      position: absolute; left: 0; top: 0; width: 2.5px; height: 2.5px;
-      background: #fb7185; border-radius: 1px; opacity: 0;
-      box-shadow: 0 0 3px rgba(244,63,94,.95);
-      animation: tep-loss-bit-fall var(--bd, 1.5s) linear var(--bdelay, 0s) infinite;
-    }
-    @keyframes tep-loss-bit-fall {
-      0% { transform: translate(0, 0) scale(1); opacity: 0; }
-      14% { opacity: 1; }
-      70% { opacity: .8; }
-      100% { transform: translate(var(--bx, 0), 22px) scale(.4); opacity: 0; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .tep-testdest-hop--loss .tep-testdest-hop-dot, .tep-testdest-loss-bit { animation: none; }
-      .tep-testdest-loss-bit { display: none; }
-    }
     /* The hop just BEFORE the latency jump — small, muted blue, no label; its
        info is on hover only, so it reads as a quiet secondary marker next to the
        amber bottleneck. */
@@ -2101,22 +2072,32 @@
     /* Latency label beside the node — anchored up-and-right of the dot so it
        clears the flow line. Non-interactive; the dot owns hover/click. */
     .tep-testdest-hop-lbl {
-      position: absolute; left: 8px; bottom: 8px; white-space: nowrap;
+      /* Centred directly BELOW the node (not up-and-right) so it never overlaps
+         the trace line / adjacent hops — CONFIRMED via user request. */
+      position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+      white-space: nowrap;
       font-size: 9.5px; font-weight: 800; line-height: 1;
       color: #dbeafe; padding: 1px 4px; border-radius: 5px;
       background: rgba(15,23,42,.82); border: 1px solid rgba(96,165,250,.45);
       pointer-events: none; font-variant-numeric: tabular-nums;
       text-shadow: 0 1px 2px rgba(0,0,0,.6);
+      /* Hidden until the node itself is hovered — keeps the trace uncluttered
+         (CONFIRMED via user request); hover the dot to reveal its latency/loss. */
+      opacity: 0; transition: opacity .12s ease;
     }
+    .tep-testdest-hop:hover .tep-testdest-hop-lbl { opacity: 1; }
     .tep-testdest-hop--bottle .tep-testdest-hop-lbl {
-      color: #ffedd5; border-color: rgba(251,146,60,.7); left: 9px; bottom: 9px;
+      color: #ffedd5; border-color: rgba(251,146,60,.7);
     }
     /* Total path latency, shown floating just above the SOURCE agent marker.
        Mint/green so it reads as neutral summary info, distinct from the amber
        bottleneck delta. Non-interactive — the agent marker owns its own hover. */
     .tep-testdest-total { z-index: 6; filter: none; pointer-events: none; }
     .tep-testdest-total-lbl {
-      position: absolute; left: 50%; bottom: 15px; transform: translateX(-50%);
+      /* BELOW the source node (was bottom:15px = above) so the agent hover card,
+         which opens upward over the marker, no longer covers it — CONFIRMED via
+         user request. */
+      position: absolute; left: 50%; top: 15px; transform: translateX(-50%);
       white-space: nowrap; font-size: 9.5px; font-weight: 800; line-height: 1;
       color: #d1fae5; padding: 1px 5px; border-radius: 6px;
       background: rgba(15,23,42,.85); border: 1px solid rgba(52,211,153,.5);
@@ -2136,6 +2117,18 @@
        ISP's source agents remain), rather than just dimming them. */
     .tep-testdest-ispfiltered .tep-agent-map-marker:not(.tep-testdest-related):not(.tep-testdest-node):not(.tep-testdest-hop):not(.tep-testdest-total):not(.tep-cloud-agent-marker) {
       display: none;
+    }
+    /* Hovering a SOURCE agent, or any LOSS/LATENCY hop node, focuses ITS trace:
+       every OTHER trace's line, glow, comet, hop nodes and total label turn OFF
+       entirely so only the hovered path shows. The focused line's elements get
+       .tep-trace-focus (see tepFocusTraceSource); the container gets
+       .tep-trace-focusing. */
+    .tep-trace-focusing .tep-livetest-flow:not(.tep-trace-focus),
+    .tep-trace-focusing .tep-livetest-flow-glow:not(.tep-trace-focus),
+    .tep-trace-focusing .tep-livetest-packet:not(.tep-trace-focus),
+    .tep-trace-focusing .tep-testdest-hop:not(.tep-trace-focus),
+    .tep-trace-focusing .tep-testdest-total:not(.tep-trace-focus) {
+      opacity: 0 !important; pointer-events: none !important; transition: opacity .12s ease;
     }
     .tep-gcard-delta { color: var(--tep-orange-fg); font-weight: 800; }
     /* Transient message over the fullscreen map (tepMapToast). */
@@ -2308,7 +2301,11 @@
          to nothing. */
       fill: none; stroke: #1a73e8; stroke-width: 2.4; opacity: .98;
       stroke-linecap: round; stroke-dasharray: 5 9;
-      filter: drop-shadow(0 0 4px rgba(120,180,255,.85));
+      /* PERF: no drop-shadow here. This is the ONE element that repaints every
+         frame (animated stroke-dashoffset), so a blur filter on it means the
+         browser re-runs a Gaussian blur over the path's whole diagonal bbox
+         each frame, ×N overlapping traces. The glow line beneath already
+         supplies the halo, so the dashes lose nothing visible. */
       /* --tep-flow-speed is set inline per flow (JS) from that agent's own
          latency — low latency = fast marching dashes, high latency = slow;
          .7s is only the fallback for the brief window before a reading exists. */
@@ -2318,26 +2315,46 @@
     /* Bright comet travelling along the path. */
     :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-packet {
       fill: #fff;
-      filter: drop-shadow(0 0 5px rgba(255,255,255,.95)) drop-shadow(0 0 9px rgba(66,133,244,.9));
+      /* PERF: single drop-shadow (was two stacked) — the comet pulses opacity
+         every frame, so each extra blur pass is re-run per frame per comet. */
+      filter: drop-shadow(0 0 6px rgba(160,200,255,.92));
       animation: tep-livetest-packet-glow 1.5s ease-in-out infinite;
     }
     @keyframes tep-livetest-packet-glow { 0%,100% { opacity: .75; } 50% { opacity: 1; } }
+    /* PERF "lite" mode — set on the flow SVG (JS) once more than TEP_TRACE_LITE_N
+       traces are on screen at once, where the per-frame repaint cost of N
+       animated dash lines + N pulsing comets is what makes big fan-outs taxing.
+       It drops the two per-frame-heaviest effects (the marching-dash animation,
+       which repaints each line's whole bbox every frame, and the comets) while
+       KEEPING the coloured glow lines, static dashes, loss rings and latency
+       tags — all painted once and cheaply composited, so the picture still
+       reads the same, just calm instead of marching. */
+    .tep-trace-lite .tep-livetest-flow { animation: none !important; }
+    .tep-trace-lite .tep-livetest-packet { display: none !important; }
+    /* Honour a user's reduced-motion preference the same way, at any count. */
+    @media (prefers-reduced-motion: reduce) {
+      :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow { animation: none !important; }
+      :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-packet { display: none !important; }
+    }
     /* One-shot graceful "draw-in" the first time a flow appears: the glow line
        grows from the source agent, then the dashes, comet and G fade/pop in. */
     :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow-glow.tep-draw {
       stroke-dasharray: 100 100;
-      animation: tep-flow-draw .8s ease-out forwards;
+      /* Draw slowed 25%: .8s -> 1s (CONFIRMED via user request). The fade/dash/
+         pop delays below are gated to the draw finishing, so they scale ×1.25
+         too (.6->.75, .75->.94, .7->.88, 1.2->1.5) to stay in step. */
+      animation: tep-flow-draw 1s ease-out forwards;
     }
     @keyframes tep-flow-draw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
     :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-flow.tep-draw {
-      animation: tep-flow-fadein .45s ease-out .6s both, tep-livetest-flow-dash var(--tep-flow-speed, .7s) linear .6s infinite;
+      animation: tep-flow-fadein .45s ease-out .75s both, tep-livetest-flow-dash var(--tep-flow-speed, .7s) linear .75s infinite;
     }
     @keyframes tep-flow-fadein { from { opacity: 0; } to { opacity: .98; } }
     :where(.tep-livetest-flowsvg, .tep-testdest-flowsvg) .tep-livetest-packet.tep-draw {
-      animation: tep-flow-fadein .4s ease-out .75s both, tep-livetest-packet-glow 1.5s ease-in-out .75s infinite;
+      animation: tep-flow-fadein .4s ease-out .94s both, tep-livetest-packet-glow 1.5s ease-in-out .94s infinite;
     }
     .tep-livetest-dest.tep-draw .tep-livetest-g {
-      animation: tep-g-pop .5s cubic-bezier(.34,1.56,.64,1) .7s both, tep-livetest-dest-pulse 1.6s ease-in-out 1.2s infinite;
+      animation: tep-g-pop .5s cubic-bezier(.34,1.56,.64,1) .88s both, tep-livetest-dest-pulse 1.6s ease-in-out 1.5s infinite;
     }
     @keyframes tep-g-pop { 0% { transform: scale(0); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
     .tep-livetest-dest { z-index: 6; }
@@ -3314,7 +3331,11 @@
        since it stretches to the body's full height rather than sizing to
        its own content. */
     .tep-cluster-max-body {
-      flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden;
+      /* flex-basis auto (not the 0% of a bare flex:1) so the body sizes to its
+         tallest column's content when the panel is content-height, yet can
+         still shrink (min-height:0) once max-height caps the panel and columns
+         take over their own vertical scroll. */
+      flex: 1 1 auto; min-height: 0; overflow-x: auto; overflow-y: hidden;
       display: flex; flex-wrap: nowrap; align-items: stretch; gap: 14px; padding: 16px;
       scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
     }
@@ -16461,7 +16482,11 @@
   // short dwell, WITHOUT closing/refreshing the test-list popover. This timer
   // debounces so a quick pass over rows doesn't fire (or fetch) anything.
   let tepTraceHoverTimer = null;
-  const TEP_TRACE_HOVER_DELAY_MS = 500;
+  const TEP_TRACE_HOVER_DELAY_MS = 750;   // +0.25s dwell before the trace draws (CONFIRMED via user request)
+  // Above this many concurrent trace lines the overlay switches to "lite" mode
+  // (see .tep-trace-lite) — static dashes, no comets — so a big fan-out stops
+  // pegging the GPU on per-frame stroke repaints. Tunable.
+  const TEP_TRACE_LITE_N = 20;
   function tepCancelTraceHover() { if (tepTraceHoverTimer) { clearTimeout(tepTraceHoverTimer); tepTraceHoverTimer = null; } }
   /** Resolve + pin a test's destination trace on the map. Shared by the row
    *  hover (delayed) and the locate-pin click. `ds` is the locate icon's dataset
@@ -18232,6 +18257,9 @@
     const foot = n > 1
       ? '<button type="button" class="tep-map-tip-subnetbtn" data-action="tep-cluster-max" title="Group this cluster’s agents by network / subnet">Open subnet view</button>'
       : '<div class="tep-map-tip-foot">Click an agent to open it</div>';
+    // The test name + latency/loss ride at the BOTTOM of each agent's own card
+    // (see tepDashTipRow's traceRowHtml), not as a summary header up top — a
+    // cluster-level header here read as a duplicate/misplaced row.
     return `<div class="tep-map-tip-head">${head}</div>${body}${foot}`;
   }
 
@@ -19541,21 +19569,9 @@
         for (const ln of lossNodes) {
           const lEl = document.createElement('div');
           lEl.className = 'tep-agent-map-marker tep-testdest-hop tep-testdest-hop--loss' + drawCls;
-          // Falling "bits" spilling out of the node — MORE, FASTER bits the worse
-          // the loss (2 at a trickle → 7 at heavy loss). Each gets its own drift,
-          // duration and stagger so they don't march in lockstep. Pure CSS
-          // transform/opacity animation, a handful of tiny elements — cheap.
-          const lp = Number.isFinite(ln.lossPct) ? ln.lossPct : 0;
-          const nBits = Math.max(2, Math.min(7, Math.round(lp / 6) + 2));
-          let bitsHtml = '<span class="tep-testdest-loss-bits">';
-          for (let bi = 0; bi < nBits; bi++) {
-            const bx = (Math.round(((bi * 37) % 13) - 6)) + 'px';                  // -6…+6 px drift
-            const bd = (1.15 + ((bi * 0.29) % 0.8)).toFixed(2) + 's';              // 1.15…1.95s fall
-            const bdelay = (((bi * 0.53) % (nBits * 0.22))).toFixed(2) + 's';      // spread starts
-            bitsHtml += `<i class="tep-testdest-loss-bit" style="--bx:${bx};--bd:${bd};--bdelay:${bdelay}"></i>`;
-          }
-          bitsHtml += '</span>';
-          lEl.innerHTML = '<span class="tep-testdest-hop-dot"></span><span class="tep-testdest-hop-lbl">' + esc(ln.lossPct + '%') + '</span>' + bitsHtml;
+          // Loss node: a plain static RED RING (no blink/strobe, no falling
+          // "bits") — CONFIRMED via user request. On-hover "N%" label.
+          lEl.innerHTML = '<span class="tep-testdest-hop-dot"></span><span class="tep-testdest-hop-lbl">' + esc(ln.lossPct + '%') + '</span>';
           lEl._gcard = tepTestHopCardHtml(ln);
           lEl.setAttribute('aria-label', 'Packet loss ' + ln.lossPct + '% — ' + (ln.location || ln.ip || ''));
           // Red loss node now stands in for the amber one, so give it the same
@@ -19596,6 +19612,11 @@
           srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
         }   // end per-destination line
       }     // end per-cluster group
+      // PERF: many overlapping animated traces are what tax the GPU (each is a
+      // per-frame stroke repaint + a pulsing comet). Past the threshold, tag the
+      // SVG so CSS drops the marching-dash animation + comets but keeps the
+      // coloured lines, loss rings and latency tags (see .tep-trace-lite).
+      flowSvg.classList.toggle('tep-trace-lite', testDestFlowLines.length > TEP_TRACE_LITE_N);
     }
     try { buildTestDestFlow(); } catch (e) { log('Trace flow render error: ' + (e && e.message), 'tep-log-err'); }
 
@@ -19954,26 +19975,43 @@
       const panel = document.createElement('div');
       panel.className = 'tep-cluster-max-panel';
       panel.style.top = topPx + 'px';
-      // Zoom FROM the maximize button's own on-screen spot (right where the
-      // cluster's hover card was) instead of a generic center-anchored pop —
-      // CONFIRMED via user request ("look more like it zoomed into that
-      // size and vice versa"). transform-origin is a % of the PANEL's own
-      // (untransformed) box, computed against its known CSS geometry
-      // (left/right:24px, top:topPx, bottom:24px) rather than
-      // getBoundingClientRect(), which would still read the pre-transition
-      // scaled-down size at this point. Same origin drives the close
-      // transition too (nothing resets it), so it shrinks back toward the
-      // exact same spot it grew from.
-      const panelW = window.innerWidth - 48;
-      const panelH = window.innerHeight - topPx - 24;
-      const ox = originRect ? originRect.left + originRect.width / 2 : window.innerWidth / 2;
-      const oy = originRect ? originRect.top + originRect.height / 2 : window.innerHeight / 2;
-      const originXPct = Math.max(0, Math.min(100, ((ox - 24) / panelW) * 100));
-      const originYPct = Math.max(0, Math.min(100, ((oy - topPx) / panelH) * 100));
-      panel.style.transformOrigin = originXPct + '% ' + originYPct + '%';
       panel.innerHTML = tepClusterMaxViewHtml(cluster);
+      // Size the panel to the DATA rather than always spanning the viewport
+      // (CONFIRMED via user request — a 2-column cluster shouldn't stretch
+      // edge-to-edge). WIDTH fits the subnet columns (colW + gaps + body
+      // padding + borders), capped at the available width; more columns than
+      // fit just scroll the body horizontally. HEIGHT drops the fixed
+      // bottom:24px anchor for bottom:auto + a max-height, so the panel shrinks
+      // to the tallest column's content instead of reaching near the screen
+      // bottom over empty space.
+      const COL_W = 282, COL_GAP = 14, BODY_PAD = 16, BORDER = 1;
+      const nCols = Math.max(1, panel.querySelectorAll('.tep-cluster-max-col').length);
+      const contentW = nCols * COL_W + (nCols - 1) * COL_GAP + BODY_PAD * 2 + BORDER * 2;
+      const maxW = window.innerWidth - 48;
+      const panelW = Math.min(contentW, maxW);
+      const leftPx = Math.max(24, Math.round((window.innerWidth - panelW) / 2));
+      panel.style.width = panelW + 'px';
+      panel.style.left = leftPx + 'px';
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      panel.style.maxHeight = (window.innerHeight - topPx - 24) + 'px';
       overlay.appendChild(panel);
       document.documentElement.appendChild(overlay);
+      // Zoom FROM the maximize button's own on-screen spot (right where the
+      // cluster's hover card was) instead of a generic center-anchored pop —
+      // CONFIRMED via user request ("look more like it zoomed into that size
+      // and vice versa"). transform-origin is a % of the PANEL's own
+      // (untransformed) box. Now that it's mounted we read the true size via
+      // offsetWidth/offsetHeight — getBoundingClientRect would report the
+      // scale(.05) starting size at this point. Same origin drives the close
+      // transition too (nothing resets it), so it shrinks back toward the exact
+      // same spot it grew from. Clamped so an off-panel button anchors at an edge.
+      const panelH = panel.offsetHeight || (window.innerHeight - topPx - 24);
+      const ox = originRect ? originRect.left + originRect.width / 2 : window.innerWidth / 2;
+      const oy = originRect ? originRect.top + originRect.height / 2 : window.innerHeight / 2;
+      const originXPct = Math.max(0, Math.min(100, ((ox - leftPx) / panelW) * 100));
+      const originYPct = Math.max(0, Math.min(100, ((oy - topPx) / panelH) * 100));
+      panel.style.transformOrigin = originXPct + '% ' + originYPct + '%';
       clusterMaxEl = overlay;
       // SNMP Device Layer: load inventory + live health, then fill each subnet
       // column's "Devices on this network" section in place. Lazy on open +
@@ -20042,6 +20080,41 @@
         openTipAgent(row, isNameClick, metricPair && metricPair.dataset.metric, cluster);
       });
     }
+    // Hover-focus: while a trace is shown, hovering a SOURCE agent dims every
+    // OTHER trace so the hovered source's path stands alone. The focus set is
+    // matched by source position — the flow line's src ≈ the marker's own point
+    // (same cluster centroid), so exact-ish; a small tolerance covers rounding.
+    function tepSetFlowFocused(fl, on) {
+      const els = [fl.pathEl, fl.glowEl, fl.packetEl, fl.srcLabelEl, fl.srcCloudEl];
+      for (const el of els) if (el) el.classList.toggle('tep-trace-focus', on);
+      for (const hp of (fl.hopEls || [])) if (hp.el) hp.el.classList.toggle('tep-trace-focus', on);
+    }
+    function tepClearTraceFocus() {
+      if (!wrap.classList.contains('tep-trace-focusing')) return;
+      wrap.classList.remove('tep-trace-focusing');
+      for (const fl of testDestFlowLines) tepSetFlowFocused(fl, false);
+    }
+    function tepFocusTraceSource(m) {
+      if (!testDestFlowLines.length) return;
+      if (!m) { tepClearTraceFocus(); return; }
+      // Which flow line(s) does the hovered marker belong to?
+      const focus = new Set();
+      // A hop node (loss/latency/before) or a cloud source icon → its ONE line.
+      for (const fl of testDestFlowLines) {
+        if (fl.srcCloudEl === m) focus.add(fl);
+        for (const hp of (fl.hopEls || [])) if (hp.el === m) { focus.add(fl); break; }
+      }
+      // A source agent marker → every line originating at its point (a source
+      // can fan out to several destinations). Matched by position.
+      if (!focus.size && m._fx != null && m._fy != null && m.classList.contains('tep-testdest-related')) {
+        for (const fl of testDestFlowLines) {
+          if (Math.abs(fl.srcFx - m._fx) < 0.008 && Math.abs(fl.srcFy - m._fy) < 0.008) focus.add(fl);
+        }
+      }
+      if (!focus.size) { tepClearTraceFocus(); return; }   // not a trace node — leave all traces on
+      for (const fl of testDestFlowLines) tepSetFlowFocused(fl, focus.has(fl));
+      wrap.classList.add('tep-trace-focusing');
+    }
     wrap.addEventListener('mouseover', (e) => {
       const m = e.target.closest('.tep-agent-map-marker');
       if (m) {
@@ -20050,6 +20123,7 @@
         // cluster the user is now genuinely hovering.
         dashMapFocusAgentKey = null;
         mouseOverWrap = true;
+        tepFocusTraceSource(m);   // dim other traces when this source is a trace origin
         if (m === currentTipMarker) {
           // Re-entering the marker whose tip is already showing (e.g. the
           // cursor wobbled back onto it) — just cancel any pending hide,
@@ -20126,7 +20200,7 @@
       // exit to blank space needs to drop a pending switch here, so a
       // lingering timer never fires later for a marker the cursor already
       // left.
-      if (!stay) { clearPendingSwitch(); scheduleHide(); }
+      if (!stay) { clearPendingSwitch(); scheduleHide(); tepClearTraceFocus(); }
     });
     // Click (not hover) drives the popover — anywhere in the row except the
     // name (settings/agent view), the map/location link (Google Maps), or
@@ -20731,38 +20805,71 @@
           const d = dashMapSelectedTestDest;
           if (!d || d.lat == null) return;
           // Frame ALL destinations (a test can fan out to several) plus every
-          // source agent, so the whole pin view fits.
-          const coords = [];
+          // source agent, so the whole pin view fits. Points are collected in
+          // map-FRACTION space (0..1). CLOUD agents that source this trace live
+          // ONLY in testDestFlowLines (srcFx/srcFy) — they are not in `list` —
+          // so fold those in too, or a cloud source could sit off-screen.
+          const pts = [];       // dests + every source → drives the framing box
+          const srcPts = [];    // sources only → drives the hard zoom cap below
           const dests = Array.isArray(d.dests) && d.dests.length ? d.dests : [d];
-          for (const dest of dests) if (dest.lat != null && dest.lng != null) coords.push({ lat: dest.lat, lng: dest.lng });
+          for (const dest of dests) if (dest.lat != null && dest.lng != null) {
+            const p = tepLonLatToPct(dest.lng, dest.lat); pts.push({ fx: p.xPct / 100, fy: p.yPct / 100 });
+          }
           const srcNames = d.sourceNames instanceof Set ? d.sourceNames : null;
           const srcIds = d.sourceAgentIds instanceof Set ? d.sourceAgentIds : null;
           if (srcNames || srcIds) for (const it of list) {
             if (it.lat == null || it.lng == null) continue;
-            if (tepAgentMatchesSrcSet(it, srcIds, srcNames)) coords.push({ lat: it.lat, lng: it.lng });
+            if (tepAgentMatchesSrcSet(it, srcIds, srcNames)) {
+              const p = tepLonLatToPct(it.lng, it.lat); const pt = { fx: p.xPct / 100, fy: p.yPct / 100 };
+              pts.push(pt); srcPts.push(pt);
+            }
+          }
+          // Cloud (and any other) trace sources actually drawn this frame.
+          for (const fl of testDestFlowLines) {
+            if (fl.srcFx == null || fl.srcFy == null) continue;
+            const pt = { fx: fl.srcFx, fy: fl.srcFy };
+            pts.push(pt); srcPts.push(pt);
           }
           const w = wrap.clientWidth, h = wrap.clientHeight;
           if (!(w > 0 && h > 0)) return;
           const vh = full ? host.clientHeight : h;
           let minFx = 1, maxFx = 0, minFy = 1, maxFy = 0;
-          for (const c of coords) {
-            const p = tepLonLatToPct(c.lng, c.lat);
-            const fx = p.xPct / 100, fy = p.yPct / 100;
-            if (fx < minFx) minFx = fx; if (fx > maxFx) maxFx = fx;
-            if (fy < minFy) minFy = fy; if (fy > maxFy) maxFy = fy;
+          for (const pt of pts) {
+            if (pt.fx < minFx) minFx = pt.fx; if (pt.fx > maxFx) maxFx = pt.fx;
+            if (pt.fy < minFy) minFy = pt.fy; if (pt.fy > maxFy) maxFy = pt.fy;
           }
           const EDGE = 0.22, spanTarget = 1 - 2 * EDGE;
           const fxSpan = Math.max(1e-4, maxFx - minFx), fySpan = Math.max(1e-4, maxFy - minFy);
           const sx = spanTarget / fxSpan;
           const sy = (h > 0 && vh > 0) ? (spanTarget * vh) / (fySpan * h) : sx;
-          const s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
+          let s = Math.min(MAX, Math.max(MIN, Math.min(sx, sy)));
+          // HARD CAP (CONFIRMED via user request): never zoom in past the level
+          // at which every SOURCE agent (cloud included) still fits on screen.
+          // The combined box already includes the sources, but a far-flung
+          // destination can drag the framing so the sources bunch up — and if no
+          // destination coord resolved, pts would be source-only anyway. Compute
+          // the scale that just fits the source-only span and clamp s below it so
+          // a source is never pushed off the edge by the trace reposition.
+          if (srcPts.length) {
+            let smnx = 1, smxx = 0, smny = 1, smxy = 0;
+            for (const pt of srcPts) {
+              if (pt.fx < smnx) smnx = pt.fx; if (pt.fx > smxx) smxx = pt.fx;
+              if (pt.fy < smny) smny = pt.fy; if (pt.fy > smxy) smxy = pt.fy;
+            }
+            const sSx = spanTarget / Math.max(1e-4, smxx - smnx);
+            const sSy = (h > 0 && vh > 0) ? (spanTarget * vh) / (Math.max(1e-4, smxy - smny) * h) : sSx;
+            const srcFit = Math.max(MIN, Math.min(sSx, sSy));
+            if (srcFit < s) s = srcFit;
+          }
           const cfx = (minFx + maxFx) / 2, cfy = (minFy + maxFy) / 2;
           // While a breakdown list is open (hover/click trace), it covers the
           // upper area — bias the framed trace an extra 15% DOWN so it clears
           // the list. Only in that case; a normal frame keeps the base 5%.
           const listOpen = !!(tepSaasPopoverEl || tepNetworkPopoverEl);
           const topShift = full ? (0.05 + (listOpen ? 0.15 : 0)) * vh : 0;
-          animateZoomTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift }, 700);
+          // 1400ms = half the previous 700ms speed for the hover reposition
+          // (CONFIRMED via user request) — a slower, calmer glide to the trace.
+          animateZoomTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift }, 1400);
         },
       };
       // ISP widget's agent-list popover reaches in here the same way: locate
