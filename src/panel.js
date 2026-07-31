@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.86';
+  const TEP_VERSION = '3.87';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2073,8 +2073,9 @@
        clears the flow line. Non-interactive; the dot owns hover/click. */
     .tep-testdest-hop-lbl {
       /* Centred directly BELOW the node (not up-and-right) so it never overlaps
-         the trace line / adjacent hops — CONFIRMED via user request. */
-      position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+         the trace line / adjacent hops — CONFIRMED via user request. Extra gap so
+         the mouse cursor resting on the node doesn't cover the pill. */
+      position: absolute; top: calc(100% + 12px); left: 50%; transform: translateX(-50%);
       white-space: nowrap;
       font-size: 9.5px; font-weight: 800; line-height: 1;
       color: #dbeafe; padding: 1px 4px; border-radius: 5px;
@@ -2096,8 +2097,9 @@
     .tep-testdest-total-lbl {
       /* BELOW the source node (was bottom:15px = above) so the agent hover card,
          which opens upward over the marker, no longer covers it — CONFIRMED via
-         user request. */
-      position: absolute; left: 50%; top: 15px; transform: translateX(-50%);
+         user request. Pushed further down (28px) so neither the mouse cursor nor
+         the node itself covers the pill. */
+      position: absolute; left: 50%; top: 28px; transform: translateX(-50%);
       white-space: nowrap; font-size: 9.5px; font-weight: 800; line-height: 1;
       color: #d1fae5; padding: 1px 5px; border-radius: 6px;
       background: rgba(15,23,42,.85); border: 1px solid rgba(52,211,153,.5);
@@ -2690,6 +2692,15 @@
       content: 'Pin it'; margin-left: 4px; font-size: 9px; font-weight: 800; letter-spacing: .2px;
       color: var(--tep-blue-soft); text-transform: uppercase; vertical-align: middle;
       background: rgba(26,115,232,.16); border: 1px solid rgba(26,115,232,.4); border-radius: 4px; padding: 0 4px;
+    }
+    /* Hover-trace still resolving → the pin pulses amber and says "Tracing…"
+       until it succeeds (→ "Pin it") or is superseded/aborted. */
+    @keyframes tep-pin-trace { 0%,100% { opacity: .5; filter: drop-shadow(0 0 1px var(--tep-orange)); } 50% { opacity: 1; filter: drop-shadow(0 0 5px var(--tep-orange)); } }
+    .tep-testdest-locate--tracing { color: var(--tep-orange-fg); pointer-events: none; animation: tep-pin-trace 1s ease-in-out infinite; }
+    .tep-testdest-locate--tracing::after {
+      content: 'Tracing…'; margin-left: 4px; font-size: 9px; font-weight: 800; letter-spacing: .2px;
+      color: var(--tep-orange-fg); text-transform: uppercase; vertical-align: middle;
+      background: rgba(249,115,22,.16); border: 1px solid rgba(249,115,22,.4); border-radius: 4px; padding: 0 4px;
     }
     /* Centered confirm modal (tepConfirmModal) — used in place of the
        browser's native confirm(), which anchors near the top of the
@@ -3540,6 +3551,15 @@
       border: 1px solid rgba(0,0,0,.45); box-shadow: inset 0 -2px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.14);
     }
     .tep-port:hover { outline: 1.5px solid #eaf1ff; outline-offset: 1px; z-index: 4; }
+    /* Grouped cell — stands in for a RANGE of ports on a high-density switch.
+       Slightly wider with faint inner rails so it reads as a stacked block
+       rather than a single jack. */
+    .tep-port--group { width: 16px; }
+    .tep-port--group::before {
+      content: ""; position: absolute; inset: 2px 3px;
+      border-left: 1px solid rgba(255,255,255,.16); border-right: 1px solid rgba(255,255,255,.16);
+      border-radius: 1px; pointer-events: none;
+    }
     .tep-port--up { background: linear-gradient(180deg,#57eda2,#22c55e); }
     .tep-port--slow { background: linear-gradient(180deg,#ffc772,#f5a524); }
     .tep-port--down, .tep-port--idle { background: #080c15; border-color: #151d2e; box-shadow: inset 0 0 3px rgba(0,0,0,.85); }
@@ -16488,16 +16508,35 @@
   // pegging the GPU on per-frame stroke repaints. Tunable.
   const TEP_TRACE_LITE_N = 20;
   function tepCancelTraceHover() { if (tepTraceHoverTimer) { clearTimeout(tepTraceHoverTimer); tepTraceHoverTimer = null; } }
+  // Monotonic token for in-flight trace resolves. tepShowTraceForTest stamps the
+  // current value when it starts and bails on resolve if it has since advanced —
+  // so a slow destination lookup that finishes AFTER the user moved to another
+  // test (or left the list) never stomps the newer trace. tepAbortTraceLoad
+  // advances it (and drops the "Tracing…" pin) to cancel whatever is loading.
+  let tepTraceLoadSeq = 0;
+  // A CLICKED (committed) load is a deliberate pin — leaving the row must NOT
+  // cancel it, unlike an ephemeral hover load. A later hover on another row
+  // still supersedes it via tepShowTraceForTest's own seq bump.
+  let tepTraceLoadCommitted = false;
+  function tepAbortTraceLoad() {
+    if (tepTraceLoadCommitted) return;   // don't cancel a clicked/pinned load on mouseout
+    tepTraceLoadSeq++;
+    document.querySelectorAll('.tep-testdest-locate--tracing').forEach((el) => el.classList.remove('tep-testdest-locate--tracing'));
+  }
   /** Resolve + pin a test's destination trace on the map. Shared by the row
    *  hover (delayed) and the locate-pin click. `ds` is the locate icon's dataset
    *  (testName/testScore/…/onewaynet). Does NOT touch the popover — the test
    *  list stays open. Returns a Promise<bool> (true if a trace was shown). */
-  function tepShowTraceForTest(tid, ds) {
+  function tepShowTraceForTest(tid, ds, commit) {
     ds = ds || {};
+    const mySeq = ++tepTraceLoadSeq;   // this attempt supersedes any earlier in-flight one
+    tepTraceLoadCommitted = !!commit;  // a click passes true so mouseout won't cancel it
     const isA2A = ds.onewaynet === '1';
     const isEndpoint = ds.endpoint === '1';
     return tepResolveTestDestination(tid, isEndpoint, isA2A, ds.round).then((info) => {
-      // If the user has already moved to a different pending trace, don't stomp.
+      // Superseded — the user moved to a different test (or left the list) while
+      // this was still resolving. Drop it so it can't stomp the newer trace.
+      if (mySeq !== tepTraceLoadSeq) return false;
       if (!info) {
         const why = dashMapTestDestFail.get(String(tid)) || 'Could not resolve this test’s destination';
         tepMapToast('Can’t trace ' + (ds.testName || 'test') + ':\n' + why, 'err');
@@ -17865,13 +17904,48 @@
       + ' data-ppeer="' + esc(p.peerName ? ('→ ' + p.peerName + (p.peerIf != null ? ' (port ' + p.peerIf + ')' : '')) : '') + '"'
       + ' data-pmon="' + (p.monitored ? 'yes' : 'no') + '"';
     const portHtml = (p) => '<span class="tep-port tep-port--' + p.state + '" tabindex="0"' + attrs(p) + '></span>';
+    // A grouped cell stands in for a contiguous RANGE of ports (see below).
+    // Aggregate state surfaces activity first (any live link ⇒ green), then
+    // degraded, then a hard down, else idle; the tooltip carries the "N / M up"
+    // detail plus the group's busiest speed/util.
+    const portNum = (p) => (p.ix != null ? p.ix : ((String(p.label).match(/(\d+)\s*$/) || [])[1] || p.label));
+    const groupHtml = (bucket) => {
+      const has = (s) => bucket.some((p) => p.state === s);
+      const upCount = bucket.filter((p) => p.state === 'up' || p.state === 'slow' || p.state === 'uplink').length;
+      const state = (has('up') || has('uplink')) ? 'up' : has('slow') ? 'slow' : has('down') ? 'down' : 'idle';
+      const first = portNum(bucket[0]), last = portNum(bucket[bucket.length - 1]);
+      const range = bucket.length > 1 ? ('Ports ' + first + '–' + last) : ('Port ' + first);
+      const maxUtil = bucket.reduce((m, p) => (p.util != null && p.util > m ? p.util : m), 0);
+      const maxSpeed = bucket.reduce((m, p) => (p.speed != null && p.speed > m ? p.speed : m), 0);
+      const at = ' data-pn="' + esc(range) + '"'
+        + ' data-pst="' + esc(upCount + ' / ' + bucket.length + ' up') + '"'
+        + ' data-psp="' + esc(maxSpeed ? tepFmtBps(maxSpeed) + 'bps' : '—') + '"'
+        + ' data-put="' + esc(maxUtil ? Math.round(maxUtil * 100) + '%' : '—') + '"'
+        + ' data-ppeer="" data-pmon="' + (bucket.some((p) => p.monitored) ? 'yes' : 'no') + '"';
+      return '<span class="tep-port tep-port--' + state + ' tep-port--group" tabindex="0"' + at + '></span>';
+    };
     // Only the WAN/internet port is exclusive; the numbered ports (1..N, already
     // sorted so port 1 is first ⇒ top-left of the grid) stay together, trunk
     // uplinks included in their real position.
     const wan = pm.ports.find((p) => p.state === 'wan');
     const grid = pm.ports.filter((p) => p.state !== 'wan');
+    // Cap the faceplate at MAXCELLS cells. A 48/96/… port switch would otherwise
+    // balloon the node width (one 13px cell per port), so past the cap collapse
+    // consecutive ports into equal groups — each rendered cell then REPRESENTS a
+    // range (96 ports → 24 cells of 4: cell 1 = ports 1–4). CONFIRMED via user
+    // request. The true port count still shows in the node's sub-label.
+    const MAXCELLS = 24;
+    let cellsH = '';
+    if (grid.length <= MAXCELLS) {
+      cellsH = grid.map(portHtml).join('');
+    } else {
+      const size = Math.ceil(grid.length / MAXCELLS);   // ports per group
+      const cells = [];
+      for (let i = 0; i < grid.length; i += size) cells.push(groupHtml(grid.slice(i, i + size)));
+      cellsH = cells.join('');
+    }
     const upH = wan ? '<div class="tep-fp-uplink">' + portHtml(wan) + '<span class="tep-fp-uplbl">WAN</span></div>' : '';
-    const gridH = grid.length ? '<div class="tep-fp-grid">' + grid.map(portHtml).join('') + '</div>' : '';
+    const gridH = cellsH ? '<div class="tep-fp-grid' + (grid.length > MAXCELLS ? ' tep-fp-grid--grouped' : '') + '">' + cellsH + '</div>' : '';
     return '<div class="tep-devtopo-faceplate">' + upH + gridH + '</div>';
   }
 
@@ -19006,6 +19080,12 @@
     // same {pathEl,glowEl,packetEl,srcFx,srcFy,destFx,destFy} shape (and
     // layoutMarkers positioning) as liveFlowLines.
     let testDestFlowLines = [];
+    // Click-to-pin isolation: a Set<flowLine> the user locked by clicking its
+    // source (others stay hidden until they click it again or click blank map),
+    // or null for "not pinned". Held here so it's reset the moment the flow
+    // lines are rebuilt below — a stale pin would reference gone flow objects
+    // and dim EVERYTHING (none of the new lines would be in the set).
+    let tracePinFocus = null;
     let liveFlowSeq = 0;      // unique ids for <mpath> targets
     // liveFlowDrawn/liveDestDrawn (which agents/PoPs already played their
     // one-shot "draw-in") are module-level, not declared here — see their
@@ -19294,6 +19374,7 @@
         if (fl.srcCloudEl) { try { fl.srcCloudEl.remove(); } catch (_) { /* */ } }
       }
       testDestFlowLines = [];
+      tracePinFocus = null;   // flow objects just went stale — drop any pin
       if (!full || !dashMapSelectedTestDest || dashMapSelectedTestDest.lat == null) return;
       const d = dashMapSelectedTestDest;
       const trace = d.pathNodesByAgent instanceof Map ? d.pathNodesByAgent : null;
@@ -20089,31 +20170,58 @@
       for (const el of els) if (el) el.classList.toggle('tep-trace-focus', on);
       for (const hp of (fl.hopEls || [])) if (hp.el) hp.el.classList.toggle('tep-trace-focus', on);
     }
-    function tepClearTraceFocus() {
-      if (!wrap.classList.contains('tep-trace-focusing')) return;
-      wrap.classList.remove('tep-trace-focusing');
-      for (const fl of testDestFlowLines) tepSetFlowFocused(fl, false);
+    // Apply (or clear) trace isolation for a given Set of flow lines. Empty/null
+    // → remove all dimming; otherwise dim everything not in the set.
+    function tepApplyTraceFocus(focusSet) {
+      if (!focusSet || !focusSet.size) {
+        if (!wrap.classList.contains('tep-trace-focusing')) return;
+        wrap.classList.remove('tep-trace-focusing');
+        for (const fl of testDestFlowLines) tepSetFlowFocused(fl, false);
+        return;
+      }
+      for (const fl of testDestFlowLines) tepSetFlowFocused(fl, focusSet.has(fl));
+      wrap.classList.add('tep-trace-focusing');
     }
-    function tepFocusTraceSource(m) {
-      if (!testDestFlowLines.length) return;
-      if (!m) { tepClearTraceFocus(); return; }
-      // Which flow line(s) does the hovered marker belong to?
+    // Which flow line(s) does marker m belong to? null when it isn't a trace
+    // participant. A hop node or cloud-source icon → its ONE line; a source
+    // agent marker → every line originating at its point (a source can fan out
+    // to several destinations), matched by position.
+    function tepTraceFlowsForMarker(m) {
+      if (!m || !testDestFlowLines.length) return null;
       const focus = new Set();
-      // A hop node (loss/latency/before) or a cloud source icon → its ONE line.
       for (const fl of testDestFlowLines) {
         if (fl.srcCloudEl === m) focus.add(fl);
         for (const hp of (fl.hopEls || [])) if (hp.el === m) { focus.add(fl); break; }
       }
-      // A source agent marker → every line originating at its point (a source
-      // can fan out to several destinations). Matched by position.
       if (!focus.size && m._fx != null && m._fy != null && m.classList.contains('tep-testdest-related')) {
         for (const fl of testDestFlowLines) {
           if (Math.abs(fl.srcFx - m._fx) < 0.008 && Math.abs(fl.srcFy - m._fy) < 0.008) focus.add(fl);
         }
       }
-      if (!focus.size) { tepClearTraceFocus(); return; }   // not a trace node — leave all traces on
-      for (const fl of testDestFlowLines) tepSetFlowFocused(fl, focus.has(fl));
-      wrap.classList.add('tep-trace-focusing');
+      return focus.size ? focus : null;
+    }
+    // mouseout: revert to whatever is pinned (or clear all if nothing is).
+    function tepClearTraceFocus() { tepApplyTraceFocus(tracePinFocus); }
+    // mouseover: preview isolation for a trace node; a non-trace marker falls
+    // back to the pinned set so a pin survives hovering unrelated markers.
+    function tepFocusTraceSource(m) {
+      if (!testDestFlowLines.length) return;
+      const focus = tepTraceFlowsForMarker(m);
+      tepApplyTraceFocus(focus || tracePinFocus);
+    }
+    // Click a trace source/hop → toggle its pin. Clicking the pinned source
+    // again releases it. Returns true when m WAS a trace node (so the click
+    // handler skips its default open-agent / no-op action).
+    function tepToggleTracePin(m) {
+      const focus = tepTraceFlowsForMarker(m);
+      if (!focus) return false;
+      const same = tracePinFocus && focus.size === tracePinFocus.size
+        && [...focus].every((fl) => tracePinFocus.has(fl));
+      tracePinFocus = same ? null : focus;
+      // Still hovering the source, so keep it isolated either way; on mouseout
+      // it stays (pinned) or clears (just unpinned) via tepClearTraceFocus.
+      tepApplyTraceFocus(focus);
+      return true;
     }
     wrap.addEventListener('mouseover', (e) => {
       const m = e.target.closest('.tep-agent-map-marker');
@@ -20238,7 +20346,9 @@
     });
 
     // --- Zoom / pan (viewBox-based, vector-crisp) ---------------------------
-    const MIN = 1, MAX = 16;
+    // MAX 32 = 2× the old 16 ceiling, per user request — lets the trace/subnet
+    // map push in twice as far. viewBox-based so it stays vector-crisp.
+    const MIN = 1, MAX = 32;
     function clampPan() {
       const w = wrap.clientWidth, hh = wrap.clientHeight, s = epDashMapZoom.s;
       // epDashMapZoom is shared module state between the inline map and the
@@ -20273,6 +20383,12 @@
       // cluster bubble/badge is bigger than its SVG width attribute, which is why
       // two bubbles still touched) and separating to full contact.
       const atMaxZoom = epDashMapZoom.s >= MAX - 0.01;
+      // Trace latency pills / hop nodes want clean, ZERO-overlap spacing whenever
+      // the user has zoomed into a region — not only at absolute MAX (which, after
+      // the 32× cap, is almost never reached). Past ~3× there's screen room to
+      // spread them fully. Kept separate from the heavier marker-nudge pass above
+      // (which still keys off atMaxZoom) so that stays unchanged.
+      const spreadTraceLabels = epDashMapZoom.s >= 3;
 
       // Place "G" destinations FIRST, at their TRUE position — confirmed or
       // estimated, Google's marker is never moved for overlap avoidance. The
@@ -20548,7 +20664,7 @@
         // boxes. Reads are batched before any write below, so this costs one
         // reflow, not one per element.
         const radOf = (el, fallback) => {
-          if (!atMaxZoom || !el || !el.offsetWidth && !el.offsetHeight) return fallback;
+          if (!spreadTraceLabels || !el || !el.offsetWidth && !el.offsetHeight) return fallback;
           return Math.max(el.offsetWidth || 0, el.offsetHeight || 0) / 2 + 2;
         };
         const anchors = placedPx.map((p) => ({ x: p.x, y: p.y, r: radOf(p.el, p.radius != null ? p.radius : 12) }));
@@ -20564,9 +20680,11 @@
         }
         // Cap the O(n²) relaxation so a test with hundreds of source agents (all
         // their hop/total markers) can't freeze layoutMarkers on every pan.
-        const COVER = atMaxZoom ? 1 : 0.75;   // centers must be ≥ COVER·(r1+r2) apart
-        const cap = atMaxZoom ? 1500 : 400;
-        const passLimit = atMaxZoom ? 18 : 5;
+        const COVER = spreadTraceLabels ? 1 : 0.75;   // centers must be ≥ COVER·(r1+r2) apart
+        // Bounded harder below true max so a huge fan-out can't stall a pan, but
+        // still enough passes to fully clear a typical zoomed-in cluster.
+        const cap = spreadTraceLabels ? (atMaxZoom ? 1500 : 700) : 400;
+        const passLimit = spreadTraceLabels ? (atMaxZoom ? 18 : 12) : 5;
         if (movers.length && movers.length <= cap) {
           for (let pass = 0; pass < passLimit; pass++) {
             let moved = false;
@@ -20753,9 +20871,26 @@
       // listener below — a single click there used to trigger it, which
       // made stray clicks while exploring the map jump/zoom unexpectedly.
       const marker = tgt.closest && tgt.closest('.tep-agent-map-marker');
+      // During an active trace, clicking a trace SOURCE toggles pinned isolation
+      // (lock only its trace; click it again — or click blank map — to release)
+      // instead of the default open-agent / cluster no-op. The agent page is
+      // still reachable from the hover card's name link.
+      if (marker && dashMapSelectedTestDest && testDestFlowLines.length && tepToggleTracePin(marker)) {
+        tepMapToast(tracePinFocus ? 'Trace pinned — showing only this source\nClick it again or click empty map to release' : 'Trace unpinned', 'ok');
+        return;
+      }
       if (marker && marker._cluster && marker._cluster.items.length === 1) {
         const it = marker._cluster.items[0];
         if (it.url && it.url !== '#') window.open(it.url, '_blank', 'noopener');
+        return;
+      }
+      // Blank-map click, stage 1: if a trace is PINNED (click-to-isolate),
+      // release the pin first — all traces reappear — rather than dismissing the
+      // whole trace. A second blank click (now unpinned) dismisses it as before.
+      if (!marker && tracePinFocus) {
+        tracePinFocus = null;
+        tepApplyTraceFocus(null);
+        tepMapToast('Trace unpinned', 'ok');
         return;
       }
       // Clicking EMPTY map (no marker) clears an active pinned trace — the new
@@ -23123,7 +23258,7 @@
       tepCancelTraceHover();   // a click supersedes any pending hover trace
       loc.classList.add('tep-testdest-locate--loading');
       const popToMin = loc.closest('.tep-saas-breakdown-pop');
-      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset)).then((ok) => {
+      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset), true).then((ok) => {
         loc.classList.remove('tep-testdest-locate--loading', 'tep-testdest-locate--glow');
         if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
         // Committing to a trace (pin click) MINIMIZES the list so the map is
@@ -23157,9 +23292,16 @@
         const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
         tepTraceHoverTimer = setTimeout(() => {
           tepTraceHoverTimer = null;
-          // On a SUCCESSFUL hover trace, make this row's pin glow + say "Pin it"
-          // so it's obvious the path can be committed to the map with a click.
-          void tepShowTraceForTest(tid, ds).then((ok) => { if (ok && locEl.isConnected) locEl.classList.add('tep-testdest-locate--glow'); });
+          // Pulse a "Tracing…" state on the pin while the destination resolves,
+          // then swap to the "Pin it" glow on success (or just drop it). The
+          // load-sequence guard in tepShowTraceForTest means a resolve that lands
+          // after the user moved on is ignored — see tepAbortTraceLoad.
+          if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
+          void tepShowTraceForTest(tid, ds).then((ok) => {
+            if (!locEl.isConnected) return;
+            locEl.classList.remove('tep-testdest-locate--tracing');
+            if (ok) locEl.classList.add('tep-testdest-locate--glow');
+          });
         }, TEP_TRACE_HOVER_DELAY_MS);
       }
       if (row.dataset.endpoint) {
@@ -23185,6 +23327,8 @@
       if (to && row.contains(to)) return; // moved within the same row
       const glowEl = row.querySelector('.tep-testdest-locate--glow');
       if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
+      tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
+      tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
       if (row.dataset.endpoint) {
         if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
           dashMapAgentsListHoverHighlight = null;
@@ -23515,7 +23659,7 @@
       tepCancelTraceHover();   // a click supersedes any pending hover trace
       loc.classList.add('tep-testdest-locate--loading');
       const popToMin = loc.closest('.tep-saas-breakdown-pop');
-      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset)).then((ok) => {
+      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset), true).then((ok) => {
         loc.classList.remove('tep-testdest-locate--loading', 'tep-testdest-locate--glow');
         if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
         // Committing to a trace (pin click) MINIMIZES the list so the map is
@@ -23545,9 +23689,16 @@
         const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
         tepTraceHoverTimer = setTimeout(() => {
           tepTraceHoverTimer = null;
-          // On a SUCCESSFUL hover trace, make this row's pin glow + say "Pin it"
-          // so it's obvious the path can be committed to the map with a click.
-          void tepShowTraceForTest(tid, ds).then((ok) => { if (ok && locEl.isConnected) locEl.classList.add('tep-testdest-locate--glow'); });
+          // Pulse a "Tracing…" state on the pin while the destination resolves,
+          // then swap to the "Pin it" glow on success (or just drop it). The
+          // load-sequence guard in tepShowTraceForTest means a resolve that lands
+          // after the user moved on is ignored — see tepAbortTraceLoad.
+          if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
+          void tepShowTraceForTest(tid, ds).then((ok) => {
+            if (!locEl.isConnected) return;
+            locEl.classList.remove('tep-testdest-locate--tracing');
+            if (ok) locEl.classList.add('tep-testdest-locate--glow');
+          });
         }, TEP_TRACE_HOVER_DELAY_MS);
       }
       if (row.dataset.endpoint) {
@@ -23573,6 +23724,8 @@
       if (to && row.contains(to)) return; // moved within the same row
       const glowEl = row.querySelector('.tep-testdest-locate--glow');
       if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
+      tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
+      tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
       if (row.dataset.endpoint) {
         if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
           dashMapAgentsListHoverHighlight = null;
