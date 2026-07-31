@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.87';
+  const TEP_VERSION = '3.88';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2073,9 +2073,10 @@
        clears the flow line. Non-interactive; the dot owns hover/click. */
     .tep-testdest-hop-lbl {
       /* Centred directly BELOW the node (not up-and-right) so it never overlaps
-         the trace line / adjacent hops — CONFIRMED via user request. Extra gap so
-         the mouse cursor resting on the node doesn't cover the pill. */
-      position: absolute; top: calc(100% + 12px); left: 50%; transform: translateX(-50%);
+         the trace line / adjacent hops — CONFIRMED via user request. Larger gap
+         (the hop marker is tiny) so the cursor resting on the node clears the
+         pill. */
+      position: absolute; top: calc(100% + 18px); left: 50%; transform: translateX(-50%);
       white-space: nowrap;
       font-size: 9.5px; font-weight: 800; line-height: 1;
       color: #dbeafe; padding: 1px 4px; border-radius: 5px;
@@ -2097,9 +2098,9 @@
     .tep-testdest-total-lbl {
       /* BELOW the source node (was bottom:15px = above) so the agent hover card,
          which opens upward over the marker, no longer covers it — CONFIRMED via
-         user request. Pushed further down (28px) so neither the mouse cursor nor
-         the node itself covers the pill. */
-      position: absolute; left: 50%; top: 28px; transform: translateX(-50%);
+         user request. 20px clears the cursor without drifting so far it detaches
+         from the node. */
+      position: absolute; left: 50%; top: 20px; transform: translateX(-50%);
       white-space: nowrap; font-size: 9.5px; font-weight: 800; line-height: 1;
       color: #d1fae5; padding: 1px 5px; border-radius: 6px;
       background: rgba(15,23,42,.85); border: 1px solid rgba(52,211,153,.5);
@@ -21002,9 +21003,10 @@
           // the list. Only in that case; a normal frame keeps the base 5%.
           const listOpen = !!(tepSaasPopoverEl || tepNetworkPopoverEl);
           const topShift = full ? (0.05 + (listOpen ? 0.15 : 0)) * vh : 0;
-          // 1400ms = half the previous 700ms speed for the hover reposition
-          // (CONFIRMED via user request) — a slower, calmer glide to the trace.
-          animateZoomTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift }, 1400);
+          // 2800ms = quarter of the original 700ms speed for the hover
+          // reposition (CONFIRMED via user request) — a slow, calm glide to the
+          // trace, especially while scrubbing through the test list.
+          animateZoomTo({ s, tx: w / 2 - cfx * w * s, ty: h / 2 - cfy * h * s + topShift }, 2800);
         },
       };
       // ISP widget's agent-list popover reaches in here the same way: locate
