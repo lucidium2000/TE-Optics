@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.88';
+  const TEP_VERSION = '3.89';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2177,6 +2177,15 @@
          report this animation was jerky in Firefox specifically (Chrome was
          already smooth without it). */
       will-change: transform, opacity;
+    }
+    /* DENSE MAP: the breathe animation is subtle, but multiplied across hundreds
+       of online markers its per-marker will-change forces hundreds of forever-
+       animating compositor layers — the dominant cost on a big map. Above the
+       marker threshold (see renderDashboardAgentMap) drop BOTH the animation and
+       the layer promotion; at that density the missing breathe isn't noticed. */
+    .tep-agent-map-wrap--dense .tep-agent-map-marker--online svg {
+      animation: none !important;
+      will-change: auto !important;
     }
     /* fill-box makes the 50%/50% origin above resolve against this SVG's own
        rendered content instead of its viewBox — deliberately solo markers
@@ -15557,6 +15566,10 @@
    *  fetchEndpointAgentBatteryStatus below). Cursor-based (searchAfter),
    *  same as this endpoint has always used. */
   const MAX_ENDPOINT_AGENTS = 5000;   // hard cap on how many the map loads
+  // Past this many plotted markers the map switches to a lighter "dense" mode
+  // (drops the per-marker breathe animation + its will-change layer promotion —
+  // see .tep-agent-map-wrap--dense) so a big map stops pegging the compositor.
+  const TEP_MAP_DENSE_N = 120;
   const ENDPOINT_AGENT_PAGE_SIZE = 100;   // the server caps a page at ~100 anyway
   const ENDPOINT_AGENT_FETCH_CONCURRENCY = 6;
 
@@ -15925,6 +15938,19 @@
     const mid = parts.length >= 3 ? tepGeoToken(parts[1]) : '';
     const cc = TEP_GEO.cc[last] || (last.length === 2 && TEP_GEO.countries[last] ? last : '');
     const hit = (arr, precision) => (arr ? { lat: arr[0], lng: arr[1], precision } : null);
+    // 0) US-state / country name collisions. A bare "Georgia" is BOTH the US
+    //    state and the Caucasus country; TE reports a server "in Georgia" as the
+    //    state, while the country's own targets always carry a city
+    //    ("Tbilisi, Georgia"). Without this, step 4 below drops the pin on the
+    //    country centroid in the Caucasus — CONFIRMED via user report (a
+    //    "Georgia" DNS target must land in Atlanta, not the country). Fires only
+    //    for the bare state name or an explicit "…, US" (no city qualifier), so
+    //    real country-Georgia cities are untouched. Extend the map if other
+    //    state/country name collisions surface.
+    const US_STATE_PRINCIPAL_CITY = { georgia: [33.7490, -84.3880] /* → Atlanta */ };
+    if (US_STATE_PRINCIPAL_CITY[city] && (parts.length === 1 || (cc === 'us' && !mid) || cc === 'ge')) {
+      return hit(US_STATE_PRINCIPAL_CITY[city], 'city');
+    }
     // 1) city + resolved country
     if (cc && city && TEP_GEO.cities[city + '|' + cc]) return hit(TEP_GEO.cities[city + '|' + cc], 'city');
     // 2) US: prefer city, then state centroid
@@ -19063,6 +19089,10 @@
       overlay.appendChild(m);
       markerEls.push(m);
     }
+    // Dense-map lite mode: calm the per-marker animations once there are enough
+    // markers on screen for their compositor layers to matter (see the CSS +
+    // TEP_MAP_DENSE_N). Set on the wrap so it covers every marker under it.
+    wrap.classList.toggle('tep-agent-map-wrap--dense', markerEls.length > TEP_MAP_DENSE_N);
 
     // --- LIVE TEST flow overlay: per-agent animated path to 8.8.8.8 ---------
     // Rebuildable in place (no map DOM rebuild) so refreshes never disturb zoom.
