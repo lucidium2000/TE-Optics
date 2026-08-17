@@ -41,14 +41,27 @@ pulls the minified build.
 2. `npm run build` (regenerates `panel.min.js`).
 3. `node -c src/panel.js && node -c panel.min.js && node -c panel.js`.
 4. Commit `src/panel.js`, `panel.min.js`, and any `index.html`/`mirror.html` changes.
-5. Push to `main` (jsDelivr serves `@refs/heads/main`).
-6. Flush the CDN — BOTH the loader and the build:
-   - `purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js`
-   - `purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.min.js`
-   The loader rarely changes, but flush it whenever it does; always flush
-   `panel.min.js` since that is where the code updates land.
+5. Push to `main` (the build `panel.min.js` is served from `@main`).
+6. Flush the CDN — the build (where code updates land):
+   - `purge.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js`
+   Caveat: jsDelivr refreshes a branch HEAD→commit pointer on its own schedule and
+   a file purge does NOT force it, so `@main` can serve the previous commit's build
+   briefly (a version-lag, not a broken deploy). Verify against `@main`; if a
+   release must be instant, check the pushed SHA (`@<sha>/panel.min.js`).
+7. Only if you changed the LOADER (`panel.js`) or the bookmarklet: mirror the
+   loader onto the `refs` branch and purge it (see below).
 
-## Delivery model / compatibility
+## Delivery model / compatibility — READ THIS
+
+The distributed bookmark URL is `…/TE-Optics@refs/heads/main/panel.js` and cannot
+change (it's in everyone's installed bookmark). jsDelivr now parses that as ref
+`refs` + path `heads/main/panel.js` — so it only resolves because a branch
+**literally named `refs`** holds the loader at `heads/main/panel.js`. Do NOT
+delete that branch. The loader there injects **`@main/panel.min.js`** (a real
+file, served directly). NEVER use `@refs/heads/main/panel.min.js` — it parses to a
+missing path and jsDelivr auto-minifies `panel.js` into a wrong ~500 B stub. When
+the loader itself changes, update it on BOTH `main` (`panel.js`) and the `refs`
+branch (`heads/main/panel.js`), then purge `@refs/heads/main/panel.js`.
 
 The bookmarklet is a small `<script src>` loader (not a giant inlined
 `javascript:` URL), so the old ~500 KB URL-length limit is gone. Code only runs

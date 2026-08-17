@@ -71,30 +71,55 @@ change will be on GitHub but users keep getting the old code.
    there's no linter step.)
 5. Commit `src/panel.js`, `panel.min.js`, `index.html` (and `mirror.html` if touched).
    End commit messages with the Co-Authored-By trailer the repo uses.
-6. `git push origin main` (jsDelivr serves `@refs/heads/main`).
-7. **Flush the CDN — BOTH files:**
+6. `git push origin main` (the build `panel.min.js` is served from `@main`).
+7. **Flush the CDN — the build:**
    ```bash
-   curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.min.js" -o /dev/null -w "%{http_code}\n"
-   curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js" -o /dev/null -w "%{http_code}\n"
+   curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js" -o /dev/null -w "%{http_code}\n"
    ```
 8. **Verify the rollover** by fetching and confirming the new version is served:
    ```bash
-   curl -s "https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.min.js" | grep -o 'TEP_VERSION="3.90"' | head -1
+   curl -s "https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js" | grep -o 'TEP_VERSION="3.90"' | head -1
    ```
-   Seeing `TEP_VERSION="3.90"` in the served file is the definitive proof. (Note:
-   esbuild converts the source's single quotes to double quotes, so grep for
-   `TEP_VERSION="X.YZ"`.)
+   Seeing `TEP_VERSION="3.90"` in the served file is the proof. (esbuild converts
+   the source's single quotes to double quotes, so grep for `TEP_VERSION="X.YZ"`.)
+   **Caveat:** jsDelivr refreshes a branch's HEAD→commit pointer on its own
+   schedule, and a file purge does NOT force it — so `@main` can serve the
+   previous commit's build for a while after a push. This is a *version-lag*, not
+   a broken deploy; the panel still loads. If a release must go live instantly,
+   pin/verify via the pushed SHA (`@<sha>/panel.min.js`, immutable) and know that
+   `@main` will catch up.
+9. **Only if you changed the LOADER** (`panel.js`) or the bookmarklet: also mirror
+   the loader onto the `refs` branch and purge it — see the delivery model below.
 
-### The jsDelivr staleness gotcha (important)
+### Delivery model — READ THIS (it is not the obvious one)
 
-`@refs/heads/main` is Cloudflare-cached with a long `s-maxage` (~12h). The
-bookmark's `?<Date.now()>` query busts the **browser** cache, NOT jsDelivr — so
-after a push, the CDN keeps serving the old build until you purge. And a plain
-read-only poll of the stale URL just **re-warms** the stale entry. The reliable
-pattern is **purge, then immediately fetch and check the version** (step 8). If
-the fetched content shows the new `TEP_VERSION`, it rolled over. `@main` and
-pinned-SHA URLs update sooner, but the bookmark uses `@refs/heads/main`, so
-that's the one to verify.
+The distributed bookmark URL is **`…/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js`**
+and CANNOT change (it's in everyone's installed bookmark). But jsDelivr changed
+how it parses that URL: it now reads **`@refs`** as the ref and **`heads/main/panel.js`**
+as the path (it used to treat `refs/heads/main` as a full branch ref). So the URL
+only resolves because a git branch **literally named `refs`** exists with the
+loader at path **`heads/main/panel.js`**. That branch is the whole reason the old
+bookmarks still work — do not delete it.
+
+The chain, end to end:
+- `@refs/heads/main/panel.js` → ref `refs`, file `heads/main/panel.js` → the loader.
+- The loader injects **`@main/panel.min.js`** → main-branch root `panel.min.js` → the build.
+
+Consequences:
+- **`panel.min.js` lives on `main`** and is delivered via `@main` (a *real* file,
+  so jsDelivr serves it directly). The normal ship steps above cover it.
+- **NEVER point anything at `@refs/heads/main/panel.min.js`.** It parses to
+  `heads/main/panel.min.js` on the `refs` branch, and when that's absent jsDelivr
+  *auto-minifies* `heads/main/panel.js` into a wrong ~500-byte stub. That trap is
+  why the loader pulls from `@main`, not `@refs/heads/main`.
+- The **loader rarely changes.** When it does, update it in BOTH places and purge
+  both: `main`'s `panel.js` AND the `refs` branch's `heads/main/panel.js`
+  (`git checkout refs`, copy `panel.js` → `heads/main/panel.js`, commit, push,
+  `git checkout main`), then
+  `curl -s https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js`.
+- Verify the loader with:
+  `curl -s https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js`
+  — expect HTTP 200, `application/javascript`, and body injecting `@main/panel.min.js`.
 
 ## Conventions that will bite you if you don't know them
 
