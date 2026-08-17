@@ -29,6 +29,6 @@
  */
 (function () {
   var s = document.createElement('script');
-  s.src = 'https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.min.js?' + Date.now();
+  s.src = 'https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js?' + Date.now();
   (document.body || document.documentElement).appendChild(s);
 })();
