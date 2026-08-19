@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.90';
+  const TEP_VERSION = '3.91';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3578,6 +3578,36 @@
     .tep-fp-uplink .tep-port--wan { width: 16px; height: 14px; }
     .tep-port--uplink::after { content:"↑"; position:absolute; inset:0; display:grid; place-items:center; font-size:7px; font-weight:800; color:#04101f; }
     .tep-port--wan::after { content:"⇅"; position:absolute; inset:0; display:grid; place-items:center; font-size:9px; font-weight:800; color:#04101f; }
+    /* ---- grouped-tier cluster card (collapses a crowded tier's loose leaves) ---- */
+    .tep-devtopo-node--group { cursor: pointer; }
+    .tep-devtopo-node--group::before,
+    .tep-devtopo-node--group::after {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      border: 1px solid var(--tdt-line); background: var(--tdt-ground2); z-index: -1;
+    }
+    .tep-devtopo-node--group::before { transform: translate(4px, 5px); opacity: .55; }
+    .tep-devtopo-node--group::after { transform: translate(8px, 10px); opacity: .3; }
+    .tep-devtopo-node-count {
+      position: absolute; top: -9px; right: -9px; min-width: 20px; height: 20px; padding: 0 5px;
+      display: inline-flex; align-items: center; justify-content: center; z-index: 2;
+      font-family: var(--tdt-mono); font-size: 11px; font-weight: 800; color: #04101f;
+      background: var(--h); border-radius: 999px; box-shadow: 0 2px 6px rgba(0,0,0,.5);
+    }
+    .tep-devtopo-grp-list { max-height: 260px; overflow-y: auto; margin: 6px -5px -2px; display: flex; flex-direction: column; gap: 1px; }
+    .tep-devtopo-grp-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; text-decoration: none; color: #c3d0e6; font-size: 11.5px; }
+    a.tep-devtopo-grp-row:hover { background: var(--tdt-surface2); }
+    .tep-devtopo-grp-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+    .tep-devtopo-grp-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+    .tep-devtopo-grp-meta { font-family: var(--tdt-mono); font-size: 10px; color: #8496b0; margin-left: auto; white-space: nowrap; }
+    .tep-devtopo-grp-metric { font-family: var(--tdt-mono); font-weight: 700; white-space: nowrap; min-width: 34px; text-align: right; }
+    .tep-devtopo-tip-head { font-weight: 800; font-size: 12.5px; color: #e6ecf5; margin-bottom: 3px; }
+    .tep-devtopo-grp-hint { font-weight: 600; font-size: 9.5px; color: #5a6b85; letter-spacing: .04em; }
+    .tep-devtopo-grp-row { cursor: pointer; }
+    .tep-devtopo-grp-back {
+      display: inline-flex; align-items: center; gap: 4px; cursor: pointer; margin-bottom: 6px;
+      font-size: 11px; font-weight: 700; color: var(--tdt-ac);
+    }
+    .tep-devtopo-grp-back:hover { text-decoration: underline; }
     /* ---- internet cloud (handoff back to map) ---- */
     .tep-devtopo-cloud { position: absolute; transform: translate(-50%,-50%); z-index: 4; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; }
     .tep-devtopo-cloud-aura { position: absolute; top: 20px; left: 50%; width: 200px; height: 116px; transform: translate(-50%,-50%); border-radius: 50%; pointer-events: none; background: radial-gradient(closest-side, rgba(91,157,255,.26), transparent 72%); filter: blur(4px); animation: tep-devtopo-aura 4s ease-in-out infinite; }
@@ -12553,9 +12583,15 @@
         const newName = updated.name;
         const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
         const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-        log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o, k) => (o[k] = updated[k], o), {}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${testApiUrl(t, { forWrite: true })}`, 'tep-log-info');
+        // Update an EXISTING test at its resource URL (…/{aid}/{testId}) — the
+        // same per-test path DELETE and the detail GET already use — NOT the bare
+        // create URL. Posting the update to /ajax/tests/{type} makes TE run its
+        // create path and reject the (unchanged) name as a duplicate
+        // ("A test with this name already exists", overridable:false).
+        const saveUrl = (t.testId != null || t.id != null) ? testApiUrl(t) : testApiUrl(t, { forWrite: true });
+        log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o, k) => (o[k] = updated[k], o), {}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${saveUrl}`, 'tep-log-info');
 
-        const resp = await ajax(testApiUrl(t, { forWrite: true }), {
+        const resp = await ajax(saveUrl, {
           method: 'POST',
           body: JSON.stringify(updated)
         });
@@ -12770,11 +12806,11 @@
 
     log(`Bulk ${action} on ${selected.length} test(s)…`, 'tep-log-info');
     const dismissProcessing = toastProcessing(`Bulk ${action} on ${selected.length} test(s)…`);
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, skipped = 0;
     let sawBulkPermissionDenied = false;
 
     for (const t of selected) {
-      if (isReadOnly(t)) { log(`  Skipping "${t.name}" — read-only type`, 'tep-log-info'); fail++; continue; }
+      if (isReadOnly(t)) { log(`  Skipping "${t.name}" — read-only type`, 'tep-log-info'); skipped++; continue; }
       try {
         let resp;
         if (action === 'enable' || action === 'disable') {
@@ -12806,7 +12842,7 @@
           alignSubintervalToInterval(updated, newInterval);
           resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
         } else if (action === 'protocol') {
-          if (!isNetworkStyleProtocolFormTest(t)) { log(`  Skipping "${t.name}" — protocol not applicable`, 'tep-log-info'); fail++; continue; }
+          if (!isNetworkStyleProtocolFormTest(t)) { log(`  Skipping "${t.name}" — protocol change not applicable to this test type`, 'tep-log-info'); skipped++; continue; }
           try {
             if (!t._agentsLoaded) await fetchTestDetail(t);
           } catch (e) {
@@ -12878,7 +12914,7 @@
           fail++;
           const failBody = resp ? await resp.text().catch(() => '') : '';
           if (resp && isLikelyPermissionDenied(resp.status, failBody)) sawBulkPermissionDenied = true;
-          log(`  ✗ "${t.name}" → ${resp ? resp.status : 'no response'}`, 'tep-log-err');
+          log(`  ✗ "${t.name}" (${t.type || t.testType}) → ${resp ? resp.status : 'no response'}${failBody ? ': ' + failBody.substring(0, 240) : ''}`, 'tep-log-err');
         }
       } catch (e) { fail++; log(`  ✗ "${t.name}" error: ${e.message}`, 'tep-log-err'); }
     }
@@ -12887,9 +12923,10 @@
     if (sawBulkPermissionDenied) {
       notifyManageAccessDenied();
     }
-    log(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, ok ? 'tep-log-ok' : 'tep-log-err');
+    const skipTxt = skipped ? `, ${skipped} skipped` : '';
+    log(`Bulk ${action}: ${ok} succeeded${skipTxt}, ${fail} failed.`, ok || !fail ? 'tep-log-ok' : 'tep-log-err');
     if (!sawBulkPermissionDenied) {
-      toast(`Bulk ${action}: ${ok} succeeded, ${fail} failed.`, fail ? 'err' : 'ok');
+      toast(`Bulk ${action}: ${ok} succeeded${skipTxt}, ${fail} failed.`, fail ? 'err' : 'ok');
     }
     selectedTestIds.clear();
     updateBulkUI();
@@ -17407,6 +17444,8 @@
   let tepDeviceTopoInflight = null;
   let tepDeviceIfCache = null;        // { ts, round, byDevice:Map<idStr,[iface]> } — full port inventory
   let tepDeviceIfInflight = null;
+  let tepDeviceIfMetricsCache = null; // { ts, round, byDevice:Map<idStr,Map<ifIndex,metrics>> } — live per-interface metrics
+  let tepDeviceIfMetricsInflight = null;
   const TEP_SNMP_CACHE_MS = 5 * 60 * 1000;
   const TEP_DEVICE_KIND_LABEL = { switch: 'Switch', router: 'Router', firewall: 'Firewall', ap: 'Access point', device: 'Device' };
 
@@ -17587,6 +17626,57 @@
       finally { tepDeviceIfInflight = null; }
     })();
     return tepDeviceIfInflight;
+  }
+
+  /** Live per-interface metrics (speed, availability, throughput, discards,
+   *  errors) — the interface-round-data call, the same source the native
+   *  Interface Table's rows use. The /topology and /interfaces payloads carry
+   *  no per-interface metrics for many devices, so the faceplate can't otherwise
+   *  colour ports or fill the port hover. Needs the interface inventory first
+   *  (to enumerate `<deviceId>_<ifIndex>` ids). Returns Map<idStr, Map<ifIndex,
+   *  metrics>>; best-effort. */
+  function tepFetchDeviceInterfaceMetrics(wantedIds, force) {
+    const round = tepSnmpRoundId();
+    // Cache accumulates per round across subnet opens; reset when the round rolls.
+    if (!tepDeviceIfMetricsCache || tepDeviceIfMetricsCache.round !== round) tepDeviceIfMetricsCache = { ts: Date.now(), round, byDevice: new Map() };
+    const cache = tepDeviceIfMetricsCache.byDevice;
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
+    const doFetch = async () => {
+      try {
+        const byDeviceIf = tepDeviceIfCache && tepDeviceIfCache.round === round ? tepDeviceIfCache.byDevice : await tepFetchDeviceInterfaces(force);
+        if (!byDeviceIf || !byDeviceIf.size) return cache;
+        // Scope to the requested devices (the current subnet), skipping ones we
+        // already have — a big account has far more devices than one subnet.
+        const want = (Array.isArray(wantedIds) && wantedIds.length ? wantedIds : Array.from(byDeviceIf.keys()))
+          .map(String).filter((k) => Number(k) >= 0 && (force || !cache.has(k)) && byDeviceIf.has(k));
+        if (!want.length) return cache;
+        const deviceIds = [], interfaceIds = [];
+        for (const k of want) {
+          deviceIds.push(Number(k));
+          for (const f of byDeviceIf.get(k)) { if (f && f.type === 6 && f.ifIndex != null) interfaceIds.push(k + '_' + f.ifIndex); }
+        }
+        if (!interfaceIds.length) return cache;
+        const path = '/ajax/device-layer/round-data/' + round + '/interface-round-data?$$state=' + encodeURIComponent('{"status":0}');
+        const r = await ajax(path, { method: 'POST', headers, body: JSON.stringify({ savedEventId: null, deviceIds, interfaceIds, interfacesPageRequest: null }) });
+        if (!r || !r.ok) return cache;
+        const j = await r.json().catch(() => null);
+        const rows = j && Array.isArray(j.interfaceMetrics) ? j.interfaceMetrics : [];
+        for (const m of rows) {
+          if (!m || m.dmDeviceId == null || m.ifIndex == null) continue;
+          const dk = String(m.dmDeviceId);
+          if (!cache.has(dk)) cache.set(dk, new Map());
+          cache.get(dk).set(m.ifIndex, m);
+        }
+        // Mark requested-but-empty devices so we don't refetch them every repaint.
+        for (const k of want) if (!cache.has(k)) cache.set(k, new Map());
+        tepDeviceIfMetricsCache.ts = Date.now();
+        return cache;
+      } catch (_) { return cache; }
+      finally { tepDeviceIfMetricsInflight = null; }
+    };
+    tepDeviceIfMetricsInflight = doFetch();
+    return tepDeviceIfMetricsInflight;
   }
 
   /** Devices whose polling enterprise agent sits in THIS subnet column. Join key
@@ -17830,8 +17920,11 @@
     const links = model.linksByDevice.get(id) || new Map();
     const upIf = model.uplinkIf.get(id);
     const isGatewayDev = model.gatewayId != null && String(model.gatewayId) === id;
-    // per-interface live metrics (usually sparse) from the topology node
+    // per-interface live metrics: prefer the dedicated interface-round-data call
+    // (real speed/availability/throughput/discards/errors — see
+    // tepFetchDeviceInterfaceMetrics), fall back to the topology node's sparse map.
     const im = (node && node.deviceMetrics && node.deviceMetrics.deviceInterfaceMetricsMap) || {};
+    const liveByIf = (tepDeviceIfMetricsCache && tepDeviceIfMetricsCache.byDevice.get(id)) || null;
     const mon = (tepDeviceTopoCache && tepDeviceTopoCache.monitoredIf.get(id)) || null;
     // A port is the WAN/internet handoff (⇒ its OWN exclusive slot, never part
     // of the numbered 1..N grouping) only when it truly faces the internet:
@@ -17841,15 +17934,22 @@
     const self = model.nodeIndex.get(id);
     const lan3 = self && self.meta && /^(\d+\.\d+\.\d+)\./.exec(self.meta);
     const lanPrefix = lan3 ? lan3[1] : null;
+    const validIp = (v) => !!v && /^\d+\.\d+\.\d+\.\d+$/.test(String(v)) && !/^(0\.0\.0\.0|127\.)/.test(String(v));
+    // Only trust the "different subnet ⇒ WAN" heuristic when the device's primary
+    // IP actually sits on one of its OWN interfaces. On a multi-segment core
+    // router whose management IP is on none of its data interfaces, every
+    // interface looks "different" and gets mislabelled WAN — then the faceplate
+    // keeps only one and drops the rest, so active ports show dark. CONFIRMED via
+    // user capture.
+    const ifSubnets = new Set();
+    for (const f of phys) { if (validIp(f.ipAddress)) { const p = /^(\d+\.\d+\.\d+)\./.exec(String(f.ipAddress)); if (p) ifSubnets.add(p[1]); } }
+    const lanReliable = !!(lanPrefix && ifSubnets.has(lanPrefix));
     const looksWan = (f) => {
       if (f.ifIndex === 0) return true;
       const nm = (f.displayName || f.name || '').toLowerCase();
       if (/\bwan\b|internet|outside/.test(nm)) return true;
-      // Gateway only: an interface whose IP sits on a DIFFERENT subnet than the
-      // device's LAN is its internet/upstream side (e.g. UCG-Max eth4). Gated to
-      // the gateway so a multi-zone firewall's inside legs aren't mislabelled.
-      if (isGatewayDev && lanPrefix && f.ipAddress && /^\d+\.\d+\.\d+\.\d+$/.test(f.ipAddress) && !/^127\./.test(f.ipAddress)) {
-        const p = /^(\d+\.\d+\.\d+)\./.exec(f.ipAddress);
+      if (isGatewayDev && lanReliable && validIp(f.ipAddress)) {
+        const p = /^(\d+\.\d+\.\d+)\./.exec(String(f.ipAddress));
         if (p && p[1] !== lanPrefix) return true;
       }
       return false;
@@ -17857,24 +17957,47 @@
     const ports = phys.map((f) => {
       const ix = f.ifIndex;
       const link = links.get(ix);
-      const m = im[String(ix)] || im[ix] || null;
+      const m = (liveByIf && liveByIf.get(ix)) || im[String(ix)] || im[ix] || null;
       const speed = m && Number.isFinite(m.speed) ? m.speed : null;      // bps
       const avail = m && Number.isFinite(m.availability) ? m.availability : null;
-      const util = (m && Number.isFinite(m.throughputIn) && speed) ? Math.max(m.throughputIn, m.throughputOut || 0) / speed : null;
+      const thrIn = m && Number.isFinite(m.throughputIn) ? m.throughputIn : null;
+      const thrOut = m && Number.isFinite(m.throughputOut) ? m.throughputOut : null;
+      const util = ((thrIn != null || thrOut != null) && speed) ? Math.max(thrIn || 0, thrOut || 0) / speed : null;
+      const disc = m && (Number.isFinite(m.discardRateIn) || Number.isFinite(m.discardRateOut)) ? (m.discardRateIn || 0) + (m.discardRateOut || 0) : null;
+      const errs = m && (Number.isFinite(m.errorRateIn) || Number.isFinite(m.errorRateOut)) ? (m.errorRateIn || 0) + (m.errorRateOut || 0) : null;
       const isWan = looksWan(f) || (isGatewayDev && upIf != null && ix === upIf);
       const isTrunk = !isWan && upIf != null && ix === upIf;
+      // A configured, in-use interface (a real IP or a described alias) reads as
+      // "up" even when SNMP returned no per-interface availability metric and no
+      // LLDP peer — otherwise genuinely active links show dark. Live metrics still
+      // win: an oper-down reading below keeps precedence. CONFIRMED via user capture.
+      const cfgActive = validIp(f.ipAddress) || !!(f.alias && String(f.alias).trim());
       let state;
       if (isWan) state = 'wan';                                        // exclusive slot
       else if (isTrunk) state = 'uplink';                             // in-grid, accent
       else if (avail != null && avail <= 0) state = 'down';            // metric says oper-down
       else if (link) state = (speed != null && speed > 0 && speed < 1e9) ? 'slow' : 'up';  // linked; <1Gbps ⇒ amber
       else if (avail != null && avail > 0) state = 'up';               // up per metric, no LLDP peer
+      else if (cfgActive) state = 'up';                               // configured/in-use, no live metric
       else state = 'idle';                                            // physical port, no link
       const peerName = link ? (model.nodeIndex.get(String(link.peerId)) || {}).name : null;
       return { ix, label: f.displayName || f.name || ('Port ' + ix), state, isWan, speed, util, avail,
+        thrIn, thrOut, disc, errs,
         monitored: mon ? mon.has(ix) : (f.isMonitored === true),
+        ip: validIp(f.ipAddress) ? String(f.ipAddress) : null,
+        mac: f.macAddress ? String(f.macAddress) : null,
         peerName, peerIf: link ? link.peerIf : null };
     });
+    // At most ONE exclusive WAN slot. A device with several WAN/uplink-named legs
+    // (MPLS + internet, dual-ISP) marks them all 'wan'; the faceplate keeps only
+    // the first and drops the rest. Keep the strongest (internet > wan > ifIndex 0
+    // / the topology uplink) as the WAN slot; the others stay lit as uplinks.
+    const wanPorts = ports.filter((p) => p.state === 'wan');
+    if (wanPorts.length > 1) {
+      const wanScore = (p) => { const nm = String(p.label).toLowerCase(); let s = 0; if (/internet|outside/.test(nm)) s += 4; if (/\bwan\b/.test(nm)) s += 2; if (p.ix === 0) s += 3; if (upIf != null && p.ix === upIf) s += 3; return s; };
+      wanPorts.sort((a, b) => wanScore(b) - wanScore(a));
+      for (let i = 1; i < wanPorts.length; i++) { wanPorts[i].state = 'uplink'; wanPorts[i].isWan = false; }
+    }
     return { ports, hasWan: ports.some((p) => p.state === 'wan') };
   }
 
@@ -17928,6 +18051,11 @@
     const attrs = (p) => ' data-pn="' + esc(p.label) + '" data-pst="' + esc(stText(p)) + '"'
       + ' data-psp="' + esc(p.speed ? tepFmtBps(p.speed) + 'bps' : '—') + '"'
       + ' data-put="' + esc(p.util != null ? Math.round(p.util * 100) + '%' : '—') + '"'
+      + ' data-pip="' + esc(p.ip || '') + '"'
+      + ' data-pmac="' + esc(p.mac || '') + '"'
+      + ' data-pthr="' + esc((p.thrIn != null || p.thrOut != null) ? (tepFmtBps(p.thrIn || 0) + 'bps ↓ / ' + tepFmtBps(p.thrOut || 0) + 'bps ↑') : '') + '"'
+      + ' data-pdisc="' + esc(p.disc != null ? (p.disc > 0 ? p.disc.toFixed(2) + ' pps' : '0') : '') + '"'
+      + ' data-perr="' + esc(p.errs != null ? (p.errs > 0 ? p.errs.toFixed(2) + ' pps' : '0') : '') + '"'
       + ' data-ppeer="' + esc(p.peerName ? ('→ ' + p.peerName + (p.peerIf != null ? ' (port ' + p.peerIf + ')' : '')) : '') + '"'
       + ' data-pmon="' + (p.monitored ? 'yes' : 'no') + '"';
     const portHtml = (p) => '<span class="tep-port tep-port--' + p.state + '" tabindex="0"' + attrs(p) + '></span>';
@@ -18056,13 +18184,69 @@
     const st = p.getAttribute('data-pst') || '';
     const col = /WAN|uplink/i.test(st) ? 'var(--tdt-ac)' : /degraded|half/i.test(st) ? 'var(--tdt-warn)' : /down|no link/i.test(st) ? 'var(--tdt-unk)' : 'var(--tdt-ok)';
     const peer = p.getAttribute('data-ppeer'), mon = p.getAttribute('data-pmon');
-    const rows = [['Speed', g('data-psp')], ['Utilization', g('data-put')]];
+    const ip = p.getAttribute('data-pip') || '', mac = p.getAttribute('data-pmac') || '';
+    const thr = p.getAttribute('data-pthr') || '', disc = p.getAttribute('data-pdisc') || '', err = p.getAttribute('data-perr') || '';
+    const rows = [];
+    if (ip) rows.push(['IP', ip]);
+    if (mac) rows.push(['MAC', mac]);
+    rows.push(['Speed', g('data-psp')], ['Utilization', g('data-put')]);
+    if (thr) rows.push(['Throughput', thr]);
+    if (disc) rows.push(['Discards', disc]);
+    if (err) rows.push(['Errors', err]);
     const note = peer ? '<div class="tt-note">' + peer + '</div>' : (mon === 'no' ? '<div class="tt-note">Discovered but not monitored.</div>' : '');
     return '<div class="tt-head"><span class="tt-name">' + (p.getAttribute('data-pn') || 'Port') + '</span><span class="tt-badge" style="background:' + col + '">' + st + '</span></div>'
       + '<dl class="tt-grid">' + rows.map((r) => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl>' + note;
   }
 
   const TEP_TIER_NAMES = ['Edge', 'Core', 'Access', 'Leaf'];
+
+  /** Plural-aware "N access points" / "3 switches" label for a grouped-tier card. */
+  function tepDevtopoGroupLabel(g) {
+    const base = String(g.kindLabel || g.kind || 'device').toLowerCase();
+    if (g.count === 1) return '1 ' + base;
+    const plural = /(ch|sh|s|x|z)$/.test(base) ? base + 'es' : base + 's';
+    return g.count + ' ' + plural;
+  }
+
+  /** Click/hover card for a grouped-tier cluster: the group's members listed
+   *  worst-health first, each a deep link into the Device-Layer UI. */
+  function tepDevtopoGroupCardHtml(g) {
+    const esc = tepEscapeHtmlText;
+    const head = '<div class="tep-devtopo-tip-head">' + esc(tepDevtopoGroupLabel(g)) + ' <span class="tep-devtopo-grp-hint">hover a row</span></div>';
+    const rows = g.members.slice()
+      .sort((a, b) => (Number.isFinite(a.score) ? a.score : 101) - (Number.isFinite(b.score) ? b.score : 101))
+      .map((m) => {
+        const H = tepDevtopoHealth(m.score, m.ghost);
+        const metric = m.note ? esc(m.note) : (Number.isFinite(m.score) ? Math.round(m.score) + '%' : '—');
+        return '<div class="tep-devtopo-grp-row" data-devid="' + esc(String(m.id)) + '">'
+          + '<span class="tep-devtopo-grp-dot" style="background:' + H.c + '"></span>'
+          + '<span class="tep-devtopo-grp-name">' + esc(m.name) + '</span>'
+          + (m.meta ? '<span class="tep-devtopo-grp-meta">' + esc(m.meta) + '</span>' : '')
+          + '<span class="tep-devtopo-grp-metric" style="color:' + H.c + '">' + metric + '</span></div>';
+      }).join('');
+    return head + '<div class="tep-devtopo-grp-list">' + rows + '</div>';
+  }
+
+  /** Pin a group's card and wire it so hovering a member row swaps the tip to
+   *  that device's NORMAL detail card (faceplate/metrics + deep links), with a
+   *  back link to the list — the "router view on hover" the user asked for. */
+  function tepDevtopoPinGroup(g, x, y) {
+    const byId = new Map(g.members.map((m) => [String(m.id), m]));
+    const showList = () => {
+      tepDevtopoShowTip(tepDevtopoGroupCardHtml(g), x, y, true);
+      const tip = tepDevtopoTipEl(); if (!tip) return;
+      tip.querySelectorAll('.tep-devtopo-grp-row').forEach((row) => {
+        row.addEventListener('mouseenter', () => { const m = byId.get(row.getAttribute('data-devid')); if (m) showMember(m); });
+      });
+    };
+    const showMember = (m) => {
+      tepDevtopoShowTip('<div class="tep-devtopo-grp-back" role="button" tabindex="0">‹ ' + tepEscapeHtmlText(tepDevtopoGroupLabel(g)) + '</div>' + tepDevtopoDeviceCardHtml(m, true), x, y, true);
+      const tip = tepDevtopoTipEl(); if (!tip) return;
+      const back = tip.querySelector('.tep-devtopo-grp-back');
+      if (back) back.addEventListener('click', (e) => { e.stopPropagation(); showList(); });
+    };
+    showList();
+  }
 
   /** Paint the topology onto the stage: tier bands + labels, the internet cloud
    *  above the gateway, health-glow device cards (with faceplates), animated
@@ -18076,7 +18260,56 @@
     const nTiers = Math.max(1, model.tierCount);
     const tiers = []; for (let i = 0; i < nTiers; i++) tiers.push([]);
     for (const n of model.nodes) tiers[Math.max(0, Math.min(nTiers - 1, n.tier))].push(n);
-    const maxRow = tiers.reduce((m, a) => Math.max(m, a.length), 1);
+    const gwId = model.gatewayId != null ? String(model.gatewayId) : String(model.rootId);
+
+    // GROUP crowded tiers (like the map's agent clusters) — CONFIRMED via user
+    // request. Too many nodes on one tier stretch the stage into a wide, skewed
+    // horizontal scroll. Structurally connected nodes (any LLDP/CDP edge, plus the
+    // gateway) stay individual so the real topology still reads; the loose "leaf"
+    // devices that merely pile onto a tier collapse into per-kind group cards
+    // carrying a count + worst-health colour, clickable to list their members.
+    const TIER_SOFT_CAP = 8;
+    const edgedIds = new Set([gwId, String(model.rootId)]);
+    for (const e of model.edges) { edgedIds.add(String(e.a)); edgedIds.add(String(e.b)); }
+    const groupNodes = [];
+    let grpSeq = 0;
+    const renderTiers = tiers.map((arr, ti) => {
+      if (arr.length <= TIER_SOFT_CAP) return arr.slice();
+      const loose = arr.filter((n) => !edgedIds.has(String(n.id)) && !n.ghost);
+      if (loose.length < 3) return arr.slice();   // crowded by structure, not loose leaves
+      const looseSet = new Set(loose.map((n) => n.id));
+      const keep = arr.filter((n) => !looseSet.has(n.id));
+      const byKind = new Map();
+      for (const n of loose) { const k = n.kind || 'device'; if (!byKind.has(k)) byKind.set(k, []); byKind.get(k).push(n); }
+      // Split each kind into SEVERAL small groups (~TARGET each) spread across the
+      // tier rather than one big cluster — fuller and more legible (CONFIRMED via
+      // user request: prefer "4 groups of 4" over "1 group of 16"). Cap the group
+      // COUNT so the row still fits the canvas width (no horizontal scroll): the
+      // stage reserves ~235px per node, so only so many fit next to the kept nodes.
+      const TARGET = 4;
+      const maxFit = Math.max(4, Math.floor((canvas.clientWidth || 1200) / 235));
+      let slots = Math.max(2, maxFit - keep.length);
+      const groups = [];
+      const kinds = [...byKind.entries()].sort((a, b) => b[1].length - a[1].length);
+      for (let ki = 0; ki < kinds.length; ki++) {
+        const [kind, members] = kinds[ki];
+        const kindsLeft = kinds.length - ki - 1;
+        let share = Math.max(1, Math.round(members.length / TARGET));   // desired # of groups for this kind
+        share = Math.min(share, Math.max(1, slots - kindsLeft));         // leave ≥1 slot for each later kind
+        slots -= share;
+        const chunkSize = Math.ceil(members.length / share);
+        for (let i = 0; i < members.length; i += chunkSize) {
+          const chunk = members.slice(i, i + chunkSize);
+          const scores = chunk.map((m) => m.score).filter((s) => Number.isFinite(s));
+          const g = { _group: true, id: '__grp' + (grpSeq++), tier: ti, kind,
+            kindLabel: chunk[0].kindLabel || kind, members: chunk, count: chunk.length,
+            score: scores.length ? Math.min(...scores) : null };
+          groups.push(g); groupNodes.push(g);
+        }
+      }
+      return keep.concat(groups);
+    });
+    const maxRow = renderTiers.reduce((m, a) => Math.max(m, a.length), 1);
     // Size the stage so crowded tiers scroll rather than overlap.
     const stageW = Math.max(canvas.clientWidth, maxRow * 235, 760);
     const stageH = Math.max(canvas.clientHeight, nTiers * 142 + 150, 460);
@@ -18088,14 +18321,13 @@
     const yTop = 0.19 * h, yBot = 0.84 * h;
     const tierY = (t) => nTiers <= 1 ? (yTop + yBot) / 2 : yTop + (yBot - yTop) * t / (nTiers - 1);
     const pos = new Map();
-    tiers.forEach((arr, ti) => {
+    renderTiers.forEach((arr, ti) => {
       const marginX = Math.min(0.08 * w, 90);
       arr.forEach((n, i) => {
         const x = arr.length === 1 ? w / 2 : marginX + (i + 0.5) * (w - 2 * marginX) / arr.length;
         pos.set(n.id, { x, y: tierY(ti) });
       });
     });
-    const gwId = model.gatewayId != null ? String(model.gatewayId) : String(model.rootId);
     const gwPos = pos.get(gwId) || pos.get(String(model.rootId)) || (tiers[0][0] && pos.get(tiers[0][0].id)) || { x: w / 2, y: yTop };
     const cloud = { x: gwPos.x, y: cloudY };
     const agent = { x: w / 2, y: agentY };
@@ -18195,6 +18427,30 @@
       place(el, p); stage.appendChild(el);
     }
 
+    // ── grouped-tier cluster cards ──
+    for (const g of groupNodes) {
+      const p = pos.get(g.id); if (!p) continue;
+      const H = tepDevtopoHealth(g.score, false);
+      const el = document.createElement('div');
+      el.className = 'tep-devtopo-node tep-devtopo-node--group' + (Number.isFinite(g.score) && g.score < 60 ? ' tep-devtopo-node--crit' : '');
+      el.style.setProperty('--h', H.c);
+      const label = tepDevtopoGroupLabel(g);
+      el.innerHTML = '<span class="tep-devtopo-node-count">' + g.count + '</span>'
+        + '<div class="tep-devtopo-node-hd"><span class="tep-devtopo-node-ic">' + tepDeviceKindIcon(g.kind) + '</span>'
+        + '<span class="tep-devtopo-node-txt"><span class="tep-devtopo-node-name">' + esc(label) + '</span>'
+        + '<span class="tep-devtopo-node-meta">' + (g.score != null ? 'worst ' + Math.round(g.score) + '% · ' : '') + 'click to explore</span></span></div>';
+      el.addEventListener('mousemove', (ev) => tepDevtopoShowTip(tepDevtopoGroupCardHtml(g), ev.clientX, ev.clientY, false));
+      el.addEventListener('mouseleave', () => tepDevtopoHideTip(false));
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (tepDeviceTopoEl) { const s = tepDeviceTopoEl.querySelector('.tep-devtopo-node--sel'); if (s) s.classList.remove('tep-devtopo-node--sel'); }
+        el.classList.add('tep-devtopo-node--sel');
+        const r = el.getBoundingClientRect();
+        tepDevtopoPinGroup(g, r.right - 8, r.top + 8);   // pinned list → hover a row = that router's normal card
+      });
+      place(el, p); stage.appendChild(el);
+    }
+
     // ── polling agent anchor ──
     const agentEl = document.createElement('div');
     agentEl.className = 'tep-devtopo-node tep-devtopo-node--agent';
@@ -18266,8 +18522,15 @@
     overlay._tepOnResize = onResize;
     requestAnimationFrame(() => { requestAnimationFrame(() => { overlay.classList.add('tep-devtopo-overlay--in'); paint(); }); });
     // Port faceplates need the interface inventory — fetch it lazily and repaint
-    // once it lands (the first paint shows nodes without ports, then fills in).
-    if (!tepDeviceIfCache) { tepFetchDeviceInterfaces().then(() => paint()).catch(() => { /* ports optional */ }); }
+    // once it lands (the first paint shows nodes without ports, then fills in),
+    // then pull live per-interface metrics (speed/throughput/availability) and
+    // repaint again so the ports colour + the port hover populate.
+    const subnetDeviceIds = model.nodes.filter((n) => !n.ghost && Number(n.id) >= 0).map((n) => String(n.id));
+    const fillPorts = () => tepFetchDeviceInterfaces()
+      .then(() => { paint(); return tepFetchDeviceInterfaceMetrics(subnetDeviceIds); })
+      .then(() => paint())
+      .catch(() => { /* ports optional */ });
+    fillPorts();
     tepDeviceTopoKeyHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); tepCloseDeviceTopoView(); } };
     document.addEventListener('keydown', tepDeviceTopoKeyHandler, true);
   }
