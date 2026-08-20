@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.92';
+  const TEP_VERSION = '3.93';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4846,6 +4846,7 @@
             <option value="Http">HTTP Server</option>
             <option value="Page">Page Load</option>
             <option value="WebTransaction">Transaction</option>
+            <option value="Api">API</option>
             <option value="Ftp">FTP</option>
             <option value="A2s">Agent→Server</option>
             <option value="OneWayNetwork">Agent↔Agent</option>
@@ -4873,6 +4874,7 @@
         </div>
         <div class="tep-bulk-bar" id="tep-bulk-bar">
           <span id="tep-bulk-count">0 selected</span>
+          <button type="button" class="tep-bulk-clear-link" id="tep-bulk-selectall">Select all</button>
           <button type="button" class="tep-bulk-clear-link" id="tep-bulk-clear">Clear selected</button>
           <select id="tep-bulk-action">
             <option value="">— Bulk Action —</option>
@@ -11613,6 +11615,18 @@
   function clearBulkSelection() {
     selectedTestIds.clear();
     testListEl.querySelectorAll('.tep-test-card-check').forEach((cb) => { cb.checked = false; });
+    updateBulkUI();
+  }
+
+  /** "Select all" — check + select every test currently listed (the active
+   *  type/search filter), the counterpart to Clear selected. CONFIRMED via user
+   *  request. */
+  function selectAllVisibleTests() {
+    testListEl.querySelectorAll('.tep-test-card').forEach((card) => {
+      const cb = card.querySelector('.tep-test-card-check');
+      const tid = card.dataset.testId;
+      if (cb && tid) { cb.checked = true; selectedTestIds.add(tid); }
+    });
     updateBulkUI();
   }
 
@@ -30260,6 +30274,8 @@
   if (bulkApplyBtn) bulkApplyBtn.addEventListener('click', bulkApply);
   const bulkClearBtn = $('#tep-bulk-clear');
   if (bulkClearBtn) bulkClearBtn.addEventListener('click', clearBulkSelection);
+  const bulkSelectAllBtn = $('#tep-bulk-selectall');
+  if (bulkSelectAllBtn) bulkSelectAllBtn.addEventListener('click', selectAllVisibleTests);
 
   // Lives in the persistent header (not the dashboard-tools-only markup
   // below), so it must be wired unconditionally — isDashboardToolsPage()
