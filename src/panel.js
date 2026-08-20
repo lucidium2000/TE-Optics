@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.94';
+  const TEP_VERSION = '3.95';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3459,6 +3459,14 @@
       transition: background .15s ease, border-color .15s ease;
     }
     .tep-cluster-max-devtopo-btn:hover { background: rgba(91,157,255,.22); border-color: rgba(91,157,255,.55); }
+    .tep-cluster-max-wireless-btn {
+      margin-left: 6px; display: inline-flex; align-items: center; gap: 4px;
+      padding: 1px 7px; border-radius: 7px; cursor: pointer;
+      font-family: inherit; font-weight: 700; font-size: 9px; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--tep-blue-soft); background: rgba(91,157,255,.12); border: 1px solid rgba(91,157,255,.32);
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .tep-cluster-max-wireless-btn:hover { background: rgba(91,157,255,.22); border-color: rgba(91,157,255,.55); }
     /* ── Live device topology overlay ─────────────────────────────────────
        Opens ABOVE the subnet modal (closing it returns there). A dark NOC
        instrument: tiered device nodes, real LLDP/CDP edges drawn as animated
@@ -3540,12 +3548,57 @@
     .tep-devtopo-node-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 148px; color: #e6ecf5; }
     .tep-devtopo-node-meta { font-family: var(--tdt-mono); font-size: 10px; color: #8496b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tep-devtopo-node-metric { margin-left: auto; padding-left: 6px; font-family: var(--tdt-mono); font-size: 10.5px; font-weight: 700; color: var(--h); white-space: nowrap; }
+    /* Description in the metric slot (no active warning): muted, and clamped so a
+       long sysDescr ellipsis-truncates instead of stretching the node. */
+    .tep-devtopo-node-metric--desc { color: #8496b0; font-weight: 600; max-width: 108px; overflow: hidden; text-overflow: ellipsis; }
     .tep-devtopo-node-tag { position: absolute; top: -9px; left: 10px; font-family: var(--tdt-mono); font-size: 8.5px; letter-spacing: .07em; text-transform: uppercase; color: #04101f; background: var(--h); padding: 1px 7px; border-radius: 999px; font-weight: 800; white-space: nowrap; }
     .tep-devtopo-node--crit { animation: tep-devtopo-crit 2.2s ease-in-out infinite; }
     @keyframes tep-devtopo-crit { 0%,100%{ box-shadow: 0 0 0 1px color-mix(in srgb,var(--tdt-crit) 55%,transparent), 0 10px 24px -14px rgba(0,0,0,.85);} 50%{ box-shadow: 0 0 0 1px var(--tdt-crit), 0 0 22px -2px color-mix(in srgb,var(--tdt-crit) 70%,transparent);} }
     .tep-devtopo-node--ghost { background: repeating-linear-gradient(135deg, rgba(90,107,133,.10) 0 8px, transparent 8px 16px), var(--tdt-ground2); border-style: dashed; opacity: .85; }
     .tep-devtopo-node--ghost .tep-devtopo-node-ic { box-shadow: inset 0 0 0 1px rgba(90,107,133,.5); }
     .tep-devtopo-node--agent { --h: var(--tdt-ac); }
+    /* ---- wireless SSID nodes below an AP (clients live in the SSID hover) ---- */
+    .tep-devtopo-ssid {
+      position: absolute; transform: translate(-50%, -50%); z-index: 3; cursor: pointer;
+      display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px;
+      background: linear-gradient(180deg, var(--tdt-surface2), var(--tdt-surface));
+      border: 1px solid color-mix(in srgb, var(--tdt-ac) 42%, var(--tdt-line));
+      font-size: 11px; color: var(--tdt-ac); white-space: nowrap; box-shadow: 0 8px 18px -12px rgba(0,0,0,.85);
+    }
+    .tep-devtopo-ssid:hover { border-color: var(--tdt-ac); box-shadow: 0 0 0 1px var(--tdt-ac), 0 10px 20px -12px rgba(0,0,0,.9); }
+    .tep-devtopo-ssid svg { flex: 0 0 auto; }
+    .tep-devtopo-ssid-lbl { max-width: 122px; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+    .tep-devtopo-ssid-n { font-family: var(--tdt-mono); font-size: 9.5px; background: color-mix(in srgb, var(--tdt-ac) 22%, transparent); color: var(--tdt-ac); border-radius: 999px; padding: 0 5px; }
+    /* ---- wireless topology nodes (SSID / BSSID / client chips) ---- */
+    .tep-devtopo-wnode {
+      position: absolute; transform: translate(-50%, -50%); z-index: 3;
+      display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; max-width: 184px;
+      background: linear-gradient(180deg, var(--tdt-surface2), var(--tdt-surface));
+      border: 1px solid var(--tdt-line); font-size: 11px; color: #d3ddec; white-space: nowrap; box-shadow: 0 8px 18px -12px rgba(0,0,0,.85);
+    }
+    .tep-devtopo-wnode svg { flex: 0 0 auto; }
+    .tep-devtopo-wnode .wlbl { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+    .tep-devtopo-wnode .wn { font-family: var(--tdt-mono); font-size: 9.5px; background: rgba(255,255,255,.06); color: #9fb0cc; border-radius: 999px; padding: 0 5px; }
+    .tep-devtopo-wnode--ssid { cursor: pointer; color: var(--tdt-ac); border-color: color-mix(in srgb, var(--tdt-ac) 42%, var(--tdt-line)); }
+    .tep-devtopo-wnode--ssid .wn { background: color-mix(in srgb, var(--tdt-ac) 22%, transparent); color: var(--tdt-ac); }
+    .tep-devtopo-wnode--bssid { cursor: pointer; color: #cfd8e8; }
+    .tep-devtopo-wnode--bssid svg { color: var(--tdt-ac); }
+    .tep-devtopo-wnode--client { cursor: pointer; }
+    .tep-devtopo-wnode--ssid:hover, .tep-devtopo-wnode--bssid:hover, .tep-devtopo-wnode--client:hover { border-color: var(--tdt-ac); box-shadow: 0 0 0 1px var(--tdt-ac), 0 10px 20px -12px rgba(0,0,0,.9); }
+    /* ---- AP wireless card (per-band radios + SSID pills, folded into the node) ---- */
+    .tep-devtopo-node--wifi { flex-direction: column; align-items: stretch; gap: 8px; max-width: 300px; }
+    .tep-ap-wifi { display: flex; flex-direction: column; gap: 5px; }
+    .tep-ap-radio { display: flex; align-items: center; gap: 7px; font-size: 10.5px; }
+    .tep-ap-band { flex: 0 0 auto; font-family: var(--tdt-mono); font-size: 9px; font-weight: 800; letter-spacing: .02em; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+    .tep-ap-band--5 { color: #bcd6ff; background: rgba(91,157,255,.18); }
+    .tep-ap-band--24 { color: #ffd9a0; background: rgba(245,165,36,.18); }
+    .tep-ap-band--6 { color: #d9c2ff; background: rgba(168,120,255,.18); }
+    .tep-ap-rmeta { flex: 0 0 auto; color: #aebbd4; white-space: nowrap; }
+    .tep-ap-sig { flex: 1 1 auto; min-width: 22px; height: 5px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
+    .tep-ap-sig i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#22c55e,#57eda2); }
+    .tep-ap-sigv { flex: 0 0 auto; font-family: var(--tdt-mono); font-size: 9px; color: #8496b0; white-space: nowrap; }
+    .tep-ap-ssids { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 1px; }
+    .tep-ap-ssid { font-size: 9.5px; color: #cfd8e8; background: rgba(255,255,255,.05); border: 1px solid var(--tdt-line); border-radius: 999px; padding: 1px 7px; }
     /* ---- faceplate ---- */
     .tep-devtopo-node--faceplate { flex-direction: column; align-items: stretch; gap: 8px; }
     .tep-devtopo-node-hd { display: flex; align-items: center; gap: 9px; }
@@ -3555,7 +3608,10 @@
     }
     .tep-fp-uplink { display: flex; flex-direction: column; align-items: center; gap: 3px; padding-right: 8px; border-right: 1px dashed #2a3652; }
     .tep-fp-uplbl { font-family: var(--tdt-mono); font-size: 7px; letter-spacing: .1em; color: #5a6b85; }
-    .tep-fp-grid { display: grid; grid-template-rows: repeat(2, 1fr); grid-auto-flow: column; gap: 3px; }
+    /* Two equal rows, filled row-major: ports read 1,2,3… across the top row
+       then wrap to the bottom. The column count (ceil(cells/2)) is pinned inline
+       per faceplate so it is always exactly 2 rows. */
+    .tep-fp-grid { display: grid; grid-auto-flow: row; gap: 3px; justify-content: start; align-content: center; }
     .tep-port {
       width: 13px; height: 10px; border-radius: 2px; cursor: pointer; position: relative;
       border: 1px solid rgba(0,0,0,.45); box-shadow: inset 0 -2px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.14);
@@ -3572,11 +3628,15 @@
     }
     .tep-port--up { background: linear-gradient(180deg,#57eda2,#22c55e); }
     .tep-port--slow { background: linear-gradient(180deg,#ffc772,#f5a524); }
-    .tep-port--down, .tep-port--idle { background: #080c15; border-color: #151d2e; box-shadow: inset 0 0 3px rgba(0,0,0,.85); }
-    .tep-port--down { border-color: #3a1720; }
-    .tep-port--uplink, .tep-port--wan { background: linear-gradient(180deg,#88b6ff,#5b9dff); }
+    /* >1Gbps (multi-gig) = blue. */
+    .tep-port--fast { background: linear-gradient(180deg,#88b6ff,#5b9dff); }
+    .tep-port--idle { background: #080c15; border-color: #151d2e; box-shadow: inset 0 0 3px rgba(0,0,0,.85); }
+    /* Down = grey (present but not up), distinct from the near-black empty slot. */
+    .tep-port--down { background: linear-gradient(180deg,#6b7280,#4b5563); border-color: #374151; box-shadow: inset 0 -2px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.10); }
+    .tep-port--wan { background: linear-gradient(180deg,#88b6ff,#5b9dff); }
     .tep-fp-uplink .tep-port--wan { width: 16px; height: 14px; }
-    .tep-port--uplink::after { content:"↑"; position:absolute; inset:0; display:grid; place-items:center; font-size:7px; font-weight:800; color:#04101f; }
+    /* Uplink stays green but wears a bold up-arrow so it still reads as the uplink. */
+    .tep-port--uplink::after { content:"↑"; position:absolute; inset:0; display:grid; place-items:center; font-size:10px; font-weight:900; color:#fff; text-shadow: 0 0 2px rgba(0,0,0,.9), 0 1px 1px rgba(0,0,0,.75); }
     .tep-port--wan::after { content:"⇅"; position:absolute; inset:0; display:grid; place-items:center; font-size:9px; font-weight:800; color:#04101f; }
     /* ---- grouped-tier cluster card (collapses a crowded tier's loose leaves) ---- */
     .tep-devtopo-node--group { cursor: pointer; }
@@ -3615,6 +3675,7 @@
     .tep-devtopo-cloud .tep-devtopo-backmap { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:800; color:#04101f; background:linear-gradient(180deg,#7db0ff,var(--tdt-ac)); padding:5px 12px; border-radius:999px; box-shadow:0 6px 16px -6px rgba(91,157,255,.7); transition:transform .12s ease, box-shadow .12s ease; }
     .tep-devtopo-cloud:hover .tep-devtopo-backmap { transform: translateY(-1px); box-shadow: 0 10px 22px -8px rgba(91,157,255,.9); }
     .tep-devtopo-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #5a6b85; font-size: 13px; }
+    .tep-devtopo-loading { color: var(--tdt-ac); font-weight: 600; animation: tepPulse 1.4s ease-in-out infinite; }
     /* ---- edges (marching dashes + comet) ---- */
     @keyframes tep-devtopo-dash { to { stroke-dashoffset: -30; } }
     .tep-devtopo-link { fill: none; stroke-linecap: round; stroke-dasharray: 6 9; animation: tep-devtopo-dash 1s linear infinite; }
@@ -3629,11 +3690,13 @@
       box-shadow: 0 18px 44px -16px rgba(0,0,0,.9); backdrop-filter: blur(3px);
     }
     .tep-devtopo-tip.show { opacity: 1; transform: translateY(0); }
-    .tep-devtopo-tip.pinned { pointer-events: auto; }
+    .tep-devtopo-tip.pinned, .tep-devtopo-tip.sticky { pointer-events: auto; }
+    .tep-devtopo-tip.sticky { max-height: 62vh; overflow-y: auto; }
     .tep-devtopo-tip .tt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
     .tep-devtopo-tip .tt-name { font-size: 13.5px; font-weight: 700; color: #e6ecf5; }
     .tep-devtopo-tip .tt-badge { font-family: var(--tdt-mono); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; font-weight: 800; color: #04101f; }
     .tep-devtopo-tip .tt-ip { font-family: var(--tdt-mono); font-size: 11px; color: #8496b0; margin-bottom: 9px; }
+    .tep-devtopo-tip .tt-desc { font-size: 11.5px; line-height: 1.4; color: #aebbd4; margin: -3px 0 10px; }
     .tep-devtopo-tip .tt-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 12px; }
     .tep-devtopo-tip .tt-grid dt { color: #8496b0; }
     .tep-devtopo-tip .tt-grid dd { margin: 0; font-family: var(--tdt-mono); text-align: right; color: #d7e2f4; }
@@ -3648,6 +3711,18 @@
     .tep-devtopo-tip .tt-link--ghost { color: var(--tdt-ac); background: rgba(91,157,255,.12); border: 1px solid rgba(91,157,255,.34); }
     .tep-devtopo-tip .tt-addrs { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tdt-line); font-family: var(--tdt-mono); font-size: 10.5px; color: #aebbd4; }
     .tep-devtopo-tip .tt-addrs b { color: #d7e2f4; font-weight: 700; }
+    /* Wireless-client list (endpoint agents on this AP). */
+    .tep-devtopo-tip .tt-clients { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tdt-line); }
+    .tep-devtopo-tip .tt-clients-hd { font-family: var(--tdt-mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: #7c8aa5; margin-bottom: 2px; }
+    .tep-devtopo-tip .tt-cl { display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; color: #d7e2f4; text-decoration: none; border-radius: 5px; padding: 3px 5px; margin: 0 -5px; }
+    .tep-devtopo-tip a.tt-cl:hover { background: color-mix(in srgb, var(--tdt-ac) 16%, transparent); color: #fff; }
+    .tep-devtopo-tip .tt-cl-main { display: flex; align-items: center; gap: 6px; width: 100%; }
+    .tep-devtopo-tip .tt-cl-main svg { flex: 0 0 auto; opacity: .72; }
+    .tep-devtopo-tip .tt-cl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-devtopo-tip .tt-cl-meta { margin-left: auto; padding-left: 8px; font-family: var(--tdt-mono); font-size: 10px; color: #8496b0; white-space: nowrap; }
+    .tep-devtopo-tip a.tt-cl .tt-cl-go { color: var(--tdt-ac); font-size: 10px; }
+    .tep-devtopo-tip .tt-cl-detail { display: none; padding-left: 19px; font-family: var(--tdt-mono); font-size: 9.5px; color: #8496b0; }
+    .tep-devtopo-tip .tt-cl:hover .tt-cl-detail { display: block; }
     .tep-devtopo-tip .tt-close { position: absolute; top: 8px; right: 9px; cursor: pointer; color: #5a6b85; font-size: 14px; line-height: 1; background: none; border: 0; }
     .tep-devtopo-tip .tt-close:hover { color: #e6ecf5; }
     @media (prefers-reduced-motion: reduce) {
@@ -15942,8 +16017,9 @@
     const agentWifiScoreColor = agent.connKind === 'wifi' && agent.wifiScore != null ? tepWifiScoreColor(agent.wifiScore).fill : null;
     const connColor = agent.connKind === 'wifi' ? (agentWifiScoreColor || 'var(--tep-green)') : 'var(--tep-slate-400)';
     const connTitle = agent.connKind === 'wifi' ? `Wi-Fi${agent.wifiScore != null ? ` — signal ${agent.wifiScore}%` : ''}` : 'Ethernet';
+    const connIsWifi = agent.connKind === 'wifi';
     const connHtml = agent.connKind && EP_CONN_ICON[agent.connKind]
-      ? `<span class="tep-agent-conn" title="${connTitle}" style="flex-shrink:0;display:inline-flex;color:${connColor};" aria-label="${connTitle}">${EP_CONN_ICON[agent.connKind]}</span>`
+      ? `<span class="tep-agent-conn${connIsWifi ? ' tep-agent-conn--wifi' : ''}" title="${connTitle}${connIsWifi ? ' — click for wireless topology' : ''}" style="flex-shrink:0;display:inline-flex;color:${connColor};${connIsWifi ? 'cursor:pointer;' : ''}"${connIsWifi ? ` data-wifi-agent="${tepEscapeHtmlText(String(agent.id))}"` : ''} aria-label="${connTitle}">${EP_CONN_ICON[agent.connKind]}</span>`
       : '';
     const vpnHtml = (typeof agent.vpn === 'boolean')
       ? `<span class="tep-agent-vpn" title="${agent.vpn ? 'On VPN (last sample)' : 'Not on VPN (last sample)'}" style="flex-shrink:0;display:inline-flex;color:${agent.vpn ? 'var(--tep-yellow)' : 'var(--tep-slate-600)'};" aria-label="${agent.vpn ? 'On VPN' : 'Not on VPN'}">${EP_VPN_ICON}</span>`
@@ -17288,8 +17364,9 @@
     const wifiScoreColor = it.connKind === 'wifi' && it.wifiScore != null ? tepWifiScoreColor(it.wifiScore).fill : null;
     const connColor = it.connKind === 'wifi' ? (wifiScoreColor || 'var(--tep-blue-soft)') : (it.connKind === 'ethernet' ? '#86efac' : 'var(--tep-slate-400)');
     const connTitle = it.connKind === 'wifi' ? `Wi-Fi${it.wifiScore != null ? ` — signal ${it.wifiScore}%` : ''}` : 'Ethernet';
+    const connIsWifi = it.connKind === 'wifi';
     const connHtml = it.kind === 'endpoint' && it.connKind && EP_CONN_ICON[it.connKind]
-      ? `<span title="${connTitle}" style="display:inline-flex;color:${connColor};">${EP_CONN_ICON[it.connKind]}</span>` : '';
+      ? `<span class="tep-conn-ico${connIsWifi && it.agentId != null ? ' tep-agent-conn--wifi' : ''}" title="${connTitle}${connIsWifi && it.agentId != null ? ' — click for wireless topology' : ''}" style="display:inline-flex;color:${connColor};${connIsWifi && it.agentId != null ? 'cursor:pointer;' : ''}"${connIsWifi && it.agentId != null ? ` data-wifi-agent="${tepEscapeHtmlText(String(it.agentId))}"` : ''}>${EP_CONN_ICON[it.connKind]}</span>` : '';
     const vpnHtml = it.kind === 'endpoint' && it.vpn
       ? `<span title="On VPN" style="display:inline-flex;color:#fbbf24;">${EP_VPN_ICON}</span>` : '';
     const metricParts = it.kind === 'endpoint' ? [
@@ -17587,6 +17664,20 @@
     }
   }
 
+  /** SSID node glyph — a network "tag" with a broadcast dot, deliberately
+   *  distinct from the AP's antenna icon so an SSID reads as a named network
+   *  hosted by the AP rather than the AP itself. */
+  function tepSsidIcon() {
+    return '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-6.6-6.6A2 2 0 0 1 3.4 12.6V5a1.6 1.6 0 0 1 1.6-1.6h7.6a2 2 0 0 1 1.4.6l6.6 6.6a2 2 0 0 1 0 2.8Z"/><circle cx="8.4" cy="8.4" r="1.25" fill="currentColor" stroke="none"/></svg>';
+  }
+  /** Wireless-client (endpoint agent) glyph — a phone for mobile platforms,
+   *  a laptop otherwise. */
+  function tepClientIcon(platform) {
+    const p = String(platform || '').toLowerCase();
+    if (/android|ios|iphone|ipad|mobile/.test(p)) return '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"/></svg>';
+    return '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="10" rx="1.6"/><path d="M2.5 18.5h19"/></svg>';
+  }
+
   function tepNormalizeSnmpDevice(d) {
     if (!d || d.dmDeviceId == null) return null;
     const agents = Array.isArray(d.deviceAgents) ? d.deviceAgents : [];
@@ -17649,10 +17740,9 @@
     if (base.status != null && base.status !== 0) { score = Math.min(score, 15); notes.push('unreachable'); }
     if (Number.isFinite(agg.memory)) { const m = agg.memory * 100; if (m >= 90) score = Math.min(score, 40); else if (m >= 75) score = Math.min(score, 68); if (m >= 75) notes.push('mem ' + Math.round(m) + '%'); }
     if (Number.isFinite(agg.cpu)) { const c = agg.cpu * 100; if (c >= 90) score = Math.min(score, 45); else if (c >= 75) score = Math.min(score, 70); if (c >= 75) notes.push('cpu ' + Math.round(c) + '%'); }
-    const adminUp = im.adminUpInterfaceCount, operUp = im.operUpInterfaceCount;
-    if (Number.isFinite(adminUp) && Number.isFinite(operUp) && adminUp > 0 && operUp < adminUp) {
-      const down = adminUp - operUp; score = Math.min(score, 72); notes.push(down + ' port' + (down === 1 ? '' : 's') + ' down');
-    }
+    // NOTE: admin-up-but-oper-down ports do NOT lower the health score or add a
+    // note — a down access port is normal and shouldn't flag the device WARNING.
+    // CONFIRMED via user request. (The faceplate still shows the port grey.)
     const err = (im.errorRateIn || 0) + (im.errorRateOut || 0);
     const disc = (im.discardRateIn || 0) + (im.discardRateOut || 0);
     if (err > 1) { score = Math.min(score, 60); notes.push('errors'); }
@@ -17892,21 +17982,45 @@
   function tepBuildSubnetTopo(colEntries, matchedDevices) {
     const topo = tepDeviceTopoCache || { nodesById: new Map(), byId: new Map(), edges: [] };
     const nodesById = topo.nodesById, health = topo.byId, edgesRaw = topo.edges || [];
-    const idSet = new Set(matchedDevices.map((d) => String(d.id)));
     const TIER = { firewall: 0, router: 0, switch: 1, ap: 2, device: 2 };
+    // Collapse duplicate records for the SAME physical device (e.g. one from SNMP
+    // polling, one from LLDP discovery) — keep the RICHEST (monitored / described /
+    // health-bearing) and alias the dropped ids so their edges attach to the
+    // survivor. CONFIRMED via user request (a device showing twice: SNMP + LLDP).
+    const ipRe = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/;
+    const dedupKey = (d) => (d.primaryIp && ipRe.test(d.primaryIp)) ? String(d.primaryIp).trim() : ('name:' + String(d.name || '').trim().toLowerCase());
+    const richness = (d) => { const h = health.get(String(d.id)); return (d.monitored ? 8 : 0) + (d.sysDescr ? 4 : 0) + (h && Number.isFinite(h.score) ? 2 : 0) + ((d.agentIds && d.agentIds.length) ? 1 : 0); };
+    const bestByKey = new Map();
+    for (const d of matchedDevices) { const k = dedupKey(d); const cur = bestByKey.get(k); if (!cur || richness(d) > richness(cur)) bestByKey.set(k, d); }
+    const idAlias = new Map();   // dropped device id → kept (richest) id
+    for (const d of matchedDevices) { const keeper = bestByKey.get(dedupKey(d)); if (String(d.id) !== String(keeper.id)) idAlias.set(String(d.id), String(keeper.id)); }
+    const keptDevices = Array.from(bestByKey.values());
+    const idSet = new Set(keptDevices.map((d) => String(d.id)));
     const nodes = [];
     const nodeIndex = new Map();
-    for (const d of matchedDevices) {
+    for (const d of keptDevices) {
       const h = health.get(String(d.id));
       const score = h && Number.isFinite(h.score) ? h.score : null;
-      const node = { id: String(d.id), name: d.name, kind: d.kind, kindLabel: d.kindLabel, meta: d.primaryIp || '', score, note: (h && h.note) || '', tier: TIER[d.kind] != null ? TIER[d.kind] : 2, ghost: false };
+      const node = { id: String(d.id), name: d.name, kind: d.kind, kindLabel: d.kindLabel, meta: d.primaryIp || '', desc: d.sysDescr || '', score, note: (h && h.note) || '', tier: TIER[d.kind] != null ? TIER[d.kind] : 2, ghost: false };
       nodeIndex.set(node.id, node); nodes.push(node);
     }
+    // Monitored nodes indexed by IP + name, so an LLDP-only neighbour that is really
+    // one of them attaches to the rich node instead of spawning a duplicate ghost.
+    const realByKey = new Map();
+    for (const node of nodes) {
+      if (ipRe.test(node.meta)) { const ip = node.meta.trim(); if (!realByKey.has(ip)) realByKey.set(ip, node.id); }
+      const nk = 'name:' + String(node.name || '').trim().toLowerCase();
+      if (node.name && !realByKey.has(nk)) realByKey.set(nk, node.id);
+    }
+    const aliasId = (id) => idAlias.get(String(id)) || String(id);
     const ensureGhost = (gid) => {
-      const key = String(gid);
+      const key = aliasId(gid);
       if (nodeIndex.has(key)) return key;
       const raw = nodesById.get(key);
-      const gname = (raw && (raw.displayName || raw.name || raw.sysName)) || (Number(gid) < 0 ? 'Unknown neighbour' : 'Device ' + gid);
+      const rawName = raw && (raw.displayName || raw.name || raw.sysName);
+      const alias = rawName && realByKey.get('name:' + String(rawName).trim().toLowerCase());
+      if (alias) return alias;   // this "neighbour" is really a monitored device
+      const gname = rawName || (Number(gid) < 0 ? 'Unknown neighbour' : 'Device ' + gid);
       const gnode = { id: key, name: gname, kind: 'device', kindLabel: 'Unknown', meta: 'LLDP/CDP neighbour', score: null, note: '', tier: 1, ghost: true };
       nodeIndex.set(key, gnode); nodes.push(gnode);
       return key;
@@ -17914,12 +18028,13 @@
     const edges = [];
     const eSeen = new Set();
     for (const e of edgesRaw) {
-      const s = e && e.src && e.src.dmDeviceId, t = e && e.dest && e.dest.dmDeviceId;
-      if (s == null || t == null) continue;
-      const sIn = idSet.has(String(s)), tIn = idSet.has(String(t));
+      const s0 = e && e.src && e.src.dmDeviceId, t0 = e && e.dest && e.dest.dmDeviceId;
+      if (s0 == null || t0 == null) continue;
+      const s = aliasId(s0), t = aliasId(t0);   // collapse duplicate device ids
+      const sIn = idSet.has(s), tIn = idSet.has(t);
       if (!sIn && !tIn) continue;              // edge unrelated to this subnet
-      const a = sIn ? String(s) : ensureGhost(s);
-      const b = tIn ? String(t) : ensureGhost(t);
+      const a = sIn ? s : ensureGhost(s);
+      const b = tIn ? t : ensureGhost(t);
       if (a === b) continue;
       // Keep each side's ifIndex so the faceplate can mark the exact linked port
       // (a=src side, b=dest side).
@@ -18074,21 +18189,20 @@
       const errs = m && (Number.isFinite(m.errorRateIn) || Number.isFinite(m.errorRateOut)) ? (m.errorRateIn || 0) + (m.errorRateOut || 0) : null;
       const isWan = looksWan(f) || (isGatewayDev && upIf != null && ix === upIf);
       const isTrunk = !isWan && upIf != null && ix === upIf;
-      // A configured, in-use interface (a real IP or a described alias) reads as
-      // "up" even when SNMP returned no per-interface availability metric and no
-      // LLDP peer — otherwise genuinely active links show dark. Live metrics still
-      // win: an oper-down reading below keeps precedence. CONFIRMED via user capture.
-      const cfgActive = validIp(f.ipAddress) || !!(f.alias && String(f.alias).trim());
+      // Port state (colour): >1Gbps blue, 1G green, <1G amber; a routed L3 interface
+      // (has an IP) or one with a confirmed LLDP/CDP neighbour stays up even with no
+      // speed metric (routers/gateways); a bare access port with no speed reads down
+      // (grey). The topology UPLINK is coloured by this same status — it's only
+      // MARKED with a bold ↑ (isUplink) so it still reads as the uplink. WAN keeps
+      // its own exclusive slot.
       let state;
       if (isWan) state = 'wan';                                        // exclusive slot
-      else if (isTrunk) state = 'uplink';                             // in-grid, accent
-      else if (avail != null && avail <= 0) state = 'down';            // metric says oper-down
-      else if (link) state = (speed != null && speed > 0 && speed < 1e9) ? 'slow' : 'up';  // linked; <1Gbps ⇒ amber
-      else if (avail != null && avail > 0) state = 'up';               // up per metric, no LLDP peer
-      else if (cfgActive) state = 'up';                               // configured/in-use, no live metric
-      else state = 'idle';                                            // physical port, no link
+      else if (speed != null && speed > 0) state = speed > 1e9 ? 'fast' : speed < 1e9 ? 'slow' : 'up';   // >1Gbps blue, 1G green, <1G amber
+      else if (validIp(f.ipAddress)) state = 'up';                     // routed/L3 interface in use
+      else if (link) state = 'up';                                    // confirmed LLDP/CDP neighbour
+      else state = 'down';                                            // access port, no speed / no link ⇒ down
       const peerName = link ? (model.nodeIndex.get(String(link.peerId)) || {}).name : null;
-      return { ix, label: f.displayName || f.name || ('Port ' + ix), state, isWan, speed, util, avail,
+      return { ix, label: f.displayName || f.name || ('Port ' + ix), state, isWan, isUplink: isTrunk, speed, util, avail,
         thrIn, thrOut, disc, errs,
         monitored: mon ? mon.has(ix) : (f.isMonitored === true),
         ip: validIp(f.ipAddress) ? String(f.ipAddress) : null,
@@ -18103,7 +18217,11 @@
     if (wanPorts.length > 1) {
       const wanScore = (p) => { const nm = String(p.label).toLowerCase(); let s = 0; if (/internet|outside/.test(nm)) s += 4; if (/\bwan\b/.test(nm)) s += 2; if (p.ix === 0) s += 3; if (upIf != null && p.ix === upIf) s += 3; return s; };
       wanPorts.sort((a, b) => wanScore(b) - wanScore(a));
-      for (let i = 1; i < wanPorts.length; i++) { wanPorts[i].state = 'uplink'; wanPorts[i].isWan = false; }
+      for (let i = 1; i < wanPorts.length; i++) {   // extra WAN/uplink legs → status-coloured + uplink arrow
+        const p = wanPorts[i];
+        p.state = (p.speed != null && p.speed > 0) ? (p.speed > 1e9 ? 'fast' : p.speed < 1e9 ? 'slow' : 'up') : 'up';
+        p.isUplink = true; p.isWan = false;
+      }
     }
     return { ports, hasWan: ports.some((p) => p.state === 'wan') };
   }
@@ -18146,15 +18264,208 @@
     return url;
   }
 
-  /** Real-switch faceplate: physical ports in a 2-row grid (odd top / even
-   *  bottom, like the front panel), the uplink/WAN port pulled out as an
-   *  exclusive slot. Each port carries data-* so the shared tooltip can show its
-   *  stats without a lookup table. */
-  function tepDeviceFaceplateHtml(pm) {
-    if (!pm || !pm.ports || !pm.ports.length) return '';
+  // ── Wireless clients: endpoint agents ↔ AP devices, matched by BSSID ──────
+  // An endpoint agent's wireless BSSID (networkProfile.wirelessProfile.bssid /
+  // apMacAddress) equals the interface MAC of the AP it is associated with —
+  // CONFIRMED via user capture (BSSID fc:ec:da:d7:d5:0b == that device's rai0
+  // interface). So we fetch every agent's BSSID in bulk and match it against the
+  // subnet devices' interface MACs to list each AP's wireless clients.
+  let tepEpWirelessCache = null;     // { ts, round, byMachineId:Map, index:Map<macHex,[client]> }
+  let tepEpWirelessInflight = null;
+  const TEP_EP_WIRELESS_CACHE_MS = 5 * 60 * 1000;
+  const TEP_EP_WIRELESS_SAMPLES = 8;   // one-minute rounds to look back over
+  // Scope for the current topology view. Primary scope: the machineIds of the
+  // endpoint agents the MAP already places at this site (same public IP) — so the
+  // BSSID match only considers agents the map knows are here, not the whole
+  // account. Fallback (no map agents resolved): the subnet's public-IP number,
+  // matched against each client's whois range. Set when a subnet topology opens.
+  let tepDevtopoSubnetPubNum = null;
+  let tepDevtopoScopeMachineIds = null;   // Set<machineId> | null
+  let tepEpWirelessFilterUnsupported = false;   // set if the endpoint rejects a machineId filter
+
+  function tepIpToNum(s) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(s || '').trim());
+    if (!m) return null;
+    const a = [+m[1], +m[2], +m[3], +m[4]];
+    if (a.some((n) => n > 255)) return null;
+    return ((a[0] * 256 + a[1]) * 256 + a[2]) * 256 + a[3];
+  }
+
+  function tepNormMac(mac) {
+    if (!mac || !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(String(mac))) return null;
+    return String(mac).toLowerCase().replace(/[^0-9a-f]/g, '');   // 12 hex chars
+  }
+  // Same MAC with the locally-administered bit (0x02 of the first octet) flipped.
+  // AP virtual BSSIDs (e.g. UniFi) often set that bit on the radio's hardware MAC,
+  // so matching both forms links a VAP BSSID back to its device interface.
+  function tepMacToggleLA(hex) {
+    const b0 = (parseInt(hex.slice(0, 2), 16) ^ 0x02).toString(16).padStart(2, '0');
+    return b0 + hex.slice(2);
+  }
+
+  /** machineId → wireless info (bssid/ssid/quality/…), plus a bssid→clients index
+   *  (keyed by exact MAC and its LA-bit variant), from the wireless-metrics-reports
+   *  endpoint over the last several one-minute samples. LOCALIZED: when a site
+   *  scope (tepDevtopoScopeMachineIds) is set, the request filters to those
+   *  machineIds server-side so large accounts never return every wireless agent —
+   *  if the endpoint rejects that filter we fall back once to hardwareType-only.
+   *  Cached per (round + scope). */
+  function tepFetchEndpointWirelessMap(force) {
+    const round0 = Math.floor(Date.now() / 1000 / 60) * 60;
+    const scope = tepDevtopoScopeMachineIds;
+    const scopeIds = scope && scope.size ? [...scope] : null;
+    const scopeKey = scopeIds ? ('n' + scopeIds.length + ':' + scopeIds.slice().sort().join(',')) : 'all';
+    if (!force && tepEpWirelessCache && tepEpWirelessCache.round === round0 && tepEpWirelessCache.scopeKey === scopeKey && (Date.now() - tepEpWirelessCache.ts) < TEP_EP_WIRELESS_CACHE_MS) return Promise.resolve(tepEpWirelessCache);
+    if (tepEpWirelessInflight) return tepEpWirelessInflight;
+    tepEpWirelessInflight = (async () => {
+      const byMachineId = new Map();
+      const index = new Map();
+      try {
+        const headers = {};
+        const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+        if (aid) headers['x-thousandeyes-aid'] = aid;
+        const uid = readBrowserCookie('teUid'); if (uid) headers['x-thousandeyes-uid'] = uid;
+        const hero = readBrowserCookie('teHeroUserId'); if (hero) headers['x-thousandeyes-heroid'] = hero;
+        const ver = teInitData ? (teInitData.version ?? teInitData.appVersion ?? teInitData.teVersion) : null;
+        if (typeof ver === 'string' && ver) headers['x-thousandeyes-version'] = ver;
+        const url = '/namespace/endpoint-api/local-networks-service/v1/wireless-metrics-reports/endpoint-agents';
+        const pageSize = scopeIds ? Math.min(1000, Math.max(50, scopeIds.length + 20)) : 200;
+        const ingest = (els) => {
+          for (const el of els) {
+            const m = el && el.meta, machine = m && m.machine;
+            if (!machine || machine.machineId == null || byMachineId.has(String(machine.machineId))) continue;
+            const wp = m.wirelessProfile;
+            const bssid = tepNormMac(wp && wp.bssid);
+            if (!bssid) continue;   // "Unknown BSSID - …" placeholder or wired
+            const met = el.metrics || {};
+            const wr = m.whoisRange || {};
+            const rec = { machineId: String(machine.machineId), name: machine.name || String(machine.machineId), platform: machine.platform || '',
+              ssid: wp.ssid || '', quality: met.quality != null ? Math.round(Number(met.quality)) : null,
+              rssi: met.rssi != null ? Number(met.rssi) : null, channel: wp.channel != null ? wp.channel : null,
+              phyMode: wp.phyMode || '', vendor: wp.vendor || '', bssid,
+              snr: met.snr != null ? Number(met.snr) : null, noise: met.noise != null ? Number(met.noise) : null,
+              txRate: met.txRate != null ? Number(met.txRate) : null, throughput: met.throughput != null ? Number(met.throughput) : null,
+              pubStart: tepIpToNum(wr.startIp), pubEnd: tepIpToNum(wr.endIp) };
+            byMachineId.set(rec.machineId, rec);
+            for (const key of [bssid, tepMacToggleLA(bssid)]) { if (!index.has(key)) index.set(key, []); index.get(key).push(rec); }
+          }
+        };
+        // Run the N sample rounds (newest first) with a filter set; report whether
+        // ANY request succeeded (to detect an unsupported filter).
+        const runRounds = async (filters) => {
+          let anyOk = false;
+          for (let i = 0; i < TEP_EP_WIRELESS_SAMPLES; i++) {
+            const roundId = round0 - i * 60;
+            const body = JSON.stringify({ roundId, searchTerm: '', pageSize, filters, sort: 'SIGNAL_QUALITY', direction: 'ASCENDING', savedEventId: null, pageId: null });
+            let j = null, ok = false;
+            try { const resp = await ajax(url, { method: 'POST', headers, body }); ok = !!(resp && resp.ok); if (ok) j = await resp.json().catch(() => null); } catch (_) { /* */ }
+            if (ok) anyOk = true;
+            const els = j && Array.isArray(j.elements) ? j.elements : null;
+            if (els && els.length) ingest(els);
+          }
+          return anyOk;
+        };
+        const baseFilter = [{ key: 'hardwareType', values: ['WIRELESS'] }];
+        const useMachineFilter = scopeIds && scopeIds.length <= 1000 && !tepEpWirelessFilterUnsupported;
+        let anyOk = await runRounds(useMachineFilter ? baseFilter.concat([{ key: 'machineId', values: scopeIds }]) : baseFilter);
+        if (useMachineFilter && !anyOk) {   // endpoint rejected the machineId filter — fall back once
+          tepEpWirelessFilterUnsupported = true;
+          byMachineId.clear(); index.clear();
+          anyOk = await runRounds(baseFilter);
+        }
+        const outside = scopeIds ? Array.from(byMachineId.keys()).filter((id) => !scope.has(id)).length : 0;
+        const localized = !!(useMachineFilter && !tepEpWirelessFilterUnsupported && outside === 0);
+        const inScope = scopeIds ? Array.from(byMachineId.keys()).filter((id) => scope.has(id)).length : byMachineId.size;
+        log('Wireless: ' + byMachineId.size + ' agent(s), last ' + TEP_EP_WIRELESS_SAMPLES + ' samples'
+          + (scopeIds ? ' · ' + inScope + ' at this site ' + (localized ? '(server-scoped poll)' : '(filtered locally)') : ' (account-wide)')
+          + (byMachineId.size ? ' — ' + Array.from(byMachineId.values()).map((c) => c.name + '=' + c.bssid).join(', ') : ''), 'tep-log-info');
+      } finally { tepEpWirelessInflight = null; }
+      tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, byMachineId, index };
+      return tepEpWirelessCache;
+    })();
+    return tepEpWirelessInflight;
+  }
+
+  /** Wireless-client endpoint agents currently associated with a device, matched
+   *  by BSSID ↔ interface MAC (exact, plus the LA-bit variant). Scoped to clients
+   *  behind this subnet's public IP (tepDevtopoSubnetPubNum) when known — a client
+   *  whose whois range does not cover it is a same-MAC collision at another site
+   *  and is dropped. Clients with no whois range are kept (BSSID match stands). */
+  function tepDeviceWirelessClients(deviceId) {
+    const wl = tepEpWirelessCache;
+    if (!wl || !wl.index || !wl.index.size) return [];
+    const ifaces = (tepDeviceIfCache && tepDeviceIfCache.byDevice.get(String(deviceId))) || [];
+    const scope = tepDevtopoScopeMachineIds, pub = tepDevtopoSubnetPubNum;
+    // Primary: only agents the map places at this site. Fallback: whois range.
+    const inScope = (c) => scope ? scope.has(c.machineId)
+      : (pub == null || c.pubStart == null || c.pubEnd == null || (c.pubStart <= pub && pub <= c.pubEnd));
+    const seen = new Set(); const out = [];
+    for (const f of ifaces) {
+      const mac = tepNormMac(f && f.macAddress);
+      if (!mac) continue;
+      for (const key of [mac, tepMacToggleLA(mac)]) {
+        const hits = wl.index.get(key);
+        if (hits) for (const c of hits) { if (!seen.has(c.machineId) && inScope(c)) { seen.add(c.machineId); out.push(c); } }
+      }
+    }
+    return out.sort((a, b) => (b.quality || 0) - (a.quality || 0));
+  }
+
+  /** Inline "AP card" wireless section folded into a device node: one row per
+   *  radio BAND (channel(s) + client count + a signal bar) and a row of SSID
+   *  pills — the mockup design, so an AP reads as a proper Wi-Fi card. */
+  function tepApWirelessSectionHtml(clients) {
     const esc = tepEscapeHtmlText;
-    const stText = (p) => p.state === 'uplink' ? (p.isWan ? 'Up · WAN' : 'Up · uplink')
-      : p.state === 'up' ? 'Up' : p.state === 'slow' ? 'Up · degraded' : p.state === 'down' ? 'Down' : 'No link';
+    const bandMap = new Map();
+    const ssids = []; const seen = new Set();
+    for (const c of clients) {
+      const band = tepWirelessBand(c.channel) || 'Wi-Fi';
+      if (!bandMap.has(band)) bandMap.set(band, { ch: new Set(), n: 0, rssis: [], quals: [] });
+      const b = bandMap.get(band);
+      if (c.channel != null) b.ch.add(c.channel);
+      b.n++;
+      if (c.rssi != null) b.rssis.push(c.rssi);
+      if (c.quality != null) b.quals.push(c.quality);
+      const s = c.ssid || 'Hidden'; if (!seen.has(s)) { seen.add(s); ssids.push(s); }
+    }
+    const order = ['5 GHz', '6 GHz', '2.4 GHz', 'Wi-Fi'];
+    const bandCls = (band) => band.indexOf('2.4') === 0 ? 'tep-ap-band--24' : band.indexOf('6') === 0 ? 'tep-ap-band--6' : 'tep-ap-band--5';
+    const avg = (a) => a.length ? Math.round(a.reduce((x, v) => x + v, 0) / a.length) : null;
+    const rows = [...bandMap.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([band, b]) => {
+      const chans = [...b.ch].sort((x, y) => x - y).join(', ');
+      const q = avg(b.quals), r = avg(b.rssis);
+      const barW = q != null ? Math.max(6, Math.min(100, q)) : (r != null ? Math.max(6, Math.min(100, 2 * (r + 100))) : 0);
+      const sigv = r != null ? r + ' dBm' : (q != null ? q + '%' : '');
+      return '<div class="tep-ap-radio">'
+        + '<span class="tep-ap-band ' + bandCls(band) + '">' + esc(band) + '</span>'
+        + '<span class="tep-ap-rmeta">' + (chans ? 'ch ' + esc(chans) + ' · ' : '') + b.n + ' client' + (b.n === 1 ? '' : 's') + '</span>'
+        + '<span class="tep-ap-sig"><i style="width:' + barW + '%"></i></span>'
+        + (sigv ? '<span class="tep-ap-sigv">' + esc(sigv) + '</span>' : '')
+        + '</div>';
+    }).join('');
+    const pills = ssids.length ? '<div class="tep-ap-ssids">' + ssids.map((s) => '<span class="tep-ap-ssid">' + esc(s) + '</span>').join('') + '</div>' : '';
+    return '<div class="tep-ap-wifi">' + rows + pills + '</div>';
+  }
+
+  // Faceplate layout. Ports lay out in TWO equal rows, filled row-major (1,2,3…
+  // across the top row, then the bottom): 6 ports ⇒ 3 over 3, 8 ⇒ 4 over 4, up
+  // to MAXCELLS ⇒ 12 over 12. Past MAXCELLS the ports collapse into equal RANGE
+  // groups so the faceplate always fits within 2 rows of ≤12 cells.
+  const TEP_FP_ROWS = 2;
+  const TEP_FP_MAXCELLS = 24;
+  const TEP_FP_CELL_PX = 13, TEP_FP_GROUP_PX = 16;
+
+  /** Build the grid cells (every port EXCEPT the WAN/internet slot) for a
+   *  faceplate. Ports are emitted in ascending order so the row-major CSS grid
+   *  lays them out 1,2,3… across then wraps to the second row. When the real
+   *  port count exceeds `budget` cells, consecutive ports collapse into equal
+   *  RANGE groups (96 ports, budget 24 ⇒ 24 cells of 4: cell 1 = ports 1–4) so
+   *  the faceplate summarizes instead of overflowing. Returns { cellsH, grouped,
+   *  count } where count is the number of rendered cells. */
+  function tepFpCellsHtml(grid, budget) {
+    const esc = tepEscapeHtmlText;
+    const stName = (st) => st === 'up' ? 'Up' : st === 'fast' ? 'Up · multi-gig' : st === 'slow' ? 'Up · degraded' : st === 'wan' ? 'Up · WAN' : st === 'down' ? 'Down' : 'No link';
+    const stText = (p) => stName(p.state) + (p.isUplink ? ' · uplink' : '');
     const attrs = (p) => ' data-pn="' + esc(p.label) + '" data-pst="' + esc(stText(p)) + '"'
       + ' data-psp="' + esc(p.speed ? tepFmtBps(p.speed) + 'bps' : '—') + '"'
       + ' data-put="' + esc(p.util != null ? Math.round(p.util * 100) + '%' : '—') + '"'
@@ -18165,50 +18476,64 @@
       + ' data-perr="' + esc(p.errs != null ? (p.errs > 0 ? p.errs.toFixed(2) + ' pps' : '0') : '') + '"'
       + ' data-ppeer="' + esc(p.peerName ? ('→ ' + p.peerName + (p.peerIf != null ? ' (port ' + p.peerIf + ')' : '')) : '') + '"'
       + ' data-pmon="' + (p.monitored ? 'yes' : 'no') + '"';
-    const portHtml = (p) => '<span class="tep-port tep-port--' + p.state + '" tabindex="0"' + attrs(p) + '></span>';
-    // A grouped cell stands in for a contiguous RANGE of ports (see below).
-    // Aggregate state surfaces activity first (any live link ⇒ green), then
-    // degraded, then a hard down, else idle; the tooltip carries the "N / M up"
-    // detail plus the group's busiest speed/util.
+    const portHtml = (p) => '<span class="tep-port tep-port--' + p.state + (p.isUplink ? ' tep-port--uplink' : '') + '" tabindex="0"' + (p.ix != null ? ' data-ifi="' + p.ix + '"' : '') + attrs(p) + '></span>';
+    // A grouped cell stands in for a contiguous RANGE of ports. Aggregate state
+    // surfaces activity first (any live link ⇒ green), then degraded, then a
+    // hard down, else idle; the tooltip carries the "N / M up" detail plus the
+    // group's busiest speed/util.
     const portNum = (p) => (p.ix != null ? p.ix : ((String(p.label).match(/(\d+)\s*$/) || [])[1] || p.label));
     const groupHtml = (bucket) => {
       const has = (s) => bucket.some((p) => p.state === s);
-      const upCount = bucket.filter((p) => p.state === 'up' || p.state === 'slow' || p.state === 'uplink').length;
-      const state = (has('up') || has('uplink')) ? 'up' : has('slow') ? 'slow' : has('down') ? 'down' : 'idle';
+      const upCount = bucket.filter((p) => p.state === 'up' || p.state === 'slow' || p.state === 'uplink' || p.state === 'fast').length;
+      const state = has('fast') ? 'fast' : (has('up') || has('uplink')) ? 'up' : has('slow') ? 'slow' : has('down') ? 'down' : 'idle';
       const first = portNum(bucket[0]), last = portNum(bucket[bucket.length - 1]);
       const range = bucket.length > 1 ? ('Ports ' + first + '–' + last) : ('Port ' + first);
       const maxUtil = bucket.reduce((m, p) => (p.util != null && p.util > m ? p.util : m), 0);
       const maxSpeed = bucket.reduce((m, p) => (p.speed != null && p.speed > m ? p.speed : m), 0);
+      const ixs = bucket.map((p) => p.ix).filter((v) => v != null);
       const at = ' data-pn="' + esc(range) + '"'
         + ' data-pst="' + esc(upCount + ' / ' + bucket.length + ' up') + '"'
         + ' data-psp="' + esc(maxSpeed ? tepFmtBps(maxSpeed) + 'bps' : '—') + '"'
         + ' data-put="' + esc(maxUtil ? Math.round(maxUtil * 100) + '%' : '—') + '"'
+        + (ixs.length ? ' data-ifi-lo="' + Math.min.apply(null, ixs) + '" data-ifi-hi="' + Math.max.apply(null, ixs) + '"' : '')
         + ' data-ppeer="" data-pmon="' + (bucket.some((p) => p.monitored) ? 'yes' : 'no') + '"';
       return '<span class="tep-port tep-port--' + state + ' tep-port--group" tabindex="0"' + at + '></span>';
     };
-    // Only the WAN/internet port is exclusive; the numbered ports (1..N, already
-    // sorted so port 1 is first ⇒ top-left of the grid) stay together, trunk
-    // uplinks included in their real position.
+    const B = Math.max(1, budget || TEP_FP_MAXCELLS);
+    if (grid.length <= B) return { cellsH: grid.map(portHtml).join(''), grouped: false, count: grid.length };
+    const size = Math.ceil(grid.length / B);   // ports per group so cell count ≤ B
+    const cells = [];
+    for (let i = 0; i < grid.length; i += size) cells.push(groupHtml(grid.slice(i, i + size)));
+    return { cellsH: cells.join(''), grouped: true, count: cells.length };
+  }
+
+  /** Real-switch faceplate: physical ports laid out in TWO equal rows, filled
+   *  row-major (1,2,3… across the top, then the bottom), the uplink/WAN port
+   *  pulled out as an exclusive slot. The grid's column count is pinned to
+   *  ceil(cells/2) so it is always exactly 2 rows; past TEP_FP_MAXCELLS the ports
+   *  collapse into range groups (see tepFpCellsHtml) so it still fits in 2×12. */
+  function tepDeviceFaceplateHtml(pm) {
+    if (!pm || !pm.ports || !pm.ports.length) return '';
+    // Only the WAN/internet port is exclusive; the numbered ports (already sorted
+    // so port 1 is first ⇒ top-left) stay together, trunk uplinks in real position.
     const wan = pm.ports.find((p) => p.state === 'wan');
     const grid = pm.ports.filter((p) => p.state !== 'wan');
-    // Cap the faceplate at MAXCELLS cells. A 48/96/… port switch would otherwise
-    // balloon the node width (one 13px cell per port), so past the cap collapse
-    // consecutive ports into equal groups — each rendered cell then REPRESENTS a
-    // range (96 ports → 24 cells of 4: cell 1 = ports 1–4). CONFIRMED via user
-    // request. The true port count still shows in the node's sub-label.
-    const MAXCELLS = 24;
-    let cellsH = '';
-    if (grid.length <= MAXCELLS) {
-      cellsH = grid.map(portHtml).join('');
-    } else {
-      const size = Math.ceil(grid.length / MAXCELLS);   // ports per group
-      const cells = [];
-      for (let i = 0; i < grid.length; i += size) cells.push(groupHtml(grid.slice(i, i + size)));
-      cellsH = cells.join('');
-    }
-    const upH = wan ? '<div class="tep-fp-uplink">' + portHtml(wan) + '<span class="tep-fp-uplbl">WAN</span></div>' : '';
-    const gridH = cellsH ? '<div class="tep-fp-grid' + (grid.length > MAXCELLS ? ' tep-fp-grid--grouped' : '') + '">' + cellsH + '</div>' : '';
+    const { cellsH, grouped, count } = tepFpCellsHtml(grid, TEP_FP_MAXCELLS);
+    const cols = Math.max(1, Math.ceil(count / TEP_FP_ROWS));
+    const cw = grouped ? TEP_FP_GROUP_PX : TEP_FP_CELL_PX;
+    const upH = wan ? '<div class="tep-fp-uplink">' + tepFpCellsHtml([wan], 1).cellsH + '<span class="tep-fp-uplbl">WAN</span></div>' : '';
+    const gridH = cellsH ? '<div class="tep-fp-grid' + (grouped ? ' tep-fp-grid--grouped' : '') + '" style="grid-template-columns:repeat(' + cols + ',' + cw + 'px)">' + cellsH + '</div>' : '';
     return '<div class="tep-devtopo-faceplate">' + upH + gridH + '</div>';
+  }
+
+  /** Bind the per-port hover tooltip to every .tep-port inside scopeEl. Reused
+   *  by the initial node paint and the faceplate regroup pass (which replaces the
+   *  grid's innerHTML and so must re-bind). */
+  function tepBindPortHovers(scopeEl) {
+    scopeEl.querySelectorAll('.tep-port').forEach((pt) => {
+      pt.addEventListener('mousemove', (ev) => { ev.stopPropagation(); tepDevtopoShowTip(tepDevtopoPortCardHtml(pt), ev.clientX, ev.clientY, false); });
+      pt.addEventListener('mouseleave', (ev) => { ev.stopPropagation(); tepDevtopoHideTip(false); });
+    });
   }
 
   // ── Shared rich tooltip / detail card (one element per overlay) ──
@@ -18236,6 +18561,30 @@
     if (pinned) { const c = t.querySelector('.tt-close'); if (c) c.addEventListener('click', () => tepDevtopoHideTip(true)); }
   }
 
+  // Sticky hover card (map-style): stays open while the pointer is over the chip
+  // OR the card itself, so the client rows inside it can be hovered for detail and
+  // clicked through to the agent view — unlike the transient node hover cards.
+  let tepDevtopoStickyHideTimer = null;
+  function tepDevtopoCancelStickyHide() { if (tepDevtopoStickyHideTimer) { clearTimeout(tepDevtopoStickyHideTimer); tepDevtopoStickyHideTimer = null; } }
+  function tepDevtopoScheduleHideSticky() {
+    tepDevtopoCancelStickyHide();
+    tepDevtopoStickyHideTimer = setTimeout(() => { const t = tepDevtopoTipEl(); if (t && !t.classList.contains('pinned')) t.classList.remove('show', 'sticky'); }, 240);
+  }
+  function tepDevtopoShowStickyCard(html, x, y) {
+    const t = tepDevtopoTipEl(); if (!t) return;
+    if (t.classList.contains('pinned')) return;   // a pinned card wins
+    tepDevtopoCancelStickyHide();
+    t.innerHTML = html;
+    t.classList.remove('pinned');
+    t.classList.add('show', 'sticky');
+    if (!t._tepStickyBound) {
+      t._tepStickyBound = true;
+      t.addEventListener('mouseenter', tepDevtopoCancelStickyHide);
+      t.addEventListener('mouseleave', tepDevtopoScheduleHideSticky);
+    }
+    tepDevtopoPlaceTip(t, x, y);
+  }
+
   /** L3 addresses + VLAN SVIs a device exposes over SNMP (interfaces bearing an
    *  IP, plus any type-135 VLAN interfaces). Sparse — pure L2 access switches
    *  usually report neither, so this fills in only where the device actually
@@ -18249,6 +18598,59 @@
       if (t === 135) { const m = /(\d{1,4})\b/.exec(f.displayName || f.name || ''); if (m) vlans.add(+m[1]); }
     }
     return { addrs: addrs.slice(0, 4), vlans: Array.from(vlans).sort((a, b) => a - b) };
+  }
+
+  /** Rows for a wireless-client list. Each row shows the endpoint agent (platform
+   *  glyph + name + signal) and, on hover, a second line of detailed wireless info
+   *  (BSSID, channel, mode, vendor, RSSI). When `interactive`, the row is an anchor
+   *  deep-linking to that agent's endpoint view — used inside the sticky SSID card
+   *  and the pinned device card, both of which accept pointer events. */
+  function tepFmtWifiRate(r) {
+    if (r == null || !Number.isFinite(Number(r))) return '';
+    r = Number(r);
+    return r >= 1000 ? (r / 1000).toFixed(1).replace(/\.0$/, '') + ' Gbps' : Math.round(r) + ' Mbps';
+  }
+  function tepClientRowsHtml(clients, interactive, showSsid) {
+    const esc = tepEscapeHtmlText;
+    return clients.map((c) => {
+      const q = c.quality != null ? c.quality + '%' : (c.rssi != null ? c.rssi + ' dBm' : '');
+      const meta = [showSsid ? c.ssid : '', q].filter(Boolean).join(' · ');
+      const main = '<span class="tt-cl-main">' + tepClientIcon(c.platform) + '<span class="tt-cl-name">' + esc(c.name) + '</span>'
+        + (meta ? '<span class="tt-cl-meta">' + esc(meta) + '</span>' : '')
+        + (interactive ? '<span class="tt-cl-go">↗</span>' : '') + '</span>';
+      const detailBits = [c.rssi != null ? 'RSSI ' + c.rssi + ' dBm' : '', c.snr != null ? 'SNR ' + c.snr + ' dB' : '',
+        c.noise != null ? 'noise ' + c.noise + ' dBm' : '', c.txRate != null ? 'tx ' + tepFmtWifiRate(c.txRate) : ''].filter(Boolean).join(' · ');
+      const detail = detailBits ? '<span class="tt-cl-detail">' + esc(detailBits) + '</span>' : '';
+      const inner = main + detail;
+      return interactive
+        ? '<a class="tt-cl" href="' + esc(buildEndpointAgentViewUrl({ id: c.machineId })) + '" target="_blank" rel="noopener">' + inner + '</a>'
+        : '<span class="tt-cl">' + inner + '</span>';
+    }).join('');
+  }
+
+  /** Sticky hover card for an SSID chip — the clients on that one SSID of the AP.
+   *  Rows are interactive: hover for detailed wireless info, click to open the
+   *  agent view. */
+  function tepDevtopoSsidCardHtml(apName, ssid, members) {
+    const esc = tepEscapeHtmlText;
+    const macFmt = (h) => h ? h.match(/../g).join(':') : '';
+    const uniq = (arr) => [...new Set(arr.filter((v) => v != null && v !== ''))];
+    const band = (ch) => ch == null ? '' : (ch <= 14 ? '2.4 GHz' : ch <= 177 ? '5 GHz' : '6 GHz');
+    // Channel / mode / vendor / BSSID are properties of the AP's SSID broadcast
+    // (shared by its clients), so surface them once at the SSID level.
+    const chans = uniq(members.map((c) => c.channel));
+    const modes = uniq(members.map((c) => c.phyMode));
+    const vendors = uniq(members.map((c) => c.vendor));
+    const bssids = uniq(members.map((c) => c.bssid)).map(macFmt);
+    const rows = [];
+    if (chans.length) rows.push(['Channel', chans.map((ch) => ch + (band(ch) ? ' · ' + band(ch) : '')).join(', ')]);
+    if (modes.length) rows.push(['Mode', modes.join(', ')]);
+    if (vendors.length) rows.push(['Vendor', vendors.join(', ')]);
+    if (bssids.length) rows.push(['BSSID', bssids.join(', ')]);
+    const head = '<div class="tt-head"><span class="tt-name">' + esc(ssid) + '</span><span class="tt-badge" style="background:var(--tdt-ac)">SSID</span></div>';
+    const ip = '<div class="tt-ip">on ' + esc(apName) + ' · ' + members.length + ' client' + (members.length === 1 ? '' : 's') + '</div>';
+    const grid = rows.length ? '<dl class="tt-grid">' + rows.map((r) => '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>').join('') + '</dl>' : '';
+    return head + ip + grid + '<div class="tt-clients"><div class="tt-clients-hd">Clients · hover a row for radio detail</div>' + tepClientRowsHtml(members, true, false) + '</div>';
   }
 
   /** Detail card for a device node — health badge, key live metrics, VLAN/L3
@@ -18272,18 +18674,26 @@
     if (Number.isFinite(n.score)) rows.push(['Health', Math.round(n.score) + '%']);
     const head = '<div class="tt-head"><span class="tt-name">' + esc(n.name) + '</span><span class="tt-badge" style="background:' + H.c + '">' + esc(H.label) + '</span></div>';
     const ip = '<div class="tt-ip">' + esc([n.meta, n.kindLabel].filter(Boolean).join(' · ')) + '</div>';
+    const descH = (!n.ghost && n.desc) ? '<div class="tt-desc">' + esc(n.desc) + '</div>' : '';
     const grid = '<dl class="tt-grid">' + rows.map((r) => '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>').join('') + '</dl>';
     const addrH = l3.addrs.length
       ? '<div class="tt-addrs">' + l3.addrs.map((a) => '<span><b>' + esc(a.name) + '</b> ' + esc(a.ip) + '</span>').join('') + '</div>'
       : '';
     const note = n.ghost ? '<div class="tt-note">Seen via LLDP/CDP but not SNMP-monitored. Add SNMP credentials to bring it in.</div>'
       : (n.note ? '<div class="tt-note">' + esc(n.note) + '</div>' : '');
+    // Wireless clients: endpoint agents whose BSSID maps to one of this device's
+    // interface MACs. Each row deep-links to that agent's endpoint view (only
+    // clickable once the card is pinned — hover shows the list read-only).
+    const clients = n.ghost ? [] : tepDeviceWirelessClients(n.id);
+    const clientsH = clients.length
+      ? '<div class="tt-clients"><div class="tt-clients-hd">Wireless clients · ' + clients.length + '</div>' + tepClientRowsHtml(clients, pinned, true) + '</div>'
+      : '';
     let links = '';
     if (pinned && !n.ghost && Number(n.id) >= 0) {
       links = '<div class="tt-links"><a class="tt-link" href="' + esc(tepDeviceLayerUrl(n.id)) + '" target="_blank" rel="noopener">Open in Device Layer ↗</a>'
-        + '<a class="tt-link tt-link--ghost" href="' + esc(tepDeviceClientsUrl(n.id)) + '" target="_blank" rel="noopener">Clients ↗</a></div>';
+        + (clients.length ? '' : '<a class="tt-link tt-link--ghost" href="' + esc(tepDeviceClientsUrl(n.id)) + '" target="_blank" rel="noopener">Clients ↗</a>') + '</div>';
     }
-    return head + ip + grid + addrH + note + links;
+    return head + ip + descH + grid + addrH + clientsH + note + links;
   }
 
   function tepDevtopoPortCardHtml(p) {
@@ -18369,6 +18779,26 @@
     for (const n of model.nodes) tiers[Math.max(0, Math.min(nTiers - 1, n.tier))].push(n);
     const gwId = model.gatewayId != null ? String(model.gatewayId) : String(model.rootId);
 
+    // Wireless clients per device (endpoint BSSID ↔ interface-MAC match). Populated
+    // once the topo open's fillPorts chain has both the interface MACs and the
+    // wireless map; drives the SSID→client satellite band below each AP. Empty ⇒
+    // the layout below is unchanged.
+    const deviceClients = new Map();
+    for (const dn of model.nodes) { if (dn.ghost) continue; const cs = tepDeviceWirelessClients(dn.id); if (cs.length) deviceClients.set(String(dn.id), cs); }
+    const hasClients = deviceClients.size > 0;
+    // One-time (per wireless fetch) diagnostic: if agents were fetched but none
+    // matched, dump the device interface MACs so the mismatch is visible in-log.
+    if (tepEpWirelessCache && tepEpWirelessCache.byMachineId && tepEpWirelessCache.byMachineId.size && !tepEpWirelessCache._matchLogged) {
+      tepEpWirelessCache._matchLogged = true;
+      if (!hasClients) {
+        const macs = new Set();
+        for (const dn of model.nodes) { if (dn.ghost) continue; const ifs = (tepDeviceIfCache && tepDeviceIfCache.byDevice.get(String(dn.id))) || []; for (const f of ifs) { const m = tepNormMac(f && f.macAddress); if (m) macs.add(m); } }
+        log('Wireless clients: 0 matched a device MAC. Device interface MACs (' + macs.size + '): ' + Array.from(macs).slice(0, 40).join(', '), 'tep-log-info');
+      } else {
+        log('Wireless clients: matched ' + Array.from(deviceClients.values()).reduce((s, a) => s + a.length, 0) + ' across ' + deviceClients.size + ' AP(s)', 'tep-log-ok');
+      }
+    }
+
     // GROUP crowded tiers (like the map's agent clusters) — CONFIRMED via user
     // request. Too many nodes on one tier stretch the stage into a wide, skewed
     // horizontal scroll. Structurally connected nodes (any LLDP/CDP edge, plus the
@@ -18419,13 +18849,16 @@
     const maxRow = renderTiers.reduce((m, a) => Math.max(m, a.length), 1);
     // Size the stage so crowded tiers scroll rather than overlap.
     const stageW = Math.max(canvas.clientWidth, maxRow * 235, 760);
-    const stageH = Math.max(canvas.clientHeight, nTiers * 142 + 150, 460);
+    const stageH = Math.max(canvas.clientHeight, nTiers * 142 + 150, 460) + (hasClients ? 150 : 0);
     stage.style.minWidth = stageW + 'px'; stage.style.minHeight = stageH + 'px';
     const w = stage.clientWidth, h = stage.clientHeight;
     stage.innerHTML = '';
 
     const cloudY = 0.06 * h, agentY = 0.95 * h;
-    const yTop = 0.19 * h, yBot = 0.84 * h;
+    // With wireless clients, compress the device tiers up a touch so the SSID
+    // chips appended directly under each AP have room before the agent anchor.
+    const yTop = (hasClients ? 0.17 : 0.19) * h;
+    const yBot = (hasClients ? 0.72 : 0.84) * h;
     const tierY = (t) => nTiers <= 1 ? (yTop + yBot) / 2 : yTop + (yBot - yTop) * t / (nTiers - 1);
     const pos = new Map();
     renderTiers.forEach((arr, ti) => {
@@ -18445,12 +18878,14 @@
     svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
     svg.setAttribute('preserveAspectRatio', 'none');
     let seq = 0;
+    const linkPathD = (p1, p2, curve) => {
+      if (curve) { const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2, dx = p2.x - p1.x, dy = p2.y - p1.y, len = Math.hypot(dx, dy) || 1, off = Math.min(60, len * 0.12); return 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1) + ' Q ' + (mx + (-dy / len) * off).toFixed(1) + ' ' + (my + (dx / len) * off).toFixed(1) + ' ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1); }
+      return 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1) + ' L' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+    };
     const addLink = (p1, p2, color, extraCls, width, curve) => {
-      if (!p1 || !p2) return;
+      if (!p1 || !p2) return null;
       const id = 'tep-devtopo-p' + (seq++);
-      let d;
-      if (curve) { const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2, dx = p2.x - p1.x, dy = p2.y - p1.y, len = Math.hypot(dx, dy) || 1, off = Math.min(60, len * 0.12); d = 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1) + ' Q ' + (mx + (-dy / len) * off).toFixed(1) + ' ' + (my + (dx / len) * off).toFixed(1) + ' ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1); }
-      else d = 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1) + ' L' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+      const d = linkPathD(p1, p2, curve);
       const glow = document.createElementNS(TEP_SVGNS, 'path');
       glow.setAttribute('d', d); glow.setAttribute('fill', 'none'); glow.setAttribute('stroke', color);
       glow.setAttribute('stroke-width', (width + 4).toFixed(1)); glow.setAttribute('opacity', '0.2');
@@ -18469,6 +18904,9 @@
         const mp = document.createElementNS(TEP_SVGNS, 'mpath'); mp.setAttributeNS('http://www.w3.org/1999/xlink', 'href', '#' + id);
         mot.appendChild(mp); comet.appendChild(mot); svg.appendChild(comet);
       }
+      // Returned so a post-layout pass can re-anchor the link to the exact port
+      // cells once the faceplates have rendered (the comet's mpath follows).
+      return { update: (q1, q2) => { if (!q1 || !q2) return; const nd = linkPathD(q1, q2, curve); path.setAttribute('d', nd); glow.setAttribute('d', nd); } };
     };
     const edgeColor = (a, b) => {
       const na = model.nodeIndex.get(a), nb = model.nodeIndex.get(b);
@@ -18476,9 +18914,11 @@
       const sa = na && Number.isFinite(na.score) ? na.score : 100, sb = nb && Number.isFinite(nb.score) ? nb.score : 100;
       return tepDevtopoHealth(Math.min(sa, sb)).c;
     };
+    const edgeLinks = [];
     for (const e of model.edges) {
       const cls = (model.nodeIndex.get(e.a) || {}).ghost || (model.nodeIndex.get(e.b) || {}).ghost ? 'tep-devtopo-link--poll' : '';
-      addLink(pos.get(e.a), pos.get(e.b), edgeColor(e.a, e.b), cls, 2.6, true);
+      const link = addLink(pos.get(e.a), pos.get(e.b), edgeColor(e.a, e.b), cls, 2.6, true);
+      if (link) edgeLinks.push({ e, link });
     }
     addLink(gwPos, cloud, 'var(--tdt-ac)', 'tep-devtopo-link--uplink', 2.4, false);   // gateway → internet
     addLink(agent, gwPos, 'var(--tdt-ac)', 'tep-devtopo-link--poll', 1.6, true);        // agent → gateway (SNMP poll)
@@ -18492,6 +18932,7 @@
     // ── nodes ──
     const esc = tepEscapeHtmlText;
     const place = (el, p) => { el.style.left = (p.x / w * 100) + '%'; el.style.top = (p.y / h * 100) + '%'; };
+    const nodeElById = new Map();
     for (const n of model.nodes) {
       const p = pos.get(n.id); if (!p) continue;
       n.isGateway = String(n.id) === gwId;
@@ -18503,18 +18944,26 @@
       // is noise, so drop it and render a plain node instead.
       if (pm && n.kind !== 'switch' && pm.ports.length > 16) pm = null;
       const fp = pm ? tepDeviceFaceplateHtml(pm) : '';
+      const wifiClients = n.ghost ? [] : tepDeviceWirelessClients(n.id);
       const el = document.createElement('div');
-      el.className = 'tep-devtopo-node' + (n.ghost ? ' tep-devtopo-node--ghost' : '') + (fp ? ' tep-devtopo-node--faceplate' : '') + (!n.ghost && Number.isFinite(n.score) && n.score < 60 ? ' tep-devtopo-node--crit' : '');
+      el.className = 'tep-devtopo-node' + (n.ghost ? ' tep-devtopo-node--ghost' : '') + (fp ? ' tep-devtopo-node--faceplate' : '') + (wifiClients.length ? ' tep-devtopo-node--wifi' : '') + (!n.ghost && Number.isFinite(n.score) && n.score < 60 ? ' tep-devtopo-node--crit' : '');
       el.style.setProperty('--h', H.c);
       const tag = n.isGateway ? '<span class="tep-devtopo-node-tag">Edge → internet</span>'
         : n.ghost ? '<span class="tep-devtopo-node-tag">LLDP only</span>' : '';
+      // A real health note (unreachable/cpu/mem/errors) still shows as the warning
+      // badge; otherwise show the SNMP device Description in its place (muted, not
+      // health-coloured), falling back to the score when there is no description.
       const metric = n.note ? '<span class="tep-devtopo-node-metric">' + esc(n.note) + '</span>'
-        : (Number.isFinite(n.score) ? '<span class="tep-devtopo-node-metric">' + Math.round(n.score) + '%</span>' : '');
-      const sub = pm ? [n.meta, pm.ports.length + '-port'].filter(Boolean).join(' · ') : [n.meta, n.kindLabel].filter(Boolean).join(' · ');
+        : (n.desc ? '<span class="tep-devtopo-node-metric tep-devtopo-node-metric--desc" title="' + esc(n.desc) + '">' + esc(n.desc) + '</span>'
+        : (Number.isFinite(n.score) ? '<span class="tep-devtopo-node-metric">' + Math.round(n.score) + '%</span>' : ''));
+      const nClients = wifiClients.length;
+      const subParts = pm ? [n.meta, pm.ports.length + '-port'] : [n.meta, n.kindLabel];
+      if (nClients) subParts.push(nClients + ' client' + (nClients === 1 ? '' : 's'));
+      const sub = subParts.filter(Boolean).join(' · ');
       el.innerHTML = tag + '<div class="tep-devtopo-node-hd">'
         + '<span class="tep-devtopo-node-ic">' + tepDeviceKindIcon(n.kind) + '</span>'
         + '<span class="tep-devtopo-node-txt"><span class="tep-devtopo-node-name">' + esc(n.name) + '</span><span class="tep-devtopo-node-meta">' + esc(sub) + '</span></span>'
-        + metric + '</div>' + fp;
+        + metric + '</div>' + fp + (nClients ? tepApWirelessSectionHtml(wifiClients) : '');
       // hover → transient card; click → pinned card (+ deep link)
       el.addEventListener('mousemove', (ev) => { if (ev.target.closest('.tep-port')) return; tepDevtopoShowTip(tepDevtopoDeviceCardHtml(n, false), ev.clientX, ev.clientY, false); });
       el.addEventListener('mouseleave', () => tepDevtopoHideTip(false));
@@ -18527,12 +18976,34 @@
         tepDevtopoShowTip(tepDevtopoDeviceCardHtml(n, true), r.right - 8, r.top + 8, true);
       });
       // per-port hover cards
-      el.querySelectorAll('.tep-port').forEach((pt) => {
-        pt.addEventListener('mousemove', (ev) => { ev.stopPropagation(); tepDevtopoShowTip(tepDevtopoPortCardHtml(pt), ev.clientX, ev.clientY, false); });
-        pt.addEventListener('mouseleave', (ev) => { ev.stopPropagation(); tepDevtopoHideTip(false); });
-      });
+      tepBindPortHovers(el);
       place(el, p); stage.appendChild(el);
+      nodeElById.set(String(n.id), el);
     }
+
+    // Re-anchor each device↔device link to the exact PORT it uses, once the
+    // faceplates have laid out — the link then leaves the real port cell instead
+    // of the node centre (falls back to the node centre when the port is unknown
+    // or off the faceplate). Runs after layout so getBoundingClientRect is valid.
+    requestAnimationFrame(() => {
+      if (!svg.isConnected) return;   // a newer paint replaced this render
+      const sr = stage.getBoundingClientRect();
+      const center = (cell) => { const r = cell.getBoundingClientRect(); return { x: r.left + r.width / 2 - sr.left, y: r.top + r.height / 2 - sr.top }; };
+      const findPortCell = (nodeEl, ifIndex) => {
+        if (!nodeEl || ifIndex == null) return null;
+        let c = nodeEl.querySelector('.tep-port[data-ifi="' + ifIndex + '"]');
+        if (c) return c;
+        const groups = nodeEl.querySelectorAll('.tep-port[data-ifi-lo]');
+        for (const gcell of groups) { const lo = +gcell.getAttribute('data-ifi-lo'), hi = +gcell.getAttribute('data-ifi-hi'); if (ifIndex >= lo && ifIndex <= hi) return gcell; }
+        return null;
+      };
+      for (const { e, link } of edgeLinks) {
+        const cellA = findPortCell(nodeElById.get(String(e.a)), e.aIf);
+        const cellB = findPortCell(nodeElById.get(String(e.b)), e.bIf);
+        if (!cellA && !cellB) continue;   // nothing to refine
+        link.update(cellA ? center(cellA) : pos.get(e.a), cellB ? center(cellB) : pos.get(e.b));
+      }
+    });
 
     // ── grouped-tier cluster cards ──
     for (const g of groupNodes) {
@@ -18557,6 +19028,9 @@
       });
       place(el, p); stage.appendChild(el);
     }
+
+    // (Wireless clients are now shown inline in each AP's card — see the AP-wifi
+    // section built in the node loop — rather than as separate chips below it.)
 
     // ── polling agent anchor ──
     const agentEl = document.createElement('div');
@@ -18587,6 +19061,19 @@
     if (!tepSnmpInvCache || !tepDeviceTopoCache) return;
     const g = tepClusterNetworkGroups(cluster.items).find((x) => x.label === label);
     if (!g) return;
+    // Scope wireless clients to the endpoint agents the map already places at this
+    // site. Every entry in the group shares its public IP, so take that public IP
+    // and collect the machineIds of ALL endpoint agents in THIS cluster behind it
+    // (same public IP, even on a different local subnet). The BSSID match then only
+    // considers agents the map knows are here. Public IP is kept as a whois
+    // fallback for when no endpoint agentIds resolve. CONFIRMED via user request.
+    const pubIpStr = (g.entries.find((e) => e.it && e.it.ip) || { it: {} }).it.ip || '';
+    tepDevtopoSubnetPubNum = tepIpToNum(pubIpStr);
+    const scope = new Set();
+    for (const it of cluster.items) {
+      if (it && it.kind === 'endpoint' && it.agentId != null && (!pubIpStr || !it.ip || String(it.ip).trim() === String(pubIpStr).trim())) scope.add(String(it.agentId));
+    }
+    tepDevtopoScopeMachineIds = scope.size ? scope : null;
     const matched = tepColumnDevices(g.entries, tepSnmpInvCache.devices);
     if (!matched.length) return;
     const model = tepBuildSubnetTopo(g.entries, matched);
@@ -18636,10 +19123,233 @@
     const fillPorts = () => tepFetchDeviceInterfaces()
       .then(() => { paint(); return tepFetchDeviceInterfaceMetrics(subnetDeviceIds); })
       .then(() => paint())
-      .catch(() => { /* ports optional */ });
+      // Wireless clients need the interface MACs above; fetch every agent's BSSID
+      // in bulk and repaint so each AP's client list populates.
+      .then(() => tepFetchEndpointWirelessMap())
+      .then(() => paint())
+      .catch(() => { /* ports + clients optional */ });
     fillPorts();
     tepDeviceTopoKeyHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); tepCloseDeviceTopoView(); } };
     document.addEventListener('keydown', tepDeviceTopoKeyHandler, true);
+  }
+
+  // ── Wireless topology: endpoint agents grouped SSID → BSSID → client ────────
+  function tepWirelessBand(ch) { return ch == null ? '' : (ch <= 14 ? '2.4 GHz' : ch <= 177 ? '5 GHz' : '6 GHz'); }
+
+  /** Model for the wireless topology: the scoped wireless endpoint agents grouped
+   *  by SSID, then by the BSSID (AP radio) they associate with. AP names come from
+   *  matching a BSSID to a monitored device's interface MAC (when the inventory is
+   *  loaded). scopeIds limits to specific machineIds; onlySsid limits to one SSID. */
+  function tepBuildWirelessTopo(scopeIds, onlySsid) {
+    const wl = tepEpWirelessCache;
+    const recs = [];
+    if (wl && wl.byMachineId) {
+      for (const r of wl.byMachineId.values()) {
+        if (scopeIds && scopeIds.size && !scopeIds.has(r.machineId)) continue;
+        if (onlySsid != null && (r.ssid || 'Hidden SSID') !== onlySsid) continue;
+        recs.push(r);
+      }
+    }
+    // bssid (and LA-variant) → AP device name, from the interface inventory.
+    const bssidToAp = new Map();
+    if (tepDeviceIfCache && tepDeviceIfCache.byDevice) {
+      const devName = new Map();
+      if (tepSnmpInvCache && tepSnmpInvCache.devices) for (const d of tepSnmpInvCache.devices) devName.set(String(d.id), d.name);
+      for (const [devId, ifaces] of tepDeviceIfCache.byDevice) {
+        const nm = devName.get(String(devId)); if (!nm) continue;
+        for (const f of ifaces) { const m = tepNormMac(f && f.macAddress); if (m) { if (!bssidToAp.has(m)) bssidToAp.set(m, nm); const la = tepMacToggleLA(m); if (!bssidToAp.has(la)) bssidToAp.set(la, nm); } }
+      }
+    }
+    const bySsid = new Map();
+    for (const r of recs) {
+      const ssid = r.ssid || 'Hidden SSID';
+      if (!bySsid.has(ssid)) bySsid.set(ssid, new Map());
+      const byB = bySsid.get(ssid);
+      if (!byB.has(r.bssid)) byB.set(r.bssid, []);
+      byB.get(r.bssid).push(r);
+    }
+    const ssids = [];
+    for (const [ssid, byB] of bySsid) {
+      const bssids = [];
+      for (const [bssid, clients] of byB) {
+        clients.sort((a, b) => (b.quality || 0) - (a.quality || 0));
+        const ch = (clients.find((c) => c.channel != null) || {}).channel;
+        bssids.push({ bssid, apName: bssidToAp.get(bssid) || '', channel: ch != null ? ch : null, band: tepWirelessBand(ch),
+          phyMode: (clients.find((c) => c.phyMode) || {}).phyMode || '', vendor: (clients.find((c) => c.vendor) || {}).vendor || '', clients });
+      }
+      bssids.sort((a, b) => b.clients.length - a.clients.length);
+      ssids.push({ ssid, bssids, clientCount: bssids.reduce((s, b) => s + b.clients.length, 0) });
+    }
+    ssids.sort((a, b) => b.clientCount - a.clientCount);
+    return { ssids, clientCount: recs.length, ssidCount: ssids.length, bssidCount: ssids.reduce((s, x) => s + x.bssids.length, 0) };
+  }
+
+  /** Sticky card for a BSSID node — its AP/radio facts + the clients on it. */
+  function tepWirelessBssidCardHtml(b) {
+    const esc = tepEscapeHtmlText;
+    const macFmt = (h) => h ? h.match(/../g).join(':') : '';
+    const rows = [];
+    if (b.apName) rows.push(['Access point', b.apName]);
+    if (b.channel != null) rows.push(['Channel', b.channel + (b.band ? ' · ' + b.band : '')]);
+    if (b.phyMode) rows.push(['Mode', b.phyMode]);
+    if (b.vendor) rows.push(['Vendor', b.vendor]);
+    rows.push(['BSSID', macFmt(b.bssid)]);
+    const head = '<div class="tt-head"><span class="tt-name">' + esc(b.apName || macFmt(b.bssid)) + '</span><span class="tt-badge" style="background:var(--tdt-ac)">BSSID</span></div>';
+    const grid = '<dl class="tt-grid">' + rows.map((r) => '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>').join('') + '</dl>';
+    return head + grid + '<div class="tt-clients"><div class="tt-clients-hd">Clients · ' + b.clients.length + '</div>' + tepClientRowsHtml(b.clients, true, false) + '</div>';
+  }
+
+  /** Paint the wireless topology as a 3-tier tree: SSID → BSSID → client. */
+  function tepPaintWirelessTopo(canvas, model) {
+    if (!canvas) return;
+    let stage = canvas.querySelector('.tep-devtopo-stage');
+    if (!stage) { stage = document.createElement('div'); stage.className = 'tep-devtopo-stage'; canvas.appendChild(stage); }
+    const esc = tepEscapeHtmlText;
+    const macFmt = (h) => h ? h.match(/../g).join(':') : '';
+    if (!model || !model.clientCount) { stage.innerHTML = '<div class="tep-devtopo-empty">No wireless clients found at this site in the last several minutes.</div>'; return; }
+    const SLOT_W = 108, MARGIN = 72;
+    let slot = 0;
+    for (const s of model.ssids) for (const b of s.bssids) for (const c of b.clients) c._slot = slot++;
+    const leaves = Math.max(1, slot);
+    const stageW = Math.max(canvas.clientWidth, MARGIN * 2 + leaves * SLOT_W, 760);
+    const stageH = Math.max(canvas.clientHeight, 460);
+    stage.style.minWidth = stageW + 'px'; stage.style.minHeight = stageH + 'px';
+    const w = stage.clientWidth, h = stage.clientHeight;
+    stage.innerHTML = '';
+    const xOf = (slotIdx) => MARGIN + (slotIdx + 0.5) * (w - 2 * MARGIN) / leaves;
+    const ssidY = 0.17 * h, bssidY = 0.5 * h, clientY = 0.85 * h;
+    const svg = document.createElementNS(TEP_SVGNS, 'svg');
+    svg.setAttribute('class', 'tep-devtopo-svg'); svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); svg.setAttribute('preserveAspectRatio', 'none');
+    const link = (p1, p2) => {
+      const path = document.createElementNS(TEP_SVGNS, 'path');
+      const my = (p1.y + p2.y) / 2;
+      path.setAttribute('d', 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1) + ' C ' + p1.x.toFixed(1) + ' ' + my.toFixed(1) + ' ' + p2.x.toFixed(1) + ' ' + my.toFixed(1) + ' ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1));
+      path.setAttribute('class', 'tep-devtopo-link'); path.setAttribute('fill', 'none'); path.setAttribute('stroke', 'var(--tdt-ac)'); path.setAttribute('stroke-width', '1.5'); path.setAttribute('opacity', '.45');
+      svg.appendChild(path);
+    };
+    stage.appendChild(svg);
+    const place = (el, x, y) => { el.style.left = (x / w * 100) + '%'; el.style.top = (y / h * 100) + '%'; };
+    const chip = (cls, html) => { const el = document.createElement('div'); el.className = 'tep-devtopo-wnode ' + cls; el.innerHTML = html; return el; };
+    const addTierLbl = (y, text) => { const l = document.createElement('div'); l.className = 'tep-devtopo-tierlbl'; l.style.top = (y / h * 100) + '%'; l.textContent = text; stage.appendChild(l); };
+    addTierLbl(ssidY, 'SSIDs'); addTierLbl(bssidY, 'BSSIDs · AP radios'); addTierLbl(clientY, 'Wireless clients');
+    for (const s of model.ssids) {
+      for (const b of s.bssids) { const xs = b.clients.map((c) => c._slot); b._x = xs.reduce((a, v) => a + v, 0) / xs.length; }
+      s._x = s.bssids.reduce((a, b) => a + b._x, 0) / s.bssids.length;
+      const sx = xOf(s._x), sp = { x: sx, y: ssidY };
+      const allMembers = s.bssids.reduce((a, b) => a.concat(b.clients), []);
+      const apNames = [...new Set(s.bssids.map((b) => b.apName).filter(Boolean))];
+      const sEl = chip('tep-devtopo-wnode--ssid', tepSsidIcon() + '<span class="wlbl">SSID: ' + esc(s.ssid) + '</span><span class="wn">' + s.clientCount + '</span>');
+      sEl.addEventListener('mouseenter', (ev) => tepDevtopoShowStickyCard(tepDevtopoSsidCardHtml(apNames.join(', ') || 'this site', s.ssid, allMembers), ev.clientX, ev.clientY));
+      sEl.addEventListener('mouseleave', () => tepDevtopoScheduleHideSticky());
+      place(sEl, sx, ssidY); stage.appendChild(sEl);
+      for (const b of s.bssids) {
+        const bx = xOf(b._x), bp = { x: bx, y: bssidY };
+        link(sp, bp);
+        const blbl = b.apName || macFmt(b.bssid);
+        const bEl = chip('tep-devtopo-wnode--bssid', tepDeviceKindIcon('ap') + '<span class="wlbl">' + esc(blbl) + '</span>' + (b.band ? '<span class="wn">' + esc(b.band) + '</span>' : ''));
+        bEl.addEventListener('mouseenter', (ev) => tepDevtopoShowStickyCard(tepWirelessBssidCardHtml(b), ev.clientX, ev.clientY));
+        bEl.addEventListener('mouseleave', () => tepDevtopoScheduleHideSticky());
+        place(bEl, bx, bssidY); stage.appendChild(bEl);
+        for (const c of b.clients) {
+          const cx = xOf(c._slot), cp = { x: cx, y: clientY };
+          link(bp, cp);
+          const q = c.quality != null ? c.quality + '%' : (c.rssi != null ? c.rssi + ' dBm' : '');
+          const cEl = chip('tep-devtopo-wnode--client', tepClientIcon(c.platform) + '<span class="wlbl">' + esc(c.name) + '</span>' + (q ? '<span class="wn">' + esc(q) + '</span>' : ''));
+          cEl.title = c.name + (c.channel != null ? ' · ch ' + c.channel : '') + (c.phyMode ? ' · ' + c.phyMode : '') + (c.rssi != null ? ' · RSSI ' + c.rssi + ' dBm' : '') + (c.snr != null ? ' · SNR ' + c.snr : '') + (c.txRate != null ? ' · tx ' + tepFmtWifiRate(c.txRate) : '') + ' — click to open agent';
+          cEl.addEventListener('click', (ev) => { ev.stopPropagation(); window.open(buildEndpointAgentViewUrl({ id: c.machineId }), '_blank', 'noopener'); });
+          place(cEl, cx, clientY); stage.appendChild(cEl);
+        }
+      }
+    }
+    stage.addEventListener('click', (ev) => { if (ev.target === stage || ev.target === svg) tepDevtopoHideTip(true); });
+  }
+
+  /** Open the wireless topology overlay. opts: { scopeIds:Set|null, pubNum, onlySsid, title }. */
+  function tepOpenWirelessTopoView(opts) {
+    opts = opts || {};
+    const esc = tepEscapeHtmlText;
+    tepDevtopoScopeMachineIds = opts.scopeIds || null;
+    tepDevtopoSubnetPubNum = opts.pubNum != null ? opts.pubNum : null;
+    tepCloseDeviceTopoView();
+    const overlay = document.createElement('div');
+    overlay.className = 'tep-devtopo-overlay';
+    const backIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>';
+    const closeIcon = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+    overlay.innerHTML = '<div class="tep-devtopo-panel">'
+      + '<div class="tep-devtopo-head">'
+      + '<button type="button" class="tep-devtopo-btn tep-devtopo-back" title="Close">' + backIcon + 'Back</button>'
+      + '<div><div class="tep-devtopo-eyebrow">Wireless · endpoint agents</div>'
+      + '<div class="tep-devtopo-title">' + esc(opts.title || 'Wireless topology') + '</div>'
+      + '<div class="tep-devtopo-sub" id="tep-wtopo-sub">Loading wireless topology…</div></div>'
+      + '<div class="tep-devtopo-head-right">'
+      + '<button type="button" class="tep-devtopo-btn tep-devtopo-close" title="Close">' + closeIcon + '</button>'
+      + '</div></div>'
+      + '<div class="tep-devtopo-canvas"><div class="tep-devtopo-stage"></div></div>'
+      + '</div><div class="tep-devtopo-tip" role="tooltip"></div>';
+    document.documentElement.appendChild(overlay);
+    tepDeviceTopoEl = overlay;
+    overlay.querySelector('.tep-devtopo-close').addEventListener('click', tepCloseDeviceTopoView);
+    overlay.querySelector('.tep-devtopo-back').addEventListener('click', tepCloseDeviceTopoView);
+    const canvas = overlay.querySelector('.tep-devtopo-canvas');
+    let model = { ssids: [], clientCount: 0, ssidCount: 0, bssidCount: 0 };
+    const paint = () => { if (tepDeviceTopoEl === overlay) tepPaintWirelessTopo(canvas, model); };
+    const onResize = () => paint();
+    window.addEventListener('resize', onResize);
+    overlay._tepOnResize = onResize;
+    const updateSub = () => { const s = overlay.querySelector('#tep-wtopo-sub'); if (s) s.textContent = model.clientCount + ' client' + (model.clientCount === 1 ? '' : 's') + ' · ' + model.ssidCount + ' SSID' + (model.ssidCount === 1 ? '' : 's') + ' · ' + model.bssidCount + ' BSSID' + (model.bssidCount === 1 ? '' : 's'); };
+    // Show a pulsing loading state until the wireless poll returns (it can take a
+    // moment — several one-minute samples), then build + paint the real board.
+    requestAnimationFrame(() => { requestAnimationFrame(() => {
+      overlay.classList.add('tep-devtopo-overlay--in');
+      const st = canvas.querySelector('.tep-devtopo-stage');
+      if (st) st.innerHTML = '<div class="tep-devtopo-empty tep-devtopo-loading">Loading wireless topology…</div>';
+    }); });
+    // For the single-agent entry the SSID is only known after the fetch, so
+    // resolve it from that agent's record then.
+    const resolveSsid = () => {
+      if (opts.onlySsid != null) return opts.onlySsid;
+      if (opts.agentId) { const rec = tepEpWirelessCache && tepEpWirelessCache.byMachineId.get(String(opts.agentId)); return rec ? (rec.ssid || 'Hidden SSID') : null; }
+      return null;
+    };
+    Promise.resolve()
+      .then(() => tepFetchDeviceInterfaces().catch(() => null))
+      .then(() => tepFetchEndpointWirelessMap())
+      .then(() => {
+        if (tepDeviceTopoEl !== overlay) return;
+        const ssid = resolveSsid();
+        if (opts.agentId && ssid) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssid; }
+        model = tepBuildWirelessTopo(opts.scopeIds, ssid);
+        updateSub(); paint();
+      })
+      .catch(() => { const s = overlay.querySelector('#tep-wtopo-sub'); if (s) s.textContent = 'Could not load wireless data.'; });
+    tepDeviceTopoKeyHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); tepCloseDeviceTopoView(); } };
+    document.addEventListener('keydown', tepDeviceTopoKeyHandler, true);
+  }
+
+  /** Scope descriptor for a cluster column's wireless topology (same public IP). */
+  function tepWirelessScopeFromCluster(cluster, label) {
+    const g = tepClusterNetworkGroups(cluster.items).find((x) => x.label === label) || { entries: [] };
+    const pubIpStr = (g.entries.find((e) => e.it && e.it.ip) || { it: {} }).it.ip || '';
+    const scope = new Set();
+    for (const it of cluster.items) {
+      if (it && it.kind === 'endpoint' && it.agentId != null && (!pubIpStr || !it.ip || String(it.ip).trim() === String(pubIpStr).trim())) scope.add(String(it.agentId));
+    }
+    return { scopeIds: scope.size ? scope : null, pubNum: tepIpToNum(pubIpStr), title: 'Wireless · ' + (label || 'site') };
+  }
+
+  /** Open the wireless topology for one endpoint agent — its SSID, site-wide.
+   *  The site scope is taken from the already-loaded roster (endpoint agents that
+   *  share this agent's PUBLIC IP), so the poll stays LOCALIZED to this site — it
+   *  is set BEFORE fetching so the wireless request is filtered to those agents. */
+  function tepOpenWirelessTopoForAgent(agentId) {
+    const agent = allEndpointAgents.find((a) => String(a.id) === String(agentId));
+    const siteIp = agent && agent.ip ? String(agent.ip).trim() : '';
+    const scope = new Set();
+    if (siteIp) for (const a of allEndpointAgents) { if (a && a.id != null && String(a.ip || '').trim() === siteIp) scope.add(String(a.id)); }
+    if (!scope.size) scope.add(String(agentId));
+    // Open immediately in the loading state (the poll can take a moment); the view
+    // fetches, resolves this agent's SSID, then paints — no blank delay after click.
+    tepOpenWirelessTopoView({ scopeIds: scope, pubNum: tepIpToNum(siteIp), agentId: String(agentId), title: 'Wireless topology' });
   }
 
   /** Grouped, large-format board for a whole cluster — opened via the hover
@@ -18655,14 +19365,19 @@
     // once resolved (tepInjectClusterMaxDevices).
     const invReady = tepSnmpInvCache ? tepSnmpInvCache.devices : null;
     const healthReady = tepDeviceTopoCache ? tepDeviceTopoCache.byId : null;
+    const wifiIcon = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8 15.5a6 6 0 0 1 8 0"/><circle cx="12" cy="18.5" r="1" fill="currentColor" stroke="none"/></svg>';
     const cols = tepClusterNetworkGroups(cluster.items).map((g) => {
       const rows = tepSortTipEntries(g.entries).map(({ it, idx }) => tepDashTipRow(it, idx)).join('');
       // "Network: " prefix only for real subnet labels — the "Other agents"
       // catch-all isn't a network id, so it stays bare.
       const labelText = g.label === 'Other agents' ? g.label : `Network: ${g.label}`;
       const devHtml = invReady ? tepColumnDevicesHtml(g.entries, invReady, healthReady, g.label) : '';
+      // Wireless-topology launcher — whenever the column has endpoint agents (the
+      // view groups their SSID → BSSID → client, independent of SNMP devices).
+      const hasEp = g.entries.some((e) => e.it && e.it.kind === 'endpoint');
+      const wifiBtn = hasEp ? `<button type="button" class="tep-cluster-max-wireless-btn" data-topo-label="${tepEscapeHtmlText(g.label)}" title="Open the wireless topology (SSID &rarr; BSSID &rarr; clients) for this site">${wifiIcon}Wireless</button>` : '';
       return '<div class="tep-cluster-max-col">'
-        + `<div class="tep-cluster-max-col-head"><span class="tep-cluster-max-col-ip">${tepEscapeHtmlText(labelText)}</span><span class="tep-cluster-max-col-count">${g.entries.length}</span></div>`
+        + `<div class="tep-cluster-max-col-head"><span class="tep-cluster-max-col-ip">${tepEscapeHtmlText(labelText)}</span><span class="tep-cluster-max-col-count">${g.entries.length}</span>${wifiBtn}</div>`
         + `<div class="tep-cluster-max-col-body">${rows}</div>`
         + devHtml
         + '</div>';
@@ -20512,6 +21227,14 @@
         e.stopPropagation();
         tepOpenDeviceTopoView(cluster, btn.getAttribute('data-topo-label'));
       });
+      // Delegated: a column's "Wireless" launcher opens the wireless topology
+      // (SSID → BSSID → client) scoped to that column's site.
+      panel.addEventListener('click', (e) => {
+        const btn = e.target.closest && e.target.closest('.tep-cluster-max-wireless-btn');
+        if (!btn) return;
+        e.stopPropagation();
+        tepOpenWirelessTopoView(tepWirelessScopeFromCluster(cluster, btn.getAttribute('data-topo-label')));
+      });
       tepPlayClusterMaxPop(true);
       // Double rAF for the same reason as the fullscreen map's own mount-time
       // fade-in — guarantees the opacity:0/scaled-down starting state
@@ -20552,6 +21275,8 @@
       }
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay || e.target.closest('.tep-cluster-max-close')) { hideClusterMaxView(); return; }
+        const wifiIco = e.target.closest('.tep-agent-conn--wifi[data-wifi-agent]');
+        if (wifiIco) { e.stopPropagation(); tepOpenWirelessTopoForAgent(wifiIco.getAttribute('data-wifi-agent')); return; }
         if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
         if (e.target.closest('.tep-map-tip-metricrow--alert')) return; // let the alert's own test link open
         if (e.target.closest('.tep-map-tip-metricrow--link')) return; // let the Agent Settings/Views link open
@@ -20729,6 +21454,8 @@
       // where the hover visually was. The card's own center tracks the
       // marker much more closely.
       if (maxBtn) { openClusterMaxView(tip._cluster, tip.getBoundingClientRect()); return; }
+      const wifiIco = e.target.closest('.tep-agent-conn--wifi[data-wifi-agent]');
+      if (wifiIco) { e.preventDefault(); e.stopPropagation(); tepOpenWirelessTopoForAgent(wifiIco.getAttribute('data-wifi-agent')); return; }
       if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
       if (e.target.closest('.tep-map-tip-metricrow--alert')) return; // let the alert's own test link open
       if (e.target.closest('.tep-map-tip-metricrow--link')) return; // let the Agent Settings/Views link open
@@ -25721,6 +26448,17 @@
     const listEl = $('#tep-ep-agents-list');
     const countEl = $('#tep-ep-agents-count');
     if (!listEl) return;
+    // Delegated once: clicking a Wi-Fi agent's connection icon opens the wireless
+    // topology for that agent's SSID (survives list re-renders).
+    if (!listEl._tepWifiBound) {
+      listEl._tepWifiBound = true;
+      listEl.addEventListener('click', (e) => {
+        const w = e.target.closest && e.target.closest('.tep-agent-conn--wifi[data-wifi-agent]');
+        if (!w) return;
+        e.preventDefault(); e.stopPropagation();
+        tepOpenWirelessTopoForAgent(w.getAttribute('data-wifi-agent'));
+      });
+    }
     const filtered = getFilteredEndpointAgents();
     if (countEl) countEl.textContent = `Showing ${filtered.length} of ${allEndpointAgents.length} agent(s)`;
     updateEpNearSortChip(listEl);
