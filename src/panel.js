@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.91';
+  const TEP_VERSION = '3.92';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4292,6 +4292,7 @@
 
     /* Edit form inline */
     .tep-edit-form { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tep-slate-700); }
+    .tep-edit-loading { padding: 12px 4px; color: var(--tep-slate-400); font-size: 12px; }
     .tep-edit-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
     .tep-edit-row label { font-size: 11px; color: var(--tep-slate-400); min-width: 60px; }
     .tep-edit-row input, .tep-edit-row select {
@@ -10607,6 +10608,7 @@
   function isNetworkStyleProtocolFormTest(t) {
     if (isOneWayNetworkTest(t)) return true;
     if (isWebTransactionTest(t)) return true;
+    if (isApiTest(t)) return true;   // API tests carry network measurements too (probeMode/flagIcmp/pathtrace)
     return /A2s|Network|Http|Page/i.test(t.testType || t.type || '');
   }
   /** GET /ajax/tests/…/aid/testId — `api` has no detail to merge. */
@@ -11947,7 +11949,7 @@
     if (manageLoadBtn) manageLoadBtn.addEventListener('click', () => { void loadTests(); });
   }
 
-  function toggleEditForm(card, t) {
+  async function toggleEditForm(card, t) {
     closeConvertMenu();
     const existing = card.querySelector('.tep-edit-form');
     if (existing) {
@@ -11963,6 +11965,19 @@
       if (f) f.remove();
     });
     card.classList.add('is-editing');
+
+    // The list row is a SUMMARY — API tests especially arrive with no Target,
+    // Agents, or probe-mode until the full config is fetched. Load it (showing a
+    // placeholder) before building the form, or those fields render blank.
+    if (!t._agentsLoaded) {
+      const ph = document.createElement('div');
+      ph.className = 'tep-edit-form tep-edit-loading';
+      ph.textContent = 'Loading test settings…';
+      card.appendChild(ph);
+      try { await fetchTestDetail(t); } catch (_) { /* */ }
+      ph.remove();
+      if (!card.classList.contains('is-editing')) return;   // user closed it meanwhile
+    }
 
     const target = getTarget(t);
     const interval = getInterval(t);
@@ -12562,8 +12577,14 @@
         }
       }
 
-      if (!updated.agentSet) updated.agentSet = { agentSetId: 0, vAgentIds: [], vAgentsFlagEnabled: {} };
-      updated.agentSet.vAgentIds = [...editAgentIds].map(id => parseInt(id, 10) || id);
+      // Fresh agentSet object (don't mutate t.agentSet) with vAgentsFlagEnabled
+      // rebuilt to match the new vAgentIds — TE's own save (see the API capture)
+      // sends a flag per agent, and a stale/mismatched map can drop agents.
+      {
+        const vids = [...editAgentIds].map((id) => parseInt(id, 10) || id);
+        const flags = {}; for (const id of vids) flags[id] = 1;
+        updated.agentSet = Object.assign({ agentSetId: 0 }, updated.agentSet, { vAgentIds: vids, vAgentsFlagEnabled: flags });
+      }
 
       if (updated.testId == null && updated.id != null) updated.testId = updated.id;
       return applyBgpPolicyFromTestBody(updated);
@@ -12579,16 +12600,32 @@
     form.querySelector('.tep-save-edit').addEventListener('click', async () => {
       const dismissProcessing = toastProcessing('Saving…');
       try {
+        // API tests carry a complex body (multi-step requests, auth, assertions).
+        // The list row is a summary, and bulk enrichment skips API (canEnrich),
+        // so load the FULL test first — saving a partial body would wipe the
+        // steps. Abort loudly if we still don't have the steps, rather than
+        // corrupt the test. CONFIRMED via a native-save capture.
+        if (isApiTest(t) && !(Array.isArray(t.requests) && t.requests.length)) {
+          try { await fetchTestDetail(t); } catch (_) { /* */ }
+          if (!(Array.isArray(t.requests) && t.requests.length)) {
+            dismissProcessing();
+            toast('Couldn’t load this API test’s full configuration — not saving, to avoid wiping its steps.', 'err');
+            log('  ✗ API save aborted — full config (requests) not loaded', 'tep-log-err');
+            return;
+          }
+        }
         const updated = buildUpdatedTestFromEditForm();
         const newName = updated.name;
         const newInterval = parseInt(form.querySelector('.tep-edit-interval').value, 10);
         const freqKeys = Object.keys(updated).filter(k => /freq|interval/i.test(k));
-        // Update an EXISTING test at its resource URL (…/{aid}/{testId}) — the
-        // same per-test path DELETE and the detail GET already use — NOT the bare
-        // create URL. Posting the update to /ajax/tests/{type} makes TE run its
-        // create path and reject the (unchanged) name as a duplicate
-        // ("A test with this name already exists", overridable:false).
-        const saveUrl = (t.testId != null || t.id != null) ? testApiUrl(t) : testApiUrl(t, { forWrite: true });
+        // Update an EXISTING test at its resource URL (…/{aid}/{testId}) — NOT the
+        // bare create URL, or TE runs its create path and rejects the unchanged
+        // name as a duplicate. EXCEPTION: API tests update via the BARE
+        // /ajax/tests/api with testId in the body (the native convention — the
+        // resource URL isn't how TE saves those). CONFIRMED via capture.
+        const saveUrl = isApiTest(t)
+          ? testApiUrl(t, { forWrite: true })
+          : ((t.testId != null || t.id != null) ? testApiUrl(t) : testApiUrl(t, { forWrite: true }));
         log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o, k) => (o[k] = updated[k], o), {}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${saveUrl}`, 'tep-log-info');
 
         const resp = await ajax(saveUrl, {
@@ -12811,6 +12848,13 @@
 
     for (const t of selected) {
       if (isReadOnly(t)) { log(`  Skipping "${t.name}" — read-only type`, 'tep-log-info'); skipped++; continue; }
+      // API tests need their FULL body (multi-step requests) on every write — the
+      // list row is a summary, and posting it would wipe the steps. Load it; skip
+      // (don't corrupt) if we still can't get them. CONFIRMED via native capture.
+      if (action !== 'delete' && isApiTest(t) && !(Array.isArray(t.requests) && t.requests.length)) {
+        try { await fetchTestDetail(t); } catch (_) { /* */ }
+        if (!(Array.isArray(t.requests) && t.requests.length)) { log(`  Skipping "${t.name}" — couldn't load full API config`, 'tep-log-info'); skipped++; continue; }
+      }
       try {
         let resp;
         if (action === 'enable' || action === 'disable') {
