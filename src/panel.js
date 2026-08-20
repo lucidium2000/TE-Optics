@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.93';
+  const TEP_VERSION = '3.94';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -5814,8 +5814,13 @@
     el.textContent = msg;
     const body = root.querySelector('.tep-body');
     body.insertBefore(el, body.firstChild);
+    // Pin to the visible top of the scroll container (see toastProcessing) so a
+    // completion/error message isn't stranded off-screen when the list is scrolled.
+    const place = () => { el.style.top = (body.scrollTop + 10) + 'px'; };
+    place();
+    body.addEventListener('scroll', place);
     setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3500);
-    setTimeout(() => el.remove(), 4000);
+    setTimeout(() => { body.removeEventListener('scroll', place); el.remove(); }, 4000);
   }
 
   function toastProcessing(msg) {
@@ -5824,7 +5829,14 @@
     el.textContent = msg || 'Processing…';
     const body = root.querySelector('.tep-body');
     body.insertBefore(el, body.firstChild);
-    return () => el.remove();
+    // .tep-body is the scroll container and the toast is absolutely positioned
+    // within it, so the CSS top:10px sits at the CONTENT top — invisible when
+    // the user has scrolled down (e.g. selecting tests deep in a long list,
+    // then clicking bulk Apply). Ride scrollTop so it stays at the visible top.
+    const place = () => { el.style.top = (body.scrollTop + 10) + 'px'; };
+    place();
+    body.addEventListener('scroll', place);
+    return () => { body.removeEventListener('scroll', place); el.remove(); };
   }
 
   /** Centered confirm modal, in place of the browser's native confirm()
@@ -6094,11 +6106,16 @@
     const pathStr = path == null ? '' : String(path);
     const method = (options.method || 'GET').toUpperCase();
     const isDashNs = pathStr.includes('/namespace/dash-api');
+    // A request carrying x-thousandeyes-aid is a TE-"app" style call (test
+    // writes); the native app omits X-Requested-With on those and TE routes them
+    // to the update handler, so we drop it too — see tepTestWriteHeaders.
+    const optHeaders = options.headers || {};
+    const teAppReq = Object.keys(optHeaders).some((k) => k.toLowerCase() === 'x-thousandeyes-aid');
     const headers = {
       'Accept': 'application/json',
-      'X-Requested-With': 'XMLHttpRequest',
+      ...(teAppReq ? {} : { 'X-Requested-With': 'XMLHttpRequest' }),
       ...(isDashNs ? buildDashNamespaceHeaders() : {}),
-      ...(options.headers || {})
+      ...optHeaders
     };
     if (options.body) headers['Content-Type'] = 'application/json';
     if (csrfToken) headers[csrfToken.headerName] = csrfToken.value;
@@ -10366,7 +10383,11 @@
     'Dnssec': 'dnssec', 'Bgp': 'bgp', 'Network': 'network',
     'HTTP': 'http-server', 'DNS': 'dns-server', 'Voice': 'voip',
     'OneWayNetwork': 'oneway-network', 'Sip': 'sip-server',
-    'Agent to Server': 'network', 'agent to server': 'network'
+    'Agent to Server': 'network', 'agent to server': 'network',
+    // API tests carry testType 'Api' with no `type`; without this the slug
+    // resolves empty and /ajax/tests//{aid}/{testId} 404s — so the detail
+    // (requests/url/pathtraceInSession) never loads and backups come out bare.
+    'Api': 'api', 'api': 'api'
   };
   const SLUG_REMAP = {
     'onewaynetwork': 'oneway-network',
@@ -11137,6 +11158,28 @@
     const aid = t.aid;
     const testId = t.testId || t.id;
     return `/ajax/tests/${slug}/${aid}/${testId}`;
+  }
+
+  /** URL + headers for UPDATING an existing test — CONFIRMED via native captures.
+   *  Every type (Network, HTTP, API, …) updates via a POST to the BARE
+   *  /ajax/tests/{type} with the testId IN THE BODY; the resource URL
+   *  /ajax/tests/{type}/{aid}/{testId} only serves GET/DELETE (POST there 405s).
+   *  The write MUST carry the x-thousandeyes-{aid,uid,version} headers — without
+   *  the aid, TE runs its create path and rejects the unchanged name as a
+   *  duplicate. The native request also omits x-requested-with (ajax() drops it
+   *  automatically when x-thousandeyes-aid is present). */
+  function tepTestSaveUrl(t) {
+    return testApiUrl(t, { forWrite: true });
+  }
+  function tepTestWriteHeaders(t) {
+    const h = {};
+    const aid = (t && t.aid != null && t.aid !== '') ? t.aid : (teInitData && teInitData._currentAid);
+    if (aid != null && aid !== '') h['x-thousandeyes-aid'] = String(aid);
+    const uid = readBrowserCookie('teUid');
+    if (uid) h['x-thousandeyes-uid'] = uid;
+    const ver = teInitData ? (teInitData.version ?? teInitData.appVersion ?? teInitData.teVersion) : null;
+    if (typeof ver === 'string' && ver) h['x-thousandeyes-version'] = ver;
+    return h;
   }
 
   function getTestWriteBasePath(t) {
@@ -12637,13 +12680,12 @@
         // name as a duplicate. EXCEPTION: API tests update via the BARE
         // /ajax/tests/api with testId in the body (the native convention — the
         // resource URL isn't how TE saves those). CONFIRMED via capture.
-        const saveUrl = isApiTest(t)
-          ? testApiUrl(t, { forWrite: true })
-          : ((t.testId != null || t.id != null) ? testApiUrl(t) : testApiUrl(t, { forWrite: true }));
+        const saveUrl = tepTestSaveUrl(t);
         log(`Saving "${newName}" — freq: ${JSON.stringify(freqKeys.reduce((o, k) => (o[k] = updated[k], o), {}))} | interval: ${newInterval}${isBrowserOrPageTest(t) ? `, subinterval: ${updated.subinterval}` : ''} | POST ${saveUrl}`, 'tep-log-info');
 
         const resp = await ajax(saveUrl, {
           method: 'POST',
+          headers: tepTestWriteHeaders(t),
           body: JSON.stringify(updated)
         });
         dismissProcessing();
@@ -12793,8 +12835,9 @@
     try {
       log(`${action} "${t.name}"…`, 'tep-log-info');
       const updated = applyBgpPolicyFromTestBody({ ...t, flagEnabled: newState, flagIgnoreWarnings: 0 });
-      const resp = await ajax(testApiUrl(t, { forWrite: true }), {
+      const resp = await ajax(tepTestSaveUrl(t), {
         method: 'POST',
+        headers: tepTestWriteHeaders(t),
         body: JSON.stringify(updated)
       });
       if (resp.ok) {
@@ -12873,7 +12916,7 @@
         let resp;
         if (action === 'enable' || action === 'disable') {
           const updated = applyBgpPolicyFromTestBody({ ...t, flagEnabled: action === 'enable' ? 1 : 0, flagIgnoreWarnings: 0 });
-          resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(updated) });
+          resp = await ajax(tepTestSaveUrl(t), { method: 'POST', headers: tepTestWriteHeaders(t), body: JSON.stringify(updated) });
         } else if (action === 'interval') {
           const newInterval = parseInt(bulkInterval.value, 10);
           const updated = { ...t };
@@ -12898,7 +12941,7 @@
             updated.freq = newInterval;
           }
           alignSubintervalToInterval(updated, newInterval);
-          resp = await ajax(testApiUrl(t, { forWrite: true }), { method: 'POST', body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
+          resp = await ajax(tepTestSaveUrl(t), { method: 'POST', headers: tepTestWriteHeaders(t), body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
         } else if (action === 'protocol') {
           if (!isNetworkStyleProtocolFormTest(t)) { log(`  Skipping "${t.name}" — protocol change not applicable to this test type`, 'tep-log-info'); skipped++; continue; }
           try {
@@ -12960,9 +13003,9 @@
           }
           if (updated.testId == null && updated.id != null) updated.testId = updated.id;
 
-          const writeUrl = testApiUrl(t, { forWrite: true });
+          const writeUrl = tepTestSaveUrl(t);
           log(`  DEBUG bulk protocol → ${writeUrl} type="${t.type}" testType="${t.testType}" → "${updated.testType || t.testType}" port=${newPort}`, 'tep-log-info');
-          resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
+          resp = await ajax(writeUrl, { method: 'POST', headers: tepTestWriteHeaders(t), body: JSON.stringify(applyBgpPolicyFromTestBody(updated)) });
         } else if (action === 'delete') {
           resp = await ajax(testApiUrl(t), { method: 'DELETE' });
         }
@@ -13892,7 +13935,13 @@
       const errors = [];
       for (const t of selected) {
         try {
-          if (!t._agentsLoaded) await fetchTestDetail(t);
+          // API tests keep their steps in requests[], which only arrives via the
+          // per-test detail fetch. The enrich pass marks API tests _agentsLoaded
+          // WITHOUT loading detail (canEnrich is false for API), so a plain
+          // !_agentsLoaded guard skips them and the backup loses the steps.
+          // Force the fetch whenever an API test still lacks its requests.
+          const needsApiDetail = isApiTest(t) && !(Array.isArray(t.requests) && t.requests.length);
+          if (!t._agentsLoaded || needsApiDetail) await fetchTestDetail(t);
         } catch (e) {
           errors.push({ id: t.testId || t.id, err: e.message });
         }
@@ -14006,7 +14055,7 @@
       let done = false;
       for (let bump = 0; bump <= TESTS_RESTORE_NAME_CONFLICT_MAX; bump++) {
         try {
-          const resp = await ajax(writeUrl, { method: 'POST', body: JSON.stringify(obj) });
+          const resp = await ajax(writeUrl, { method: 'POST', headers: tepTestWriteHeaders(obj), body: JSON.stringify(obj) });
           const text = await resp.text();
           if (resp.ok || resp.status === 201) {
             okCount++;
