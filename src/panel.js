@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.97';
+  const TEP_VERSION = '3.98';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -18257,6 +18257,12 @@
       if (node.name && !realByKey.has(nk)) realByKey.set(nk, node.id);
     }
     const aliasId = (id) => idAlias.get(String(id)) || String(id);
+    // ALL unmonitored LLDP/CDP neighbours (named or not) collapse into a single
+    // grouped node so they don't litter the graph — CONFIRMED via user request.
+    // (A neighbour that resolves to a monitored device still attaches to it.)
+    const LLDP_GRP = '__tep_lldp_grp__';
+    const lldpIds = new Set();
+    let lldpGroupNode = null;
     const ensureGhost = (gid) => {
       const key = aliasId(gid);
       if (nodeIndex.has(key)) return key;
@@ -18264,10 +18270,18 @@
       const rawName = raw && (raw.displayName || raw.name || raw.sysName);
       const alias = rawName && realByKey.get('name:' + String(rawName).trim().toLowerCase());
       if (alias) return alias;   // this "neighbour" is really a monitored device
-      const gname = rawName || (Number(gid) < 0 ? 'Unknown neighbour' : 'Device ' + gid);
-      const gnode = { id: key, name: gname, kind: 'device', kindLabel: 'Unknown', meta: 'LLDP/CDP neighbour', score: null, note: '', tier: 1, ghost: true };
-      nodeIndex.set(key, gnode); nodes.push(gnode);
-      return key;
+      // A grouped node (router strategy): renders as a stacked group card with a
+      // member list + detail panel, instead of N loose LLDP stubs.
+      if (!lldpGroupNode) {
+        lldpGroupNode = { id: LLDP_GRP, _group: true, unknownGroup: true, name: 'LLDP neighbour', kind: 'device', kindLabel: 'LLDP neighbour', meta: 'LLDP/CDP neighbour', score: null, note: '', tier: 1, ghost: true, members: [], count: 0 };
+        nodeIndex.set(LLDP_GRP, lldpGroupNode); nodes.push(lldpGroupNode);
+      }
+      if (!lldpIds.has(key)) {
+        lldpIds.add(key);
+        const rawIp = raw && (raw.primaryIp || raw.mgmtIp || '');
+        lldpGroupNode.members.push({ id: key, name: rawName || 'Unknown neighbour', meta: rawIp || 'LLDP/CDP neighbour', ghost: true, kind: 'device', kindLabel: rawName ? 'LLDP neighbour' : 'Unknown', score: null });
+      }
+      return LLDP_GRP;
     };
     const edges = [];
     const eSeen = new Set();
@@ -18286,6 +18300,20 @@
       const k = a < b ? a + '|' + b : b + '|' + a;
       if (eSeen.has(k)) continue;
       eSeen.add(k); edges.push({ a, b, aIf, bIf });
+    }
+    // Finalize the grouped LLDP node — but a lone neighbour drops back to a plain
+    // single ghost (no point in a "group" of one).
+    if (lldpGroupNode) {
+      const c = lldpGroupNode.members.length;
+      lldpGroupNode.count = c;
+      if (c <= 1) {
+        lldpGroupNode._group = false; lldpGroupNode.unknownGroup = false;
+        const m0 = lldpGroupNode.members[0];
+        if (m0) { lldpGroupNode.name = m0.name; lldpGroupNode.meta = m0.meta === 'LLDP/CDP neighbour' ? m0.meta : (m0.meta + ' · LLDP/CDP'); }
+        delete lldpGroupNode.members;
+      } else {
+        lldpGroupNode.name = c + ' LLDP neighbours'; lldpGroupNode.meta = c + ' discovered · unmonitored';
+      }
     }
     // Per-device link map: ifIndex → { peerId, peerIf } for every edge this
     // device participates in (both directions), so a port knows what it links to.
@@ -19246,6 +19274,7 @@
     const place = (el, p) => { el.style.left = (p.x / w * 100) + '%'; el.style.top = (p.y / h * 100) + '%'; };
     const nodeElById = new Map();
     for (const n of model.nodes) {
+      if (n._group) continue;   // model-level group nodes (e.g. the Unknown group) render as group cards
       const p = pos.get(n.id); if (!p) continue;
       n.isGateway = String(n.id) === gwId;
       const H = tepDevtopoHealth(n.score, n.ghost);
@@ -19326,7 +19355,10 @@
       }
     });
 
-    // ── grouped-tier cluster cards ──
+    // ── grouped cards: crowded-tier clusters PLUS model-level group nodes (the
+    //    grouped LLDP/CDP neighbours), both rendered with the router-style stacked
+    //    group card + member list. ──
+    for (const n of model.nodes) if (n._group && !groupNodes.includes(n)) groupNodes.push(n);
     for (const g of groupNodes) {
       const p = pos.get(g.id); if (!p) continue;
       const H = tepDevtopoHealth(g.score, false);
