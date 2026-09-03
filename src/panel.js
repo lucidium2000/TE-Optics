@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.99';
+  const TEP_VERSION = '4.00';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3588,6 +3588,10 @@
       transition: background .15s ease, border-color .15s ease, color .15s ease;
     }
     .tep-devtopo-btn:hover { background: var(--tdt-surface2); color: #fff; }
+    /* Zoom cluster: gestures alone were undiscoverable, and a crowded subnet
+       lays out past the canvas edge, so there is an explicit way in. */
+    .tep-devtopo-zoom { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; }
+    .tep-devtopo-zoom .tep-devtopo-btn { padding: 4px 7px; min-width: 26px; justify-content: center; }
     .tep-devtopo-btn--map { color: #04101f; background: linear-gradient(180deg,#7db0ff,var(--tdt-ac)); border-color: transparent; box-shadow: 0 6px 16px -8px rgba(91,157,255,.8); }
     .tep-devtopo-btn--map:hover { color: #04101f; transform: translateY(-1px); }
     .tep-devtopo-canvas {
@@ -3896,7 +3900,7 @@
     .tep-devtopo-grp-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; text-decoration: none; color: #c3d0e6; font-size: 11.5px; }
     a.tep-devtopo-grp-row:hover { background: var(--tdt-surface2); }
     .tep-devtopo-grp-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
-    .tep-devtopo-grp-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+    .tep-devtopo-grp-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; max-width: 150px; }
     .tep-devtopo-grp-meta { font-family: var(--tdt-mono); font-size: 10px; color: #8496b0; margin-left: auto; white-space: nowrap; }
     .tep-devtopo-grp-metric { font-family: var(--tdt-mono); font-weight: 700; white-space: nowrap; min-width: 34px; text-align: right; }
     .tep-devtopo-tip-head { font-weight: 800; font-size: 12.5px; color: #e6ecf5; margin-bottom: 3px; }
@@ -3909,8 +3913,17 @@
     .tep-devtopo-grp-back:hover { text-decoration: underline; }
     /* Grouped-list card: list on the left, a live device detail panel on the right. */
     .tep-devtopo-grp-split { display: flex; gap: 12px; align-items: flex-start; }
-    .tep-devtopo-grp-split .tep-devtopo-grp-list { flex: 0 0 auto; min-width: 232px; margin: 6px 0 0; }
-    .tep-devtopo-grp-detail { flex: 0 0 auto; width: 254px; border-left: 1px solid var(--tdt-line); padding-left: 12px; min-height: 60px; }
+    /* Both columns used to be flex: 0 0 auto — shrink DISABLED. A wide member
+       list (long hostnames + IP + metric) then pushed the detail panel past the
+       tip's right edge, clipping its right-aligned values. The list now shrinks
+       and truncates; the detail panel keeps its width so the readings always
+       have room. */
+    .tep-devtopo-grp-split .tep-devtopo-grp-list { flex: 1 1 auto; min-width: 0; max-width: 300px; margin: 6px 0 0; }
+    .tep-devtopo-grp-detail { flex: 0 0 254px; min-width: 0; border-left: 1px solid var(--tdt-line); padding-left: 12px; min-height: 60px; }
+    /* Long values (device descriptions, VLAN lists) wrap instead of running
+       under/past the label column. */
+    .tep-devtopo-grp-detail .tt-grid dd { min-width: 0; overflow-wrap: anywhere; }
+    .tep-devtopo-grp-detail .tt-name { overflow-wrap: anywhere; }
     .tep-devtopo-grp-detail:empty::before { content: "Hover a router to see its card"; color: #5a6b85; font-size: 11px; }
     .tep-devtopo-grp-row--active { background: color-mix(in srgb, var(--tdt-ac) 18%, transparent); box-shadow: inset 2px 0 0 var(--tdt-ac); }
     .tep-devtopo-grp-fp { margin-top: 10px; }
@@ -3987,6 +4000,9 @@
     }
     .tep-devtopo-tip .tt-link:hover { filter: brightness(1.06); }
     .tep-devtopo-tip .tt-links { display: flex; gap: 7px; flex-wrap: wrap; }
+    /* Sits under the name/IP instead of after the readings, so it needs its own
+       breathing room above the description and metric grid. */
+    .tep-devtopo-tip .tt-links--top { margin: 0 0 10px; }
     .tep-devtopo-tip .tt-link--ghost { color: var(--tdt-ac); background: rgba(91,157,255,.12); border: 1px solid rgba(91,157,255,.34); }
     .tep-devtopo-tip .tt-addrs { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--tdt-line); font-family: var(--tdt-mono); font-size: 10.5px; color: #aebbd4; }
     .tep-devtopo-tip .tt-addrs b { color: #d7e2f4; font-weight: 700; }
@@ -4613,6 +4629,27 @@
       padding: 4px 6px; min-width: 28px; min-height: 28px; line-height: 0;
     }
     .tep-test-actions .tep-test-action-icon svg { display: block; flex-shrink: 0; }
+    /* Playback control: green while idle (press to play), red while running
+       (press to stop). Colour is the only state signal besides the glyph, so
+       both change together. */
+    .tep-test-actions .tep-test-play { color: var(--tep-green); }
+    .tep-test-actions .tep-test-play:hover { color: #fff; background: #14532d; border-color: #166534; }
+    .tep-test-actions .tep-test-play--on { color: var(--tep-red); border-color: #991b1b; background: #450a0a; }
+    .tep-test-actions .tep-test-play--on:hover { color: #fff; background: #7f1d1d; border-color: #991b1b; }
+    /* Speed slider, revealed under the card header only while that card is
+       playing. Left padding lines it up under the actions, not the checkbox. */
+    .tep-test-playback {
+      display: flex; align-items: center; gap: 8px;
+      padding: 2px 8px 6px 30px; font-size: 11px; color: var(--tep-slate-400);
+    }
+    .tep-test-playback[hidden] { display: none; }
+    /* Opening the settings panel takes the card over; the playback control and
+       its speed row hide until it is closed again (playback itself is stopped
+       in toggleEditForm, so a hidden button never leaves a timer running). */
+    .tep-test-card.is-editing .tep-test-play,
+    .tep-test-card.is-editing .tep-test-playback { display: none !important; }
+    .tep-test-playback-range { width: 92px; accent-color: var(--tep-green); cursor: pointer; }
+    .tep-test-playback-val { font-variant-numeric: tabular-nums; color: var(--tep-slate-200); min-width: 20px; }
     .tep-test-actions button:hover { background: var(--tep-slate-600); color: var(--tep-slate-200); }
     .tep-test-actions button.tep-btn-danger:hover { background: #7f1d1d; color: var(--tep-red-soft); border-color: #991b1b; }
     .tep-enabled-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -5040,11 +5077,16 @@
   const TEP_WIDTH_KEY = 'tep-panel-width';
   let panelWidth = parseInt(localStorage.getItem(TEP_WIDTH_KEY), 10) || 576;
   const constrainStyles = tepInjectCSS('');
-  function applyWidth(w) {
-    panelWidth = Math.max(320, Math.min(w, window.innerWidth - 300));
+  // Narrowest the panel can get; also the width playback squeezes it to.
+  const TEP_PANEL_MIN_W = 320;
+  /** `persist` false applies a width WITHOUT saving it as the user's
+   *  preference — used by playback's temporary squeeze, so quitting the browser
+   *  mid-playback doesn't reopen the panel stuck at its minimum. */
+  function applyWidth(w, persist = true) {
+    panelWidth = Math.max(TEP_PANEL_MIN_W, Math.min(w, window.innerWidth - 300));
     root.style.setProperty('--tep-width', panelWidth + 'px');
     resizeHandle.style.right = (panelWidth - 3) + 'px';
-    localStorage.setItem(TEP_WIDTH_KEY, panelWidth);
+    if (persist) localStorage.setItem(TEP_WIDTH_KEY, panelWidth);
     constrainStyles.update(`
       html {
         overflow-x: hidden !important;
@@ -12326,6 +12368,142 @@
     }
   }
 
+  /* ---------------- Trace playback (repeating Shift+Right Arrow) ------------
+   * ThousandEyes advances its own timeline one round with Shift+Right Arrow.
+   * Playback just presses that for you at a fixed speed so a trace animates
+   * forward hands-free while you watch the map.
+   *
+   * CONFIRMED via user request: speed is 1-3 seconds in 0.5-second steps,
+   * defaulting to 2s.
+   * Only ONE test can play at a time — a second play button stops the first,
+   * since they would otherwise both drive the same single TE timeline and race.
+   */
+  const TEP_PLAYBACK_MIN_S = 1;
+  const TEP_PLAYBACK_MAX_S = 3;
+  const TEP_PLAYBACK_STEP_S = 0.5;
+  const TEP_PLAYBACK_DEFAULT_S = 2;
+  let tepPlaybackTid = null;      // testId currently playing, or null
+  let tepPlaybackTimer = null;    // setInterval handle
+  let tepPlaybackSec = TEP_PLAYBACK_DEFAULT_S;
+  // Panel width to restore when playback stops, or null when not squeezed.
+  // Playback exists to watch the MAP, so the panel gets out of the way for the
+  // duration and the page gets the space back.
+  let tepPlaybackPrevWidth = null;
+
+  /** Collapse the panel to its minimum, remembering the width to come back to.
+   *  Not persisted (see applyWidth) — the squeeze is temporary, so the user's
+   *  real preference stays in localStorage the whole time. */
+  function tepPlaybackSqueezePanel() {
+    // Guard against overwriting the remembered width when playback moves from
+    // one card to another while already squeezed.
+    if (tepPlaybackPrevWidth == null) tepPlaybackPrevWidth = panelWidth;
+    applyWidth(TEP_PANEL_MIN_W, false);
+  }
+
+  /** Give the panel its pre-playback width back. No-op if it was never
+   *  squeezed, or if the user resized by hand while playing (the drag handler
+   *  clears the memory, treating that as the new intent). */
+  function tepPlaybackRestorePanel() {
+    if (tepPlaybackPrevWidth == null) return;
+    const w = tepPlaybackPrevWidth;
+    tepPlaybackPrevWidth = null;
+    applyWidth(w);
+  }
+
+  /** "2s" / "1.5s" — half-steps show a decimal, whole seconds do not. */
+  function tepPlaybackSpeedLabel(sec) {
+    return String(sec) + 's';
+  }
+
+  function tepPlaybackIsOn(tid) {
+    return tepPlaybackTid != null && String(tepPlaybackTid) === String(tid);
+  }
+
+  /**
+   * Fire one Shift+Right Arrow at the TE page. Dispatched on document.body so
+   * it bubbles to any document/window-level shortcut listener, which is where
+   * SPAs normally bind. `keyCode`/`which` are defined after construction
+   * because the KeyboardEvent constructor ignores them in its init dict, and
+   * plenty of handlers still read the legacy properties.
+   */
+  function tepPlaybackSendKey() {
+    const target = document.body || document.documentElement;
+    if (!target) return;
+    for (const type of ['keydown', 'keyup']) {
+      let ev;
+      try {
+        ev = new KeyboardEvent(type, {
+          key: 'ArrowRight', code: 'ArrowRight',
+          shiftKey: true, bubbles: true, cancelable: true, composed: true,
+        });
+        Object.defineProperty(ev, 'keyCode', { get: () => 39 });
+        Object.defineProperty(ev, 'which', { get: () => 39 });
+      } catch (_) { return; }
+      try { target.dispatchEvent(ev); } catch (_) { /* page may reject; nothing to do */ }
+    }
+  }
+
+  function tepPlaybackStop() {
+    if (tepPlaybackTimer) { clearInterval(tepPlaybackTimer); tepPlaybackTimer = null; }
+    tepPlaybackTid = null;
+    tepPlaybackRestorePanel();
+    tepPlaybackSyncUi();
+  }
+
+  function tepPlaybackStart(tid) {
+    if (tepPlaybackTimer) { clearInterval(tepPlaybackTimer); tepPlaybackTimer = null; }
+    tepPlaybackTid = tid != null ? String(tid) : null;
+    if (tepPlaybackTid == null) return;
+    tepPlaybackSqueezePanel();
+    tepPlaybackSendKey();   // step immediately; waiting a full interval feels broken
+    tepPlaybackTimer = setInterval(tepPlaybackSendKey, tepPlaybackSec * 1000);
+    tepPlaybackSyncUi();
+  }
+
+  /** Restart the interval at the new speed without losing playback. */
+  function tepPlaybackSetSpeed(sec) {
+    // Snap to the 0.5s grid the slider exposes, so a stray value from anywhere
+    // else cannot land the interval between steps.
+    const raw = Number(sec);
+    const n = Number.isFinite(raw) ? Math.round(raw / TEP_PLAYBACK_STEP_S) * TEP_PLAYBACK_STEP_S : TEP_PLAYBACK_DEFAULT_S;
+    tepPlaybackSec = Math.min(TEP_PLAYBACK_MAX_S, Math.max(TEP_PLAYBACK_MIN_S, n));
+    if (tepPlaybackTimer) {
+      clearInterval(tepPlaybackTimer);
+      tepPlaybackTimer = setInterval(tepPlaybackSendKey, tepPlaybackSec * 1000);
+    }
+    tepPlaybackSyncUi();
+  }
+
+  /** Repaint every rendered card's play button + speed row from the state
+   *  above. Cheap enough to call on any state change, and it keeps cards
+   *  consistent after a list re-render. */
+  function tepPlaybackSyncUi() {
+    const cards = document.querySelectorAll('.tep-test-card[data-test-id]');
+    for (const card of cards) {
+      const tid = card.dataset.testId;
+      const on = tepPlaybackIsOn(tid);
+      const btn = card.querySelector('.tep-test-play');
+      if (btn) {
+        btn.classList.toggle('tep-test-play--on', on);
+        btn.innerHTML = on ? TEP_PLAYBACK_STOP_SVG : TEP_PLAYBACK_PLAY_SVG;
+        btn.title = on ? 'Stop playback' : 'Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward';
+        btn.setAttribute('aria-label', on ? 'Stop playback' : 'Start playback');
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+      const bar = card.querySelector('.tep-test-playback');
+      if (bar) {
+        bar.hidden = !on;
+        const range = bar.querySelector('.tep-test-playback-range');
+        const val = bar.querySelector('.tep-test-playback-val');
+        if (range) range.value = String(tepPlaybackSec);
+        if (val) val.textContent = tepPlaybackSpeedLabel(tepPlaybackSec);
+      }
+    }
+  }
+
+  const TEP_PLAYBACK_PLAY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.4-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14Z"/></svg>';
+  const TEP_PLAYBACK_STOP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
   function renderTests() {
     closeConvertMenu();
     const filtered = getFilteredTests();
@@ -12351,6 +12529,13 @@
       const t = filtered[i];
       const tid = String(t.testId || t.id || '');
       const showPageTestPointer = focusTidForPointer && i === 0 && tid === focusTidForPointer;
+      // The ACTIVE test: the one currently open on the ThousandEyes page (its
+      // testId is in the page URL). Playback steps THAT page's timeline, so the
+      // control is meaningless on any other row and only this card gets it.
+      // Deliberately not requiring i === 0 like the pointer arrow above does —
+      // the arrow is a positional hint, but the test stays the active one no
+      // matter where sorting puts it.
+      const isActivePageTest = !!focusTidForPointer && tid === focusTidForPointer;
       const card = document.createElement('div');
       const enabled = testEnabledState(t);   // 'on' | 'off' | 'unknown'
       card.className = 'tep-test-card' + (enabled === 'off' ? ' tep-test-card--disabled' : '');
@@ -12381,6 +12566,7 @@
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="clone" title="Create a new test with the same settings (unsaved edits are not included)">Clone</button>
               ${canConvertTest(t) ? '<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="convert" title="Convert to another test type">Convert</button>' : ''}
             </div>
+            ${isActivePageTest ? `<button type="button" class="tep-test-action-icon tep-test-play${tepPlaybackIsOn(tid) ? ' tep-test-play--on' : ''}" data-action="playback" aria-pressed="${tepPlaybackIsOn(tid) ? 'true' : 'false'}" title="${tepPlaybackIsOn(tid) ? 'Stop playback' : 'Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward'}" aria-label="${tepPlaybackIsOn(tid) ? 'Stop playback' : 'Start playback'}">${tepPlaybackIsOn(tid) ? TEP_PLAYBACK_STOP_SVG : TEP_PLAYBACK_PLAY_SVG}</button>` : ''}
             <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -12397,6 +12583,11 @@
             </button>`}
           </div>
         </div>
+        ${isActivePageTest ? `<div class="tep-test-playback"${tepPlaybackIsOn(tid) ? '' : ' hidden'}>
+          <span>Speed</span>
+          <input type="range" class="tep-test-playback-range" min="${TEP_PLAYBACK_MIN_S}" max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackSec}" aria-label="Playback speed in seconds between steps">
+          <span class="tep-test-playback-val">${tepPlaybackSpeedLabel(tepPlaybackSec)}</span>
+        </div>` : ''}
         <div class="tep-test-card-meta">
           <span class="tep-test-status-row"><span class="tep-enabled-dot ${enabled}"></span>${statusHtml}</span>
           <span>${target ? String(target).substring(0, 50) : '—'}</span>
@@ -12405,6 +12596,18 @@
           <span class="tep-test-units tep-units" title="TE usage units (31-day projection). Web/timeout tests: cloud×timeout + 🏢×0.5×timeout per round (Page Load uses the page-load timeout + page-load interval; Web Transaction uses its timeout). Network/DNS/A2S/A2A/Voice: fixed cloud 5 / 🏢 2.5 (DNS ×server count). BGP: 23.75/test. Formula: (milli × 31d) ÷ interval ÷ 1000.">${formatManageTestUnitsLine(t)}</span>
         </div>
       `;
+
+      // Speed slider — live-updates the label on drag and restarts the
+      // interval so a change takes effect immediately, not after the current
+      // tick elapses.
+      const playRange = card.querySelector('.tep-test-playback-range');
+      if (playRange) {
+        playRange.addEventListener('input', (e) => {
+          e.stopPropagation();
+          tepPlaybackSetSpeed(e.target.value);
+        });
+        playRange.addEventListener('click', (e) => e.stopPropagation());
+      }
 
       // Checkbox handler
       card.querySelector('.tep-test-card-check').addEventListener('change', (e) => {
@@ -12418,6 +12621,19 @@
         if (!btn) return;
         const action = btn.dataset.action;
 
+        if (action === 'playback') {
+          e.stopPropagation();
+          e.preventDefault();
+          // Toggle: pressing the playing card's button stops it; pressing a
+          // different card's button hands playback over to that card.
+          if (tepPlaybackIsOn(tid)) tepPlaybackStop();
+          else tepPlaybackStart(tid);
+          // Focus sits on our button after the click, which is harmless for the
+          // synthetic events (they go to document.body) but leaves a focus ring
+          // over the page the user is now watching.
+          try { btn.blur(); } catch (_) { /* non-fatal */ }
+          return;
+        }
         if (action === 'edit') {
           const dismissLoad = toastProcessing('Loading test…');
           try {
@@ -12443,6 +12659,13 @@
       });
 
       testListEl.appendChild(card);
+    }
+    // Playback drives the page via synthetic key events with no visible owner
+    // beyond its card's stop button. If that card is gone (filtered out, list
+    // reloaded, test deleted) the user has no way to stop it, so stop it here
+    // rather than leave it stepping the timeline invisibly.
+    if (tepPlaybackTid != null && !testListEl.querySelector(`.tep-test-card[data-test-id="${tepPlaybackTid}"] .tep-test-play`)) {
+      tepPlaybackStop();
     }
     updateManageUnitsTotal();
   }
@@ -12493,6 +12716,10 @@
       if (f) f.remove();
     });
     card.classList.add('is-editing');
+    // CSS hides the playback control while editing, so its stop button is no
+    // longer reachable — halt playback rather than leave it stepping the
+    // timeline with no way to switch it off.
+    if (tepPlaybackIsOn(card.dataset.testId)) tepPlaybackStop();
 
     // The list row is a SUMMARY — API tests especially arrive with no Target,
     // Agents, or probe-mode until the full config is fetched. Load it (showing a
@@ -17648,6 +17875,11 @@
         dashMapTraceIspFilter = null;   // a different test shouldn't inherit the last ISP filter
         hideTraceIspPopover();
         info._popped = false;
+        // The continent-anchor dests are cached objects shared across traces, so
+        // clear their pop flags here too — otherwise a newly pinned test would
+        // show its real destination pins animating in while the anchor, still
+        // flagged from a previous trace, silently appeared without them.
+        for (const cd of tepContinentDestCache.values()) cd._popped = false;
         if (info.roundId != null && Number.isFinite(Number(info.roundId))) {
           tepMapToast('Trace: ' + (info.testName || 'test') + '\nFrom ' + new Date(Number(info.roundId) * 1000).toLocaleString() + ' · ' + (info.dests ? info.dests.length : 1) + ' destination(s)', 'ok');
         }
@@ -19144,16 +19376,6 @@
     return url;
   }
 
-  /** "Clients" link → the ThousandEyes Endpoint Agents page (user's chosen
-   *  target). Unfiltered for now; a subnet/label filter param can be added once
-   *  known. deviceId is accepted for that future filtering. */
-  function tepDeviceClientsUrl(deviceId) {
-    let url = '/endpoint/agent-views/';
-    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
-    if (aid) url += '?aid=' + encodeURIComponent(aid);
-    return url;
-  }
-
   // ── Wireless clients: endpoint agents ↔ AP devices, matched by BSSID ──────
   // An endpoint agent's wireless BSSID (networkProfile.wirelessProfile.bssid /
   // apMacAddress) equals the interface MAC of the AP it is associated with —
@@ -19644,12 +19866,14 @@
     const clientsH = clients.length
       ? '<div class="tt-clients"><div class="tt-clients-hd">Wireless clients · ' + clients.length + '</div>' + tepClientRowsHtml(clients, pinned, true) + '</div>'
       : '';
+    // CONFIRMED via user request: the Device Layer deep link sits at the TOP of
+    // the card (it is the action you reach for, and a long description or a
+    // client list used to bury it), and the Clients link is gone.
     let links = '';
     if (pinned && !n.ghost && Number(n.id) >= 0) {
-      links = '<div class="tt-links"><a class="tt-link" href="' + esc(tepDeviceLayerUrl(n.id)) + '" target="_blank" rel="noopener">Open in Device Layer ↗</a>'
-        + (clients.length ? '' : '<a class="tt-link tt-link--ghost" href="' + esc(tepDeviceClientsUrl(n.id)) + '" target="_blank" rel="noopener">Clients ↗</a>') + '</div>';
+      links = '<div class="tt-links tt-links--top"><a class="tt-link" href="' + esc(tepDeviceLayerUrl(n.id)) + '" target="_blank" rel="noopener">Open in Device Layer ↗</a></div>';
     }
-    return head + ip + descH + grid + addrH + clientsH + note + links;
+    return head + ip + links + descH + grid + addrH + clientsH + note;
   }
 
   function tepDevtopoPortCardHtml(p) {
@@ -19822,6 +20046,14 @@
     const stageW = Math.max(canvas.clientWidth, maxRow * 235, 760);
     const stageH = Math.max(canvas.clientHeight, nTiers * 142 + 150, 460) + (hasClients ? 150 : 0);
     stage.style.minWidth = stageW + 'px'; stage.style.minHeight = stageH + 'px';
+    // Hand the real content box to the pan/zoom layer so "fit" and the
+    // double-click reset know how big the board actually is. A crowded subnet
+    // lays out wider/taller than the canvas; without this the overflow was
+    // simply unreachable — nodes and their popovers sat off-screen with no way
+    // to scroll or zoom to them.
+    canvas._tepContentW = stageW;
+    canvas._tepContentH = stageH;
+    if (canvas._tepPZfit && !canvas._tepUserZoomed) canvas._tepPZfit(stageW, stageH);
     const w = stage.clientWidth, h = stage.clientHeight;
     stage.innerHTML = '';
 
@@ -20067,6 +20299,9 @@
     overlay.className = 'tep-devtopo-overlay';
     const backIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+    const zoomInIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+    const zoomOutIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>';
+    const zoomFitIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
     const labelText = label;
     // Health summary counts across the real (non-ghost) devices.
     let cCrit = 0, cWarn = 0, cOk = 0, cUnk = 0;
@@ -20085,6 +20320,11 @@
       + '<div class="tep-devtopo-sub">' + monCount + ' monitored · ' + model.edges.length + ' link' + (model.edges.length === 1 ? '' : 's') + (ghostCount ? ' · ' + ghostCount + ' unknown' : '') + '</div></div>'
       + '<div class="tep-devtopo-head-right">'
       + '<div class="tep-devtopo-summary">' + stat(cCrit, 'var(--tdt-crit)', 'critical') + stat(cWarn, 'var(--tdt-warn)', 'warning') + stat(cOk, 'var(--tdt-ok)', 'healthy') + stat(cUnk, 'var(--tdt-unk)', 'no&nbsp;data') + '</div>'
+      + '<div class="tep-devtopo-zoom">'
+      + '<button type="button" class="tep-devtopo-btn" data-topo-zoom="out" title="Zoom out">' + zoomOutIcon + '</button>'
+      + '<button type="button" class="tep-devtopo-btn" data-topo-zoom="fit" title="Fit everything in view (or double-click the background)">' + zoomFitIcon + '</button>'
+      + '<button type="button" class="tep-devtopo-btn" data-topo-zoom="in" title="Zoom in">' + zoomInIcon + '</button>'
+      + '</div>'
       + '<button type="button" class="tep-devtopo-btn tep-devtopo-close" title="Close">' + closeIcon + '</button>'
       + '</div></div>'
       + '<div class="tep-devtopo-canvas"><div class="tep-devtopo-stage"></div></div>'
@@ -20094,6 +20334,15 @@
     overlay.querySelector('.tep-devtopo-close').addEventListener('click', tepCloseDeviceTopoView);
     overlay.querySelector('.tep-devtopo-back').addEventListener('click', tepCloseDeviceTopoView);
     const canvas = overlay.querySelector('.tep-devtopo-canvas');
+    // Wheel zoom / drag pan / pinch, same control the wireless board uses.
+    tepAttachDevtopoPanZoom(canvas, overlay.querySelector('.tep-devtopo-stage'));
+    overlay.querySelector('.tep-devtopo-zoom').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-topo-zoom]');
+      if (!b) return;
+      const mode = b.getAttribute('data-topo-zoom');
+      if (mode === 'fit') canvas._tepPZreset && canvas._tepPZreset();
+      else if (canvas._tepPZzoom) canvas._tepPZzoom(mode === 'in' ? 1.25 : 1 / 1.25);
+    });
     const paint = () => { if (tepDeviceTopoEl === overlay) tepPaintSubnetTopo(canvas, model); };
     const onResize = () => paint();
     window.addEventListener('resize', onResize);
@@ -20598,7 +20847,13 @@
     canvas._tepPZ = true;
     canvas.classList.add('tep-devtopo-canvas--pz');
     let s = 1, tx = 0, ty = 0;
-    const MIN = 0.3, MAX = 3.2;
+    // MIN was 0.3, which was fine for the wireless board but could not fit a
+    // crowded subnet: a tier of ~20 devices lays out past 4000px, and against a
+    // ~900px canvas that needs roughly 0.2 to show everything. Clamping above
+    // the required scale left content unreachable even after "fit" — the exact
+    // problem zooming was added to solve. Detail is still readable by zooming
+    // back in, so the floor costs nothing.
+    const MIN = 0.15, MAX = 3.2;
     const apply = () => {
       stage.style.transformOrigin = '0 0';
       stage.style.transform = 'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) scale(' + s.toFixed(3) + ')';
@@ -20615,7 +20870,9 @@
       s = Math.max(MIN, Math.min(1, vw / Math.max(1, cw), vh / Math.max(1, ch)));
       tx = Math.max(0, (vw - cw * s) / 2); ty = Math.max(0, (vh - ch * s) / 2); apply();
     };
-    const onBg = (t) => !(t && t.closest && t.closest('.tep-wtopo-ap, .tep-wtopo-ep, .tep-wtopo-ssid'));
+    // Anything that owns its own click/hover must NOT start a pan. Covers the
+    // wireless board (AP/endpoint/SSID) and the subnet topology's device cards.
+    const onBg = (t) => !(t && t.closest && t.closest('.tep-wtopo-ap, .tep-wtopo-ep, .tep-wtopo-ssid, .tep-devtopo-node'));
     canvas.addEventListener('wheel', (e) => { e.preventDefault(); canvas._tepUserZoomed = true; const r = canvas.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
     const pts = new Map();
     let panId = null, lx = 0, ly = 0, pinchDist = 0, pinchCx = 0, pinchCy = 0;
@@ -20637,8 +20894,21 @@
     const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinchDist = 0; if (panId === e.pointerId) { panId = null; canvas.classList.remove('tep-grabbing'); try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* */ } } };
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
+    // Step zoom about the canvas centre — what the header's +/- buttons drive.
+    canvas._tepPZzoom = (factor) => {
+      canvas._tepUserZoomed = true;
+      const r = canvas.getBoundingClientRect();
+      zoomAt((r.width || canvas.clientWidth) / 2, (r.height || canvas.clientHeight) / 2, factor);
+    };
+    // Back to "everything visible", and re-arm auto-fit so later repaints track
+    // the content again instead of holding a stale manual view.
+    canvas._tepPZreset = () => {
+      canvas._tepUserZoomed = false;
+      if (canvas._tepContentW) canvas._tepPZfit(canvas._tepContentW, canvas._tepContentH);
+      else { s = 1; tx = 0; ty = 0; apply(); }
+    };
     // Double-click empty space re-fits the whole board (and re-enables auto-fit).
-    canvas.addEventListener('dblclick', (e) => { if (onBg(e.target)) { canvas._tepUserZoomed = false; if (canvas._tepPZfit && canvas._tepContentW) canvas._tepPZfit(canvas._tepContentW, canvas._tepContentH); else { s = 1; tx = 0; ty = 0; apply(); } } });
+    canvas.addEventListener('dblclick', (e) => { if (onBg(e.target)) canvas._tepPZreset(); });
   }
 
   /** Loading state: a Matrix-style code-rain behind a live "network console" that
@@ -21207,6 +21477,11 @@
    *  per-agent path analysis (pathNodesByAgent). */
   function tepTraceAgentsByDest(d, list, cloudAgents) {
     const out = new Map();
+    // key → the dest OBJECT each group resolved to. Real destinations are
+    // already in d.dests, but a low-latency estimate can resolve to a synthetic
+    // continent anchor that exists nowhere else; buildSelectedTestDest reads
+    // this so that anchor still gets a pin like any other destination.
+    out.destObjs = new Map();
     if (!d) return out;
     const destByAgent = d.destByAgent instanceof Map ? d.destByAgent : null;
     const trace = d.pathNodesByAgent instanceof Map ? d.pathNodesByAgent : null;
@@ -21224,11 +21499,15 @@
       seen.add(key);
       // This agent's own destination: confirmed via routes, else estimated to
       // the nearest detected dest (same rule the flow lines draw with).
+      const t = trace && aidS ? trace.get(aidS) : null;
       let myDest = destByAgent && aidS ? destByAgent.get(aidS) : null;
       let estimated = false;
       if (!myDest) { estimated = true; myDest = tepClosestDest(allDests, it.lat, it.lng) || fallbackDest; }
+      // Sub-80ms guess that crosses a continent is physically impossible → pin
+      // it to the middle of this agent's own continent instead.
+      if (estimated) myDest = tepEstContinentDest(myDest, it.lat, it.lng, t && t.totalMs);
       if (!myDest || myDest.key == null) return;
-      const t = trace && aidS ? trace.get(aidS) : null;
+      if (!out.destObjs.has(myDest.key)) out.destObjs.set(myDest.key, myDest);
       if (!out.has(myDest.key)) out.set(myDest.key, []);
       out.get(myDest.key).push({
         name: it.name || 'Agent',
@@ -21537,6 +21816,102 @@
   /** EXPERIMENTAL (test-destinations): nearest destination in `dests` to a point
    *  — used to estimate where an agent tests to when its own target node didn't
    *  resolve to a city ("go to the closest detected destination"). */
+  /**
+   * An ESTIMATED destination is a guess: the agent's real traceroute target was
+   * never confirmed, so we snap it to the nearest DETECTED destination. When
+   * that nearest detected destination is the only one on the board, every agent
+   * gets pointed at it no matter how far away it is — which is how a Seattle
+   * agent reporting 0 ms ends up drawn tracing to London. Speed of light says
+   * that is impossible: ~4800 mi round trip cannot come back in single-digit
+   * milliseconds, so the guess is simply wrong.
+   *
+   * CONFIRMED via user request: below this threshold, an estimated flow that
+   * would cross to another continent is redrawn to the middle of the agent's
+   * OWN continent instead — an honest "somewhere near here" marker rather than
+   * a confident line to a place the packet demonstrably never reached. At or
+   * above it the long haul is plausible, so the existing nearest-dest behaviour
+   * stands. 80 ms is roughly a transatlantic round trip, the shortest
+   * intercontinental hop these maps draw.
+   */
+  const TEP_EST_TRACE_MAX_MS = 80;
+
+  /** Continent boxes [latMin, latMax, lngMin, lngMax] + centroid used as the
+   *  "middle of the continent" anchor. Order matters: the first box to contain
+   *  the point wins, so the overlapping Europe/Africa/Asia boxes are listed
+   *  most-specific first. Deliberately coarse — this is a visual fallback for a
+   *  destination we already know we do not know, not a geocoder. */
+  const TEP_CONTINENTS = [
+    { key: 'NA', name: 'North America', lat: 45, lng: -100, box: [7, 84, -168, -52] },
+    { key: 'SA', name: 'South America', lat: -15, lng: -60, box: [-56, 13, -82, -34] },
+    { key: 'EU', name: 'Europe',        lat: 52, lng: 15,   box: [35, 71, -25, 45] },
+    { key: 'AF', name: 'Africa',        lat: 2,  lng: 20,   box: [-35, 37, -18, 52] },
+    { key: 'AS', name: 'Asia',          lat: 45, lng: 90,   box: [5, 78, 45, 180] },
+    { key: 'OC', name: 'Oceania',       lat: -25, lng: 134, box: [-48, 0, 110, 180] },
+  ];
+
+  /** Continent containing (lat,lng). Points that fall outside every box —
+   *  mid-ocean agents, high latitudes — resolve to the nearest centroid so this
+   *  never returns null for a plottable agent. */
+  function tepContinentAt(lat, lng) {
+    if (lat == null || lng == null) return null;
+    for (const c of TEP_CONTINENTS) {
+      if (lat >= c.box[0] && lat <= c.box[1] && lng >= c.box[2] && lng <= c.box[3]) return c;
+    }
+    let best = null, bestKm = Infinity;
+    for (const c of TEP_CONTINENTS) {
+      const km = tepHaversineKm(lat, lng, c.lat, c.lng);
+      if (km < bestKm) { bestKm = km; best = c; }
+    }
+    return best;
+  }
+
+  /** continent key → the one shared anchor dest object for that continent. */
+  const tepContinentDestCache = new Map();
+
+  /**
+   * Given an ESTIMATED destination for an agent at (lat,lng) whose measured
+   * round trip is `ms`, return either that destination unchanged or a synthetic
+   * one at the centre of the agent's own continent. Swaps only when all three
+   * hold: we have a real latency reading, it is under TEP_EST_TRACE_MAX_MS, and
+   * the guessed destination sits on a DIFFERENT continent. The same-continent
+   * case is left alone — a 2 ms Chicago→Denver estimate is perfectly plausible
+   * and re-pinning it to the middle of North America would lose real detail.
+   * `_countryFallback` is set so the flow keeps drawing in the existing amber
+   * "this is approximate" styling rather than looking confirmed.
+   */
+  function tepEstContinentDest(dst, lat, lng, ms) {
+    if (!dst || dst.lat == null || dst.lng == null) return dst;
+    if (!Number.isFinite(ms) || ms >= TEP_EST_TRACE_MAX_MS) return dst;
+    const from = tepContinentAt(lat, lng);
+    const to = tepContinentAt(dst.lat, dst.lng);
+    if (!from || !to || from.key === to.key) return dst;
+    // ONE shared object per continent, cached for the life of the panel. Two
+    // things depend on that identity: the destination pin carries a `_popped`
+    // flag so its entrance animation runs once rather than on every periodic
+    // re-render, and the flow renderer and the hover-card grouping must agree on
+    // the same object so the arcs and the pin's agent list line up. Anything
+    // that varies per source dest (ip, asn, the test's own health numbers) is
+    // deliberately dropped — this pin represents "somewhere on this continent",
+    // not any one measured target.
+    const key = 'estcont:' + from.key;
+    let cached = tepContinentDestCache.get(key);
+    if (!cached) {
+      const loc = from.name + ' (within continent, estimated)';
+      cached = {
+        key,
+        lat: from.lat,
+        lng: from.lng,
+        location: loc,
+        info: { location: loc },
+        estimated: true,
+        _countryFallback: true,
+        _continentFallback: true,
+      };
+      tepContinentDestCache.set(key, cached);
+    }
+    return cached;
+  }
+
   function tepClosestDest(dests, lat, lng) {
     if (!Array.isArray(dests) || !dests.length) return null;
     if (lat == null || lng == null) return dests[0];
@@ -22120,7 +22495,22 @@
       // Precompute which agents test to each destination (for the dest card's
       // per-agent linked list) once, not per-pin.
       const agentsByDest = tepTraceAgentsByDest(d, list, agents);
-      for (const dest of dests) {
+      // A sub-threshold estimate is redrawn to the middle of the agent's own
+      // continent (see tepEstContinentDest). That anchor is synthetic, so it is
+      // absent from d.dests and would otherwise leave its flow lines ending on
+      // blank map. Pin it exactly like a real destination — same marker, same
+      // hover card, same "agents testing here" list.
+      const pinDests = dests.slice();
+      const pinnedKeys = new Set(dests.map((x) => String(x && x.key)));
+      if (agentsByDest.destObjs) {
+        for (const dobj of agentsByDest.destObjs.values()) {
+          if (!dobj || !dobj._continentFallback) continue;
+          if (pinnedKeys.has(String(dobj.key))) continue;
+          pinnedKeys.add(String(dobj.key));
+          pinDests.push(dobj);
+        }
+      }
+      for (const dest of pinDests) {
         if (dest.lat == null || dest.lng == null) continue;
         const pos = tepLonLatToPct(dest.lng, dest.lat);
         const isNew = !dest._popped;
@@ -22242,6 +22632,11 @@
           let dst = destByAgent && maidS ? destByAgent.get(maidS) : null;
           let est = false;
           if (!dst) { est = true; dst = tepClosestDest(allDests, g.lat, g.lng) || fallbackDest; }
+          // Per-MEMBER, not per-cluster: one machine in an office may have a
+          // plausible long-haul reading while its neighbour reports 1ms. Each
+          // lands in its own dest bucket, so the implausible one gets the
+          // continent anchor without dragging the honest one along.
+          if (est) dst = tepEstContinentDest(dst, g.lat, g.lng, mm.t && mm.t.totalMs);
           if (dst && dst._countryFallback) est = true;   // coarse country-centroid pin → draw amber, not solid
           if (!dst || dst.lat == null || dst.lng == null) continue;
           const dk = dst.key != null ? String(dst.key) : (dst.lat.toFixed(3) + ',' + dst.lng.toFixed(3));
@@ -33499,6 +33894,10 @@
   });
   document.addEventListener('mousemove', (e) => {
     if (!resizing) return;
+    // Dragging during playback overrides the squeeze: forget the remembered
+    // width so stopping leaves the panel where the user just put it rather
+    // than snapping back to a size they have since moved on from.
+    tepPlaybackPrevWidth = null;
     applyWidth(window.innerWidth - e.clientX);
   });
   document.addEventListener('mouseup', () => {
