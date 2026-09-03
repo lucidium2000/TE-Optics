@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '3.98';
+  const TEP_VERSION = '3.99';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2871,7 +2871,7 @@
        the matching input/icon/count sizing below and .tep-dashmap-full-zoom
        above (sized to match this bar's new height exactly). */
     .tep-dashmap-search {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 8px; position: relative;
       padding: 8px 13px; border-radius: 22px;
       background: rgba(var(--tep-slate-900-rgb),.92);
       /* Orange border/glow visible by default (not just on focus, below) —
@@ -2927,6 +2927,8 @@
        per-context below via the parent, same split as the input rule above,
        so only the fullscreen one picks up the +2pt/~10% bump. */
     .tep-dashmap-search-count { flex: 0 0 auto; font-weight: 700; color: var(--tep-slate-400); white-space: nowrap; }
+    .tep-dashmap-search .tep-dashmap-search-count { cursor: pointer; }
+    .tep-dashmap-search .tep-dashmap-search-count:hover { color: var(--tep-orange-fg); text-decoration: underline; text-underline-offset: 2px; }
     .tep-dashmap-search-count--none { color: var(--tep-red); }
     .tep-dashmap-search .tep-dashmap-search-count { font-size: 13px; }
     .tep-dash-map-search .tep-dashmap-search-count { font-size: 11px; }
@@ -2938,6 +2940,30 @@
     .tep-dashmap-search .tep-dashmap-search-clear { width: 20px; height: 20px; font-size: 11px; }
     .tep-dash-map-search .tep-dashmap-search-clear { width: 18px; height: 18px; font-size: 10px; }
     .tep-dashmap-search-clear:hover { color: #fff; background: rgba(148,163,184,.3); }
+    /* Search results dropdown — hover the box to reveal, click a row to fly the
+       map to that agent (dashMapFocusHook.focusAgent). */
+    .tep-dashmap-search-results {
+      position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 30;
+      max-height: 320px; overflow-y: auto; padding: 5px; border-radius: 14px;
+      background: rgba(var(--tep-slate-900-rgb),.98); border: 1px solid rgba(249,115,22,.4);
+      box-shadow: 0 -10px 30px -8px rgba(0,0,0,.7), 0 0 0 1px rgba(249,115,22,.12);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      scrollbar-width: thin; scrollbar-color: var(--tep-slate-600) transparent;
+    }
+    .tep-dashmap-search-results::-webkit-scrollbar { width: 7px; }
+    .tep-dashmap-search-results::-webkit-scrollbar-thumb { background: var(--tep-slate-600); border-radius: 4px; }
+    .tep-dashmap-search-results .sr-hd { padding: 4px 9px 6px; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--tep-orange-fg); }
+    .tep-dashmap-search-result { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 9px; cursor: pointer; color: var(--tep-slate-200); }
+    .tep-dashmap-search-result:hover { background: rgba(249,115,22,.16); box-shadow: inset 2px 0 0 var(--tep-orange); }
+    .tep-dashmap-search-result .sr-ic { flex: 0 0 auto; display: inline-flex; color: var(--tep-slate-400); }
+    .tep-dashmap-search-result:hover .sr-ic { color: var(--tep-orange-fg); }
+    .tep-dashmap-search-result .sr-tx { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+    .tep-dashmap-search-result .sr-nm { font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tep-dashmap-search-result:hover .sr-nm { color: #fff; }
+    .tep-dashmap-search-result .sr-user { font-size: 10.5px; color: var(--tep-blue-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tep-dashmap-search-result .sr-loc { font-size: 10.5px; color: var(--tep-slate-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tep-dashmap-search-result .sr-go { flex: 0 0 auto; margin-left: auto; color: var(--tep-slate-500); font-size: 14px; }
+    .tep-dashmap-search-result:hover .sr-go { color: var(--tep-orange); }
     /* "Seen within" vertical slider, right side of the fullscreen map,
        vertically centered (Data Window moved down into the widget grid, so
        there's no longer anything above this to leave room for). The track is
@@ -3635,7 +3661,7 @@
     .tep-devtopo-wnode--client { cursor: pointer; }
     .tep-devtopo-wnode--ssid:hover, .tep-devtopo-wnode--bssid:hover, .tep-devtopo-wnode--client:hover { border-color: var(--tdt-ac); box-shadow: 0 0 0 1px var(--tdt-ac), 0 10px 20px -12px rgba(0,0,0,.9); }
     /* ---- wireless-topology cards (fleshed out: SSID / BSSID / client) ---- */
-    .tep-wtopo-ssid, .tep-wtopo-bssid { position: absolute; transform: translate(-50%, -50%); z-index: 3;
+    .tep-wtopo-ssid, .tep-wtopo-bssid { position: absolute; transform: translate(-50%, -50%) scale(var(--tep-zinv, 1)); z-index: 3;
       background: linear-gradient(180deg, var(--tdt-surface2), var(--tdt-surface)); border: 1px solid var(--tdt-line);
       border-radius: 13px; box-shadow: 0 12px 30px -16px rgba(0,0,0,.9); }
     .tep-wtopo-ssid { display: flex; align-items: center; gap: 11px; padding: 11px 15px; min-width: 190px; cursor: pointer;
@@ -3660,8 +3686,25 @@
     .tep-wtopo-cl-wifi .wm { padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.045); border: 1px solid var(--tdt-line); font-family: var(--tdt-mono); font-size: 9.5px; font-weight: 600; color: #aebbd4; }
     .tep-wtopo-cl-wifi .wm--tx { color: var(--tdt-ac); border-color: color-mix(in srgb, var(--tdt-ac) 40%, var(--tdt-line)); }
     /* Detail-on-hover wrapper (client chip → full card in the sticky tooltip). */
-    .tep-wtopo-cdetail { width: 272px; }
+    .tep-wtopo-cdetail { width: 100%; box-sizing: border-box; }
+    /* The sticky tip is max-width:300 with 13px padding (~274 usable); widen it for
+       these agent cards so the map-style row fits without a horizontal scrollbar. */
+    .tep-devtopo-tip:has(.tep-wtopo-cdetail) { max-width: 340px; }
     .tep-wtopo-cdetail .tep-test-card { margin: 0 !important; }
+    /* Map-style card inside the wireless hover: drop the map tip's own foot hint
+       and the head's expand button (there's only one agent here). Neutralise the
+       body's negative side margins (they bled 4px past the card → a stray
+       horizontal scrollbar) and clip the wrapper. */
+    .tep-wtopo-cdetail--map { overflow: hidden; box-sizing: border-box; }
+    .tep-wtopo-cdetail--map .tep-map-tip-foot,
+    .tep-wtopo-cdetail--map .tep-map-tip-maxbtn { display: none; }
+    .tep-wtopo-cdetail--map .tep-map-tip-head { margin: 0 0 6px; }
+    .tep-wtopo-cdetail--map .tep-map-tip-body { margin: 0; padding: 0; max-height: none; overflow: visible; }
+    .tep-wtopo-cdetail--map .tep-map-tip-agent { max-width: 100%; box-sizing: border-box; }
+    /* Don't clip the agent name in this card — let the header wrap and the name
+       show in full (the map's agent cards never truncate it). */
+    .tep-wtopo-cdetail .tep-test-card-header { flex-wrap: wrap; }
+    .tep-wtopo-cdetail .tep-test-card-name { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; min-width: 0; }
     .tep-wtopo-cdetail .tep-wtopo-cl-wifi:not(:last-child) { border-radius: 0; }
     /* Mini signal timeline over the lookback window (health-shaded area, newest right). */
     .tep-wtopo-tl { padding: 8px 12px 9px; background: linear-gradient(180deg, var(--tdt-surface2), var(--tdt-surface));
@@ -3715,7 +3758,7 @@
     .tep-wtopo-rc .csig { flex: 0 0 auto; font-family: var(--tdt-mono); font-size: 9.5px; font-weight: 700; }
     /* Access-point node (grouped BSSIDs = one physical AP, styled as a device). */
     /* AP node: an access-point icon glyph + "AP1" label; radios show on hover. */
-    .tep-wtopo-ap { position: absolute; transform: translate(-50%, -50%); z-index: 3; cursor: pointer;
+    .tep-wtopo-ap { position: absolute; transform: translate(-50%, -50%) scale(var(--tep-zinv, 1)); z-index: 3; cursor: pointer;
       display: flex; flex-direction: column; align-items: center; gap: 5px; width: 72px; }
     .tep-wtopo-ap .ap-ic { position: relative; width: 55px; height: 55px; border-radius: 50%; display: grid; place-items: center; color: var(--tdt-ac);
       background: radial-gradient(circle at 50% 38%, color-mix(in srgb, currentColor 26%, var(--tdt-surface)), var(--tdt-surface));
@@ -3728,20 +3771,21 @@
       display: grid; place-items: center; box-shadow: 0 0 0 2px var(--tdt-bg); }
     .tep-wtopo-ap .ap-lb { font-family: var(--tdt-mono); font-size: 10.5px; font-weight: 800; letter-spacing: .04em; color: #e6ecf5;
       padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--tdt-surface2) 88%, transparent); border: 1px solid var(--tdt-line); }
-    /* Client node: a compact map-style endpoint marker (health-filled avatar +
-       signal badge) with a short label; full detail on hover. */
-    .tep-wtopo-ep { position: absolute; transform: translate(-50%, -50%); z-index: 3; cursor: pointer;
+    /* Client node: the SAME filled person glyph the main map uses (no ring), with
+       a small signal badge + short label; full detail on hover. */
+    .tep-wtopo-ep { position: absolute; transform: translate(-50%, -50%) scale(var(--tep-zinv, 1)); z-index: 3; cursor: pointer;
       display: flex; flex-direction: column; align-items: center; gap: 3px; width: 62px; }
-    .tep-wtopo-ep .ep-mk { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
-      color: var(--tdt-ac); background: color-mix(in srgb, currentColor 16%, var(--tdt-surface));
-      border: 1px solid color-mix(in srgb, currentColor 60%, transparent); transition: transform .12s ease; }
-    .tep-wtopo-ep .ep-mk svg { filter: drop-shadow(0 1px 1px rgba(0,0,0,.4)); }
-    .tep-wtopo-ep:hover .ep-mk { transform: scale(1.12); box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent); }
+    .tep-wtopo-ep .ep-mk { position: relative; display: inline-flex; transition: transform .12s ease, filter .12s ease; filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); }
+    .tep-wtopo-ep:hover .ep-mk { transform: scale(1.14); }
     /* Cross-highlight from the AP card's client list (list row hover → marker). */
     .tep-wtopo-ep--hl { z-index: 8; }
-    .tep-wtopo-ep--hl .ep-mk { transform: scale(1.28); border-color: currentColor;
-      box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 35%, transparent), 0 0 16px 2px color-mix(in srgb, currentColor 55%, transparent); }
+    .tep-wtopo-ep--hl .ep-mk { transform: scale(1.32); filter: drop-shadow(0 0 8px rgba(255,255,255,.7)) drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
     .tep-wtopo-ep--hl .ep-nm { color: #fff; font-weight: 700; }
+    /* Search: matches lit (scaled + white glow), everything else dimmed — not removed. */
+    .tep-wtopo-ep--dim { opacity: .22; }
+    .tep-wtopo-ep--hit { z-index: 7; }
+    .tep-wtopo-ep--hit .ep-mk { transform: scale(1.24); filter: drop-shadow(0 0 8px rgba(255,255,255,.7)) drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
+    .tep-wtopo-ep--hit .ep-nm { color: #fff; font-weight: 800; }
     .tep-wtopo-ep .ep-q { position: absolute; bottom: -3px; right: -4px; min-width: 15px; height: 14px; padding: 0 3px; box-sizing: border-box;
       border-radius: 999px; color: #06121f; font-family: var(--tdt-mono); font-size: 8.5px; font-weight: 800;
       display: grid; place-items: center; box-shadow: 0 0 0 1.5px var(--tdt-bg); }
@@ -3758,7 +3802,7 @@
     .tep-wtopo-ep--roam .ep-mk { box-shadow: 0 0 0 2px rgba(249,115,22,.5), 0 0 12px -2px rgba(249,115,22,.6); }
     @media (prefers-reduced-motion: reduce) { .tep-wtopo-ep .ep-pill { animation: none; } }
     /* Agent-centric triangulation view. */
-    .tep-agentap-dist { position: absolute; transform: translate(-50%, -50%); z-index: 2; pointer-events: none; white-space: nowrap;
+    .tep-agentap-dist { position: absolute; transform: translate(-50%, -50%) scale(var(--tep-zinv, 1)); z-index: 2; pointer-events: none; white-space: nowrap;
       font-family: var(--tdt-mono); font-size: 9px; font-weight: 800; letter-spacing: .02em;
       padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--tdt-ground) 78%, transparent); box-shadow: 0 0 0 1px var(--tdt-line); }
     .tep-agentap-fix { z-index: 6; }
@@ -3772,6 +3816,12 @@
     .tep-wl { stroke-dasharray: 5 6; animation: tep-wl-flow 1.1s linear infinite; }
     @keyframes tep-wl-flow { to { stroke-dashoffset: -22; } }
     @media (prefers-reduced-motion: reduce) { .tep-wl { animation: none; stroke-dasharray: none; } }
+    /* AP broadcast pulse — CSS animates the radius (not a transform, so it can't
+       mis-scale); a negative animation-delay per ring makes it start mid-cycle,
+       so it looks identical from the first frame to the settled state. */
+    .tep-appulse { animation-name: tep-appulse; animation-timing-function: linear; animation-iteration-count: infinite; }
+    @keyframes tep-appulse { from { r: 20px; opacity: .5; } to { r: var(--tep-appulse-max, 196px); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .tep-appulse { animation: none; opacity: 0; } }
     /* ---- AP wireless card (per-band radios + SSID pills, folded into the node) ---- */
     .tep-devtopo-node--wifi { flex-direction: column; align-items: stretch; gap: 8px; max-width: 300px; }
     .tep-ap-wifi { display: flex; flex-direction: column; gap: 5px; }
@@ -4253,6 +4303,39 @@
     .tep-dash-restore-agents-wrap {
       margin-top: 10px; padding: 10px; background: var(--tep-slate-900); border-radius: 8px; border: 1px solid var(--tep-slate-700);
     }
+    #tep-restore-xorg-wrap {
+      margin-top: 12px; padding: 10px; background: var(--tep-slate-900); border-radius: 8px; border: 1px solid var(--tep-orange);
+    }
+    .tep-restore-xorg-title { margin: 0 0 4px; }
+    .tep-restore-xorg-note { color: var(--tep-orange-fg); }
+    #tep-restore-xorg-wrap .tep-agents-box { max-height: 220px; margin-top: 8px; }
+    .tep-restore-progress {
+      position: relative;
+      margin: 0; padding: 8px 12px;
+      background: var(--tep-slate-800); border-bottom: 1px solid var(--tep-slate-700);
+    }
+    .tep-restore-progress-close {
+      position: absolute; top: 5px; right: 6px;
+      width: 18px; height: 18px; padding: 0; line-height: 15px;
+      border: 1px solid var(--tep-slate-700); border-radius: 4px;
+      background: var(--tep-slate-900); color: var(--tep-slate-300);
+      font-size: 14px; text-align: center; cursor: pointer;
+    }
+    .tep-restore-progress-close:hover { color: #fff; border-color: var(--tep-slate-500); }
+    .tep-restore-progress-close[hidden] { display: none; }
+    .tep-restore-progress-track {
+      height: 8px; border-radius: 999px; background: var(--tep-slate-900);
+      border: 1px solid var(--tep-slate-700); overflow: hidden;
+    }
+    .tep-restore-progress-fill {
+      display: block; height: 100%; width: 0%; border-radius: 999px;
+      background: #22c55e; transition: width .18s ease, background-color .18s ease;
+    }
+    .tep-restore-progress-label { margin-top: 6px; font-size: 11px; color: #86efac; }
+    .tep-restore-progress.tep-prog-partial .tep-restore-progress-fill { background: #f59e0b; }
+    .tep-restore-progress.tep-prog-partial .tep-restore-progress-label { color: #fcd34d; }
+    .tep-restore-progress.tep-prog-err .tep-restore-progress-fill { background: #ef4444; }
+    .tep-restore-progress.tep-prog-err .tep-restore-progress-label { color: var(--tep-red-soft); }
     .tep-br-pick { margin-top: 12px; }
     .tep-br-pick-head {
       display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px;
@@ -5013,6 +5096,11 @@
       <button type="button" class="tep-units-toggle" id="tep-units-toggle" style="display:none;" title="Show/hide TE usage unit estimates" aria-pressed="false">Units</button>
       <span class="tep-units tep-units-total" id="tep-manage-units-total" style="display:none;" aria-hidden="true" title="31-day unit projection (Used / Plan Units) for tests matching the current Manage filter"></span>
     </div>
+    <div id="tep-restore-progress" class="tep-restore-progress" hidden>
+      <button type="button" id="tep-restore-progress-close" class="tep-restore-progress-close" title="Dismiss" aria-label="Dismiss restore status" hidden>×</button>
+      <div class="tep-restore-progress-track"><span id="tep-restore-progress-fill" class="tep-restore-progress-fill"></span></div>
+      <div class="tep-restore-progress-label" id="tep-restore-progress-label"></div>
+    </div>
 
     <!-- Top-level view switcher (filled by renderViewTabsInitial) -->
     <div class="tep-view-tabs" id="tep-view-tabs"></div>
@@ -5126,13 +5214,17 @@
           </div>
           <label class="tep-label" for="tep-restore-title-prefix">Test name prefix (optional)</label>
           <input type="text" class="tep-input" id="tep-restore-title-prefix" placeholder="e.g. “Restored — ” &mdash; prepended to every restored test&rsquo;s name" autocomplete="off">
-          <label class="tep-label" for="tep-restore-agent-mode">Agents, alerts, labels on restore</label>
+          <label class="tep-label" for="tep-restore-agent-mode">Agents on restore</label>
           <select class="tep-select" id="tep-restore-agent-mode" style="width:100%;">
-            <option value="keep" selected>Keep as in JSON</option>
-            <option value="strip">Strip account-specific references (recommended for cross-account)</option>
+            <option value="keep" selected>Keep agents per backup</option>
+            <option value="replace">Replace agents on restore</option>
           </select>
-          <div id="tep-restore-agents-wrap" class="tep-dash-restore-agents-wrap" style="display:none;">
-            <p class="tep-dash-hint" style="margin:0;">Per-test IDs, agent references, labels, and alert bindings are cleared. You may need to re-select agents in each restored test.</p>
+          <div id="tep-restore-xorg-wrap" hidden>
+            <p class="tep-dash-hint tep-restore-xorg-note" id="tep-restore-xorg-note" style="margin:8px 0 8px;"></p>
+            <div class="tep-agent-filter-wrap tep-agent-filter-wrap--compact">
+              <input type="text" class="tep-agent-filter" id="tep-restore-agent-filter" placeholder="Select enterprise agents for this restore&hellip;" autocomplete="off">
+            </div>
+            <div class="tep-agents-box" id="tep-restore-agent-box"></div>
           </div>
           <div class="tep-dash-row" style="margin-top:14px;">
             <button type="button" class="tep-btn tep-btn-danger tep-btn-sm" id="tep-restore-run" style="flex:1;" disabled>Restore tests to ThousandEyes&hellip;</button>
@@ -5452,6 +5544,7 @@
             </div>
             <div class="tep-bulk-bar" id="tep-ep-bulk-bar">
               <span id="tep-ep-bulk-count">0 selected</span>
+              <button type="button" class="tep-bulk-clear-link" id="tep-ep-bulk-selectall">Select all</button>
               <button type="button" class="tep-bulk-clear-link" id="tep-ep-bulk-clear">Clear selected</button>
               <select id="tep-ep-bulk-action">
                 <option value="">— Bulk Action —</option>
@@ -7062,6 +7155,9 @@
       const data = await resp.json();
       const vAgents = data.vAgents || data.virtualAgents || (Array.isArray(data) ? data : []);
       let activeAid = teInitData && teInitData._currentAid;
+      // Same login-as trap as loadAgents(): a session aid that matches no agent
+      // in this roster would mark every agent cloud, so ignore it and infer.
+      if (activeAid && vAgents.length && !vAgents.some((a) => a.primaryAid === activeAid)) activeAid = null;
       if (!activeAid && vAgents.length) {
         const counts = {};
         for (const a of vAgents) { if (a.primaryAid) counts[a.primaryAid] = (counts[a.primaryAid] || 0) + 1; }
@@ -7071,6 +7167,35 @@
       for (const a of vAgents) {
         const isEnterprise = activeAid && a.primaryAid === activeAid;
         if (isEnterprise) continue; // enterprise = account-specific → not portable
+        const id = a.vAgentId || a.agentId || a.id;
+        if (id != null) ids.add(String(id));
+      }
+    } catch (_) { /* best-effort */ }
+    return ids;
+  }
+
+  /**
+   * Set of EVERY virtual-agent id resolvable in the current account — cloud
+   * agents (global, present in every account) PLUS this account's own
+   * enterprise agents. Unlike loadCloudAgentIdSet this keeps enterprise ids,
+   * because they ARE valid targets here; it's used by keep-mode test restore to
+   * decide which agents a backup references that this account can actually
+   * dereference. An id outside this set (e.g. an enterprise agent belonging to
+   * the org a backup was taken from) can't be resolved by the create path and
+   * 500s the whole restore — CONFIRMED by a cross-org page-load restore that
+   * posted 12 agents (one shared enterprise id + cloud ids + 6 foreign
+   * enterprise ids) and 500'd, while the same test restored to only its shared
+   * agent succeeded. Empty set on any failure so the caller falls back to
+   * posting the backup's agents unchanged (preserving same-org keep behaviour).
+   */
+  async function loadValidAgentIdSet() {
+    const ids = new Set();
+    try {
+      const resp = await ajax('/ajax/settings/tests/virtual-agents', { method: 'GET' });
+      if (!resp.ok) return ids;
+      const data = await resp.json();
+      const vAgents = data.vAgents || data.virtualAgents || (Array.isArray(data) ? data : []);
+      for (const a of vAgents) {
         const id = a.vAgentId || a.agentId || a.id;
         if (id != null) ids.add(String(id));
       }
@@ -9898,6 +10023,19 @@
           // classification can still use the guess since a wrong split just
           // mislabels a marker's type, it never breaks a request.
           let classifyAid = teInitData._currentAid;
+          // `_currentAid` is the session's account, which in a LOGIN-AS session
+          // is the admin's own account, not the org whose agents we just
+          // fetched. It is then present but matches no agent, so every agent
+          // falls to the `else` and is labelled Cloud — which made the restore
+          // "drop all enterprise agents" step silently drop nothing and post
+          // the source org's enterprise agent ids straight into the create.
+          // Trust it only if it actually identifies agents in this roster;
+          // otherwise fall through to the majority vote below.
+          if (classifyAid != null && classifyAid !== '' && vAgents.length
+              && !vAgents.some((a) => a.primaryAid === classifyAid)) {
+            log(`Enterprise/Cloud split: session account ${classifyAid} matches none of the ${vAgents.length} agent(s) here (login-as session?) — inferring the account group from the agents instead.`, 'tep-log-info');
+            classifyAid = null;
+          }
           if ((classifyAid == null || classifyAid === '') && vAgents.length) {
             // Find the most common primaryAid among non-cloud agents (those with a primaryAid)
             const aidCounts = {};
@@ -10100,6 +10238,9 @@
       // Load enterprise-relevant tags after agents exist (does not block UI).
       void loadEnterpriseAgentTags();
       renderAgents();
+      // If a restore backup was loaded before agents finished loading, re-run
+      // cross-org detection now that we know this org's agents.
+      if (testsRestoreImportData) { try { updateTestsRestoreCrossOrg(); } catch (_) { /* */ } }
       if (isDashboardToolsPage()) {
         setStatus(`Dashboard — ${agents.length} portal agent(s) loaded`, 'ok');
       } else {
@@ -10643,6 +10784,18 @@
   let testsRestoreImportData = null;
   let testsRestoreImportName = '';
   let selectedTestsRestoreKeys = new Set();
+  /** Cross-org restore: agents (from the CURRENT org) to apply to restored
+   *  tests whose source enterprise agents don't exist here. Same shape/helpers
+   *  as the Create-Tests agent picker (selectedAgentIds). */
+  let restoreAgentSelection = new Set();
+  /** Set true when the loaded backup references enterprise agents missing from
+   *  the current org (i.e. a different org than the backup's origin). */
+  let restoreIsCrossOrg = false;
+  /** How many selected tests reference an agent missing from this org. */
+  let restoreMissingAgentTests = 0;
+  /** True once the user manually picks an Agents-on-restore mode, so cross-org
+   *  auto-detection stops overriding their choice. */
+  let restoreModeUserSet = false;
   let allEndpointTests = [];
   let selectedEndpointTestIds = new Set();
   /** Normalized endpoint agents from agent-management metadata search. */
@@ -11477,10 +11630,22 @@
   function tepTestSaveUrl(t) {
     return testApiUrl(t, { forWrite: true });
   }
-  function tepTestWriteHeaders(t) {
+  function tepTestWriteHeaders(t, opts) {
     const h = {};
-    const aid = (t && t.aid != null && t.aid !== '') ? t.aid : (teInitData && teInitData._currentAid);
-    if (aid != null && aid !== '') h['x-thousandeyes-aid'] = String(aid);
+    // The x-thousandeyes-aid header asserts an account-group context. On a SAVE
+    // (existing test, testId in body) it's required — it routes TE to the update
+    // handler bound to the current group. On a CREATE (restore: testId stripped)
+    // it must be OMITTED: sending it makes TE (a) route to the update handler,
+    // which has no test to match, and (b) reject the call 479 Forbidden when the
+    // asserted aid doesn't line up with the session's group — the same failure
+    // documented for dash-data (see ensureCurrentAidForDashboard). Without the
+    // header, ajax() adds X-Requested-With and TE runs the create path, resolving
+    // the account group from the session cookie exactly as its own UI does.
+    const omitAid = !!(opts && opts.omitAid);
+    if (!omitAid) {
+      const aid = (t && t.aid != null && t.aid !== '') ? t.aid : (teInitData && teInitData._currentAid);
+      if (aid != null && aid !== '') h['x-thousandeyes-aid'] = String(aid);
+    }
     const uid = readBrowserCookie('teUid');
     if (uid) h['x-thousandeyes-uid'] = uid;
     const ver = teInitData ? (teInitData.version ?? teInitData.appVersion ?? teInitData.teVersion) : null;
@@ -14005,7 +14170,60 @@
     'testId', 'id',
     'createDate', 'createdDate', 'createTime',
     'modifiedDate', 'lastModified', 'dateModified', 'dateCreated', 'modifiedTime',
+    // Ownership / provenance. These are server-assigned on create; echoing the
+    // SOURCE org's values back makes TE dereference a user or account that does
+    // not exist here, which surfaces as a bare 500 from the create endpoint.
+    // Never valid on a POST in ANY org, so they go unconditionally.
+    'creatorId', 'editorId', 'createdBy', 'modifiedBy', 'owner', 'ownerId',
+    'aid', 'accountId', 'accountGroupId', 'accountGroupIds',
+    'sharedWithAccounts', 'sharedWithAccountIds',
+    // HATEOAS / UI decoration echoed back by the read endpoints.
+    'apiLinks', '_links', 'links', 'liveShare', 'savedEvent',
   ];
+
+  // Account-scoped references that cannot survive a CROSS-ORG restore but are
+  // perfectly good on a same-org one. Applied unconditionally in replace mode
+  // (via TESTS_STRIP_ACCOUNT_KEYS) and, in keep mode, only once we have proof
+  // the backup came from another org — see the cross-org detection in
+  // restoreTestsFromImport. Stripping these on a same-org keep restore would
+  // needlessly detach labels and alerts the user wanted preserved.
+
+  // How to blank each account-scoped reference. Confirmed by diffing a FAILING
+  // cross-org restore against a WORKING same-org create posted by TE's own UI
+  // with an identical agent set: the working body carries every one of these
+  // keys present-but-empty, the failing body omitted them because we deleted
+  // them. TE's create path dereferences these unconditionally, so a missing key
+  // NPEs server-side and comes back as a bare 500 HTML page rather than a 400
+  // naming the field. Blank them in place; never delete them.
+  const TESTS_ACCOUNT_KEY_BLANKS = {
+    labelsIds: null,
+    tagIds: null,
+    accountBindings: null,
+    proxyId: null,
+    oAuth: null,
+    alerts: [],
+    alertSuppressionWindowIds: [],
+    vaultSecrets: [],
+    flagAlertsEnabled: 0,
+  };
+
+  // Replaces account-scoped refs on `t` with the empty shapes TE's create
+  // endpoint expects. Only touches keys the backup actually carried, so we
+  // reproduce the working payload's shape without inventing fields that a given
+  // test type never had. `aid` (when known) fills privateMonitorSet, matching
+  // the working create, which scopes that object to the TARGET account.
+  function blankTestAccountRefs(t, aid) {
+    if (!t || typeof t !== 'object') return;
+    for (const k of Object.keys(TESTS_ACCOUNT_KEY_BLANKS)) {
+      if (!(k in t)) continue;
+      const blank = TESTS_ACCOUNT_KEY_BLANKS[k];
+      t[k] = Array.isArray(blank) ? [] : blank;
+    }
+    if ('privateMonitorSet' in t) {
+      const n = parseInt(aid, 10);
+      t.privateMonitorSet = { aid: Number.isFinite(n) ? n : null, monitorSetId: null, bgpMonitors: [] };
+    }
+  }
 
   // Account-scoped references cleared when the user picks strip mode.
   // Same spirit as the dashboard strip: nothing here can survive a cross-
@@ -14028,14 +14246,22 @@
   // TESTS_STRIP_ACCOUNT_KEYS set. `agentSet` gets a belt-and-braces empty
   // sweep in case a future caller passes stripAccount=false but the object
   // has already been mutated elsewhere.
-  function stripTestForRestore(t, stripAccount) {
+  function stripTestForRestore(t, stripAccount, aid) {
     if (!t || typeof t !== 'object') return;
     for (const k of Object.keys(t)) {
       if (k.startsWith('_')) delete t[k];
     }
     for (const k of TESTS_STRIP_ALWAYS_KEYS) delete t[k];
     if (!stripAccount) return;
-    for (const k of TESTS_STRIP_ACCOUNT_KEYS) delete t[k];
+    // Agent keys are genuinely removed — the caller rebuilds agentSet from
+    // scratch straight after this. Everything else is blanked in place, not
+    // deleted, because TE's create endpoint 500s on a missing key. See
+    // blankTestAccountRefs.
+    for (const k of TESTS_STRIP_ACCOUNT_KEYS) {
+      if (k in TESTS_ACCOUNT_KEY_BLANKS || k === 'privateMonitorSet') continue;
+      delete t[k];
+    }
+    blankTestAccountRefs(t, aid);
     if (t.agentSet && typeof t.agentSet === 'object' && !Array.isArray(t.agentSet)) {
       if (Array.isArray(t.agentSet.vAgentIds)) t.agentSet.vAgentIds = [];
       if (Array.isArray(t.agentSet.agentIds))  t.agentSet.agentIds  = [];
@@ -14119,11 +14345,137 @@
     return `idx:${index}`;
   }
 
+  // --- Cross-org restore: agent detection & re-selection -------------------
+
+  /** Build a Map of current-org agentId (as String) → 'cloud' | 'enterprise'. */
+  function tepBuildCurrentAgentKindMap() {
+    const m = new Map();
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      if (a == null || a.agentId == null) continue;
+      const kind = a.agentType === 'Enterprise' ? 'enterprise' : 'cloud';
+      m.set(String(a.agentId), kind);
+    }
+    return m;
+  }
+
+  /** The tests currently checked in the restore picker. */
+  function tepTestsRestoreSelectedArr() {
+    if (!testsRestoreImportData) return [];
+    const all = normalizeTestsRestoreRoot(testsRestoreImportData);
+    return all.filter((t, i) => selectedTestsRestoreKeys.has(testsRestoreRowKey(t, i)));
+  }
+
+  /** vAgentIds (numeric) selected in the cross-org agent picker. */
+  function tepRestorePickedAgentIds() {
+    return selectionSetToVAgentIds(restoreAgentSelection);
+  }
+
+  /**
+   * Scan the selected tests against the current org's agents. Sets
+   * restoreIsCrossOrg / restoreMissingAgentTests, seeds the picker with the
+   * source cloud agents that resolve here, and — unless the user has picked a
+   * mode — defaults the Agents-on-restore mode to "Replace" for a cross-org
+   * backup. Then syncs the picker UI + Run gate.
+   */
+  function updateTestsRestoreCrossOrg() {
+    const arr = tepTestsRestoreSelectedArr();
+    const kindMap = tepBuildCurrentAgentKindMap();
+
+    let missingAgentTests = 0;   // tests referencing an agent absent here
+    for (const t of arr) {
+      const ids = getTestAgentIds(t) || [];
+      if (!ids.length) continue;
+      let anyMissing = false;
+      for (const id of ids) {
+        const kind = kindMap.get(String(id));
+        if (!kind) { anyMissing = true; continue; }
+        // Deliberately NOT pre-seeding the picker with the backup's cloud
+        // agents. Cloud agents are global, so each test keeps its own set
+        // straight out of its JSON; seeding them here merged the cloud agents
+        // of every selected test into one list and then wrote that merged list
+        // onto all of them. The picker means "agents to ADD", nothing else.
+      }
+      if (anyMissing) missingAgentTests++;
+    }
+
+    // agents may not have finished loading yet — don't claim same-org in that case.
+    const agentsReady = agents.length > 0;
+    restoreIsCrossOrg = agentsReady && missingAgentTests > 0;
+    restoreMissingAgentTests = missingAgentTests;
+
+    // Cross-org backup → default to Replace (unless the user already chose).
+    const modeEl = $('#tep-restore-agent-mode');
+    if (modeEl && !restoreModeUserSet) {
+      modeEl.value = restoreIsCrossOrg ? 'replace' : 'keep';
+    }
+    syncTestsRestoreAgentUi();
+  }
+
+  function renderRestoreAgentPicker(filter) {
+    renderAgentPickerSection($('#tep-restore-agent-box'), filter, restoreAgentSelection, {
+      emptyText: 'No agents match filter.',
+      noAgentsText: 'Agents will load after auth…'
+    });
+  }
+
+  // Auto-dismiss timer for the finished restore banner (see tepRestoreScheduleDismiss).
+  let tepRestoreDismissTimer = null;
+  function tepRestoreClearDismiss() {
+    if (tepRestoreDismissTimer) { clearTimeout(tepRestoreDismissTimer); tepRestoreDismissTimer = null; }
+  }
+  function tepRestoreDismiss() {
+    tepRestoreClearDismiss();
+    const box = $('#tep-restore-progress');
+    const close = $('#tep-restore-progress-close');
+    if (close) close.hidden = true;
+    if (box) box.hidden = true;
+  }
+  // Reveal the manual dismiss (×) and auto-hide the banner after `ms` (default 10s).
+  function tepRestoreScheduleDismiss(ms) {
+    tepRestoreClearDismiss();
+    const close = $('#tep-restore-progress-close');
+    if (close) close.hidden = false;
+    tepRestoreDismissTimer = setTimeout(tepRestoreDismiss, ms || 10000);
+  }
+
+  function tepRestoreProgress(show, done, total, name, ok, fail) {
+    const box = $('#tep-restore-progress');
+    const fill = $('#tep-restore-progress-fill');
+    const label = $('#tep-restore-progress-label');
+    const close = $('#tep-restore-progress-close');
+    if (!box) return;
+    box.hidden = !show;
+    if (!show) { tepRestoreClearDismiss(); if (close) close.hidden = true; return; }
+    // A live update supersedes any pending auto-dismiss and hides the × until finish.
+    tepRestoreClearDismiss();
+    if (close) close.hidden = true;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    if (fill) fill.style.width = pct + '%';
+    // Colour tracks the success level so far: all-good = green, some failures =
+    // amber, everything failed = red.
+    const f = fail || 0;
+    const o = ok || 0;
+    const level = f === 0 ? 'ok' : (o === 0 ? 'err' : 'partial');
+    box.classList.remove('tep-prog-ok', 'tep-prog-partial', 'tep-prog-err');
+    box.classList.add('tep-prog-' + level);
+    if (label) label.textContent = name
+      ? `Restoring ${done} / ${total} — ${name}`
+      : `Restored ${done} / ${total}`;
+  }
+
   function updateTestsRestorePickCount() {
     const countEl = $('#tep-restore-pick-count');
     if (countEl) countEl.textContent = `${selectedTestsRestoreKeys.size} selected`;
     const runBtn = $('#tep-restore-run');
-    if (runBtn) runBtn.disabled = !testsRestoreImportData || selectedTestsRestoreKeys.size === 0;
+    if (runBtn) {
+      if (runBtn.dataset.tepBusy) { runBtn.disabled = true; return; }
+      const modeEl = $('#tep-restore-agent-mode');
+      const replace = modeEl && modeEl.value === 'replace';
+      const noAgents = replace && tepRestorePickedAgentIds().length === 0;
+      runBtn.disabled = !testsRestoreImportData || selectedTestsRestoreKeys.size === 0 || noAgents;
+      runBtn.title = noAgents ? 'Pick at least one agent for the restore first' : '';
+    }
   }
 
   function renderTestsRestorePicker(arr) {
@@ -14132,7 +14484,7 @@
     const rows = Array.isArray(arr) ? arr : [];
     if (!rows.length) {
       listEl.innerHTML = '<span class="tep-log-info">No tests in backup file.</span>';
-      updateTestsRestorePickCount();
+      updateTestsRestoreCrossOrg();
       return;
     }
     listEl.innerHTML = '';
@@ -14148,12 +14500,12 @@
         cb.addEventListener('change', (e) => {
           if (e.target.checked) selectedTestsRestoreKeys.add(key);
           else selectedTestsRestoreKeys.delete(key);
-          updateTestsRestorePickCount();
+          updateTestsRestoreCrossOrg();
         });
       }
       listEl.appendChild(row);
     });
-    updateTestsRestorePickCount();
+    updateTestsRestoreCrossOrg();
   }
 
   function syncTestsRestoreSelectionFromData(body) {
@@ -14216,6 +14568,11 @@
         testsRestoreImportData = body;
         testsRestoreImportName = file.name || '';
         selectedTestsRestoreKeys.clear();
+        restoreAgentSelection.clear();
+        restoreIsCrossOrg = false;
+        restoreMissingAgentTests = 0;
+        restoreModeUserSet = false;
+        tepRestoreProgress(false);
         syncTestsRestoreSelectionFromData(body);
         updateTestsRestoreFileHint();
         const pickWrap = $('#tep-restore-pick-wrap');
@@ -14293,9 +14650,61 @@
 
   function syncTestsRestoreAgentUi() {
     const modeEl = $('#tep-restore-agent-mode');
-    const wrap = $('#tep-restore-agents-wrap');
+    const wrap = $('#tep-restore-xorg-wrap');
+    const note = $('#tep-restore-xorg-note');
     if (!modeEl || !wrap) return;
-    wrap.style.display = modeEl.value === 'strip' ? '' : 'none';
+    const replace = modeEl.value === 'replace';
+    wrap.hidden = !replace;
+    if (replace) {
+      if (note) {
+        note.textContent = restoreIsCrossOrg
+          ? `This backup is from a different org — ${restoreMissingAgentTests} selected test${restoreMissingAgentTests === 1 ? '' : 's'} reference agents that don't exist in this account. Pick the agents to run the restored tests on. Cloud agents from the backup are pre-selected.`
+          : 'Restored tests will run on the agents you pick below. Cloud agents from the backup are pre-selected.';
+      }
+      const filterEl = $('#tep-restore-agent-filter');
+      renderRestoreAgentPicker(filterEl ? filterEl.value : '');
+    }
+    updateTestsRestorePickCount();
+  }
+
+  /** Numeric agent ids a test body references via agentSet/vAgentIds (keep mode). */
+  function keepModeTestAgentIds(obj) {
+    const out = [];
+    const seen = new Set();
+    const push = (raw) => {
+      if (raw == null) return;
+      const n = parseInt(raw, 10);
+      const key = Number.isFinite(n) ? String(n) : String(raw);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(Number.isFinite(n) ? n : raw);
+    };
+    if (obj && obj.agentSet && typeof obj.agentSet === 'object' && !Array.isArray(obj.agentSet)) {
+      if (Array.isArray(obj.agentSet.vAgentIds)) obj.agentSet.vAgentIds.forEach(push);
+      if (Array.isArray(obj.agentSet.agentIds)) obj.agentSet.agentIds.forEach(push);
+    }
+    if (obj && Array.isArray(obj.vAgentIds)) obj.vAgentIds.forEach(push);
+    return out;
+  }
+
+  /**
+   * Rewrite a kept test body so it runs on exactly `ids` (keep-mode filtering).
+   * agentSetId is forced to 0 so TE mints a fresh set from the filtered ids —
+   * the backup's agentSetId points at the source org's set, which the target
+   * account can't reuse. Mirrors the replace-mode rebuild but preserves the
+   * rest of the agentSet object.
+   */
+  function applyKeepModeTestAgentIds(obj, ids) {
+    const flags = {};
+    ids.forEach((id) => { flags[String(id)] = 1; });
+    const prev = (obj.agentSet && typeof obj.agentSet === 'object' && !Array.isArray(obj.agentSet)) ? obj.agentSet : {};
+    obj.agentSet = Object.assign({}, prev, { agentSetId: 0, vAgentIds: ids.slice(), vAgentsFlagEnabled: flags });
+    if (Array.isArray(prev.agentIds)) obj.agentSet.agentIds = ids.slice();
+    obj.agentSetId = 0;
+    if (Array.isArray(obj.vAgentIds)) obj.vAgentIds = ids.slice();
+    // Interface refs are agent+account specific; once we drop foreign agents any
+    // surviving interface map may point at dropped/foreign agents, so clear it.
+    obj.agentInterfaces = null;
   }
 
   async function restoreTestsFromImport() {
@@ -14317,31 +14726,195 @@
       toast('Select at least one test to restore', 'err');
       return;
     }
-    const stripAccount = mode === 'strip';
+    // "Replace agents on restore" doubles as the cross-account-safe mode: it
+    // clears account-scoped refs (alerts, labels, private monitors, and the
+    // source agent set) and sets every restored test to the agents the user
+    // picked. "Keep agents per backup" posts the backup's agents/bindings as-is.
+    const modeReplace = mode === 'replace';
+    const stripAccount = modeReplace;
+    const pickedIds = modeReplace ? tepRestorePickedAgentIds() : [];
     let confirmMsg = `Restore ${arr.length} test${arr.length === 1 ? '' : 's'} to ThousandEyes? `;
     if (prefix) confirmMsg += `Names will be prefixed with "${prefix}". `;
-    confirmMsg += stripAccount
-      ? 'Agent references, labels, and alerts will be cleared per test — you may need to re-select agents. '
-      : 'Agent/label/alert bindings from the JSON are kept (may fail cross-account). ';
+    if (modeReplace) {
+      confirmMsg += `Each test keeps its own cloud agents from the backup; its enterprise agents are removed and the ${pickedIds.length} agent${pickedIds.length === 1 ? '' : 's'} you picked are added (labels & alert bindings from the backup are cleared). `;
+    } else {
+      confirmMsg += 'Agent/label/alert bindings from the JSON are kept; agents that don’t exist in this account are dropped automatically, and any test left with no valid agent is skipped. ';
+    }
     confirmMsg += 'Continue?';
     if (!confirm(confirmMsg)) return;
 
-    log(`Tests restore: applying options — mode=${mode}` + (prefix ? `, prefix "${prefix}"` : ''), 'tep-log-info');
+    log(`Tests restore: applying options — mode=${mode}` + (prefix ? `, prefix "${prefix}"` : '') + (modeReplace ? `, replace agents=${pickedIds.length}` : ''), 'tep-log-info');
+    // BOTH modes classify agents against the in-memory `agents` roster (keep
+    // mode filters against it; replace mode uses it to tell cloud from
+    // enterprise). If that roster never loaded, keep mode silently skips
+    // filtering and posts EVERY foreign agent unchanged — the cross-org 500.
+    // In keep mode the agent picker is hidden, so an empty roster is invisible
+    // to the user. Load it on demand first (same guard used elsewhere).
+    if (!agents || !agents.length) {
+      try { await loadAgents(); } catch (_) { /* best-effort */ }
+    }
+    // Keep mode cross-org safeguard: the create path 500s when a kept agentSet
+    // references enterprise agents from the backup's own org (they don't resolve
+    // here). Build the set of agent ids THIS org can resolve and, per test, drop
+    // any agent outside it. On failure keepValidAgentIds stays null and we post
+    // the backup's agents unchanged — same-org keep restores are unaffected.
+    //
+    // Source of truth is the in-memory `agents` array the panel already loaded
+    // for this org — the SAME data cross-org detection uses (tepBuildCurrentAgent-
+    // KindMap). The /ajax/settings/tests/virtual-agents endpoint is only a
+    // fallback: in a login-as session it can return empty/!ok, which left the
+    // set null and posted foreign agents unchanged → the cross-org 500. Using
+    // the loaded agents avoids that dependency entirely.
+    let keepValidAgentIds = null;
+    if (!modeReplace) {
+      const kindMap = tepBuildCurrentAgentKindMap();
+      if (kindMap.size) keepValidAgentIds = new Set(kindMap.keys());
+      else keepValidAgentIds = await loadValidAgentIdSet();
+      if (keepValidAgentIds && keepValidAgentIds.size) {
+        log(`Tests restore: ${keepValidAgentIds.size} agent(s) resolvable in this account — agents from another org will be dropped from kept agent sets.`, 'tep-log-info');
+      } else {
+        keepValidAgentIds = null;
+        log('Tests restore: could NOT determine this account’s agent list — backup agents are being posted unchanged. If this backup is from another org the create will fail (500); switch to “Replace agents” and pick target-org agents.', 'tep-log-err');
+      }
+    }
+    // Replace mode: classify this org's agents (id → 'cloud' | 'enterprise')
+    // once, so per test we can keep the backup's cloud agents (global, valid in
+    // any org) and drop EVERY enterprise agent from the backup (org-scoped —
+    // foreign ones 500 the create). Built from the in-memory `agents` array, the
+    // same source cross-org detection uses.
+    const currentAgentKind = modeReplace ? tepBuildCurrentAgentKindMap() : null;
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     let okCount = 0;
     let failCount = 0;
+    const runBtn = $('#tep-restore-run');
+    if (runBtn) { runBtn.disabled = true; runBtn.dataset.tepBusy = '1'; }
+    tepRestoreProgress(true, 0, arr.length, '');
     for (let i = 0; i < arr.length; i++) {
       const src = arr[i];
       // Deep-clone so strip / name bumps don't mutate the caller's JSON
       // (users often paste, click Restore, then edit and click again).
       const obj = cloneJsonDeep(src);
-      // Force `aid` to the current account. The source aid — if any —
-      // points at the wrong account when this is a cross-account restore.
-      if (aid) obj.aid = aid;
-      stripTestForRestore(obj, stripAccount);
+      // Target the current account, never the source account. The body `aid`
+      // is NOT inert on the create path — TE honours it and returns 403 when
+      // the session can't write to that account (CONFIRMED: a backup carrying
+      // a foreign `aid` 403s every row while one carrying the session's own
+      // account restores fine). When we have a trusted current aid, force it;
+      // otherwise DELETE `aid` so TE resolves the target from the session
+      // cookie exactly as it does for the omitted x-thousandeyes-aid header
+      // (see ensureCurrentAidForDashboard for why _currentAid is often unset).
+      // `aid` is removed by stripTestForRestore below (TESTS_STRIP_ALWAYS_KEYS)
+      // so TE resolves the target account from the session cookie, exactly as
+      // its own UI does — the working create captured from the UI carries no
+      // top-level aid either. The resolved value is still handed to the strip
+      // so it can scope privateMonitorSet to this account.
+      stripTestForRestore(obj, stripAccount, aid);
       applyTestsRestoreNameAdorner(obj, prefix);
       applyBgpPolicyFromTestBody(obj);
+      // TE rejects creating a test in a disabled state ("Cannot add a test that
+      // is disabled") — the create path only accepts enabled tests, so force the
+      // enabled flags on. Likewise a locked test can't be created/edited, so
+      // clear the lock; the restored copy shouldn't inherit the source's lock.
+      // (CONFIRMED: a backup of disabled tests 400s per row until enabled.)
+      obj.flagEnabled = 1; obj.isEnabled = true; obj.enabled = true;
+      obj.flagLocked = 0; obj.locked = false;
+      // Page-load backups carry a full read-only `emulatedDevice` expansion
+      // (with aid:null + availableUserAgents/defaultUserAgentTemplate) that the
+      // GET returns but the create path does NOT accept — echoing it back 500s
+      // the page-load create. TE only needs `deviceId`, so drop the expansion.
+      // (CONFIRMED: page-load restore 500s until emulatedDevice is removed;
+      // http-server/network/dns have no such field and restore fine.)
+      if ('emulatedDevice' in obj) delete obj.emulatedDevice;
+      // Backups carry foreign *entity* references that TE's create path
+      // dereferences: url.urlId / url.testIds, the serverId on server +
+      // targetServer, and creatorId/editorId. Within one org those IDs resolve,
+      // so a self-restore succeeds; a backup from a DIFFERENT org points at rows
+      // the target session can't load, and TE 500s while trying to dereference
+      // them. Reduce the URL to its address and drop the foreign entity IDs so
+      // TE re-resolves them in the target account (the canonical create body
+      // sends exactly `url:{url:…}` with no server/creator refs).
+      //
+      // Applies to EVERY test type. CONFIRMED with the live restore code: a
+      // cross-org http-server restore posted with a VALID target-org agent set
+      // (the same single agent that restores a same-org test fine) still 500s
+      // while server.serverId/targetServer.serverId/url.urlId carry source-org
+      // ids — so the refs, not the agents, are what TE chokes on. Each delete
+      // is presence-guarded, so types lacking a field (network has no url, dns
+      // no server, …) are untouched, and dropping them is safe same-org because
+      // TE re-resolves server/url by name/target when the ids are absent.
+      if (obj.url && typeof obj.url === 'object' && !Array.isArray(obj.url)) {
+        obj.url = { url: obj.url.url != null ? String(obj.url.url) : '' };
+      }
+      if (obj.server && typeof obj.server === 'object') delete obj.server.serverId;
+      if (obj.targetServer && typeof obj.targetServer === 'object') delete obj.targetServer.serverId;
+      delete obj.creatorId;
+      delete obj.editorId;
       const label = obj.testName || obj.name || `test #${i + 1}`;
+      tepRestoreProgress(true, i, arr.length, label, okCount, failCount);
+      // Replace mode: remove EVERY enterprise agent from the backup's agent set
+      // (org-scoped — a foreign one 500s the create, and the user is choosing
+      // target-org agents here anyway), keep only the backup's CLOUD agents
+      // (global, valid in any org), then add the agents picked in the UI.
+      //   finalIds = (backup cloud agents) ∪ (UI-picked agents), deduped.
+      if (modeReplace) {
+        const kindMap = currentAgentKind || new Map();
+        const finalIds = [];
+        const seen = new Set();
+        const addId = (raw) => {
+          const n = parseInt(raw, 10);
+          const key = Number.isFinite(n) ? String(n) : String(raw);
+          if (seen.has(key) || raw == null) return;
+          seen.add(key);
+          finalIds.push(Number.isFinite(n) ? n : raw);
+        };
+        // Backup agents: keep cloud, drop all enterprise (foreign OR this org's).
+        let droppedEnt = 0;
+        for (const id of keepModeTestAgentIds(obj)) {
+          if (kindMap.get(String(parseInt(id, 10) || id)) === 'cloud') addId(id);
+          else droppedEnt++;
+        }
+        // Then the agents chosen in the UI picker (already current-org-valid).
+        for (const id of pickedIds) addId(id);
+        if (!finalIds.length) {
+          log(`Tests restore: skipped "${label}" — no agents to assign (backup had no cloud agents and none were picked in the UI). Pick at least one agent for the restore.`, 'tep-log-err');
+          failCount++;
+          tepRestoreProgress(true, i + 1, arr.length, label, okCount, failCount);
+          continue;
+        }
+        const flags = {};
+        finalIds.forEach((id) => { flags[String(id)] = 1; });
+        obj.agentSet = { agentSetId: 0, vAgentIds: finalIds, vAgentsFlagEnabled: flags };
+        obj.agentSetId = 0;
+        if ('vAgentIds' in obj) obj.vAgentIds = finalIds;
+        obj.agentInterfaces = null; // source interface refs point at source agents
+        if (droppedEnt) log(`Tests restore: "${label}" — removed ${droppedEnt} enterprise agent(s) from the backup; running on ${finalIds.length} agent(s).`, 'tep-log-info');
+      } else if (keepValidAgentIds) {
+        // Keep mode: drop agent ids this account can't resolve (foreign
+        // enterprise agents from the backup's org 500 the create). Cloud agents
+        // are global and always present; this org's own enterprise agents are
+        // present too, so only genuinely foreign ids are removed.
+        const origIds = keepModeTestAgentIds(obj);
+        if (origIds.length) {
+          const keptIds = origIds.filter((id) => keepValidAgentIds.has(String(parseInt(id, 10) || id)));
+          const dropped = origIds.length - keptIds.length;
+          if (!keptIds.length) {
+            log(`Tests restore: skipped "${label}" — none of its ${origIds.length} agent(s) exist in this account (backup is from another org). Use “Replace agents” to pick target-org agents.`, 'tep-log-err');
+            failCount++;
+            tepRestoreProgress(true, i + 1, arr.length, label, okCount, failCount);
+            continue;
+          }
+          if (dropped) {
+            applyKeepModeTestAgentIds(obj, keptIds);
+            // An agent id the backup carries that this account cannot resolve
+            // is proof the backup came from another org. Every other account-
+            // scoped reference on the test (labels, alert rules, private BGP
+            // monitors, proxy, stored credentials) is then equally foreign and
+            // will 500 the create, so drop them too. On a same-org restore
+            // `dropped` is 0 and these are left untouched.
+            blankTestAccountRefs(obj, aid);
+            log(`Tests restore: "${label}" — dropped ${dropped} agent(s) not in this account; keeping ${keptIds.length}. Backup is cross-org, so labels/alerts/monitor/proxy/credential references were dropped too.`, 'tep-log-info');
+          }
+        }
+      }
       // testApiUrl needs `type` to resolve the write slug. Fall back to
       // testType (the canonical label) if `type` is missing/renamed.
       if (!obj.type && obj.testType) obj.type = obj.testType;
@@ -14361,7 +14934,7 @@
       let done = false;
       for (let bump = 0; bump <= TESTS_RESTORE_NAME_CONFLICT_MAX; bump++) {
         try {
-          const resp = await ajax(writeUrl, { method: 'POST', headers: tepTestWriteHeaders(obj), body: JSON.stringify(obj) });
+          const resp = await ajax(writeUrl, { method: 'POST', headers: tepTestWriteHeaders(obj, { omitAid: true }), body: JSON.stringify(obj) });
           const text = await resp.text();
           if (resp.ok || resp.status === 201) {
             okCount++;
@@ -14376,7 +14949,19 @@
             log(`Tests restore: duplicate name (${resp.status}) → retry with "${nextLabel}"`, 'tep-log-info');
             continue;
           }
-          log(`Tests restore FAIL "${label}" POST ${writeUrl} → ${resp.status} ${text.slice(0, 280)}`, 'tep-log-err');
+          // TE answers a rejected create with a generic HTML error page, so the
+          // response body tells us nothing about WHICH field it choked on. Keep
+          // the exact request body we sent: it is the only artifact that can
+          // identify the offending reference, and digging it back out of
+          // DevTools after the fact is painful. Stash the full object for
+          // copy/paste and print a compact key list inline.
+          try {
+            window.__tepLastFailedRestore = { name: label, url: writeUrl, status: resp.status, payload: JSON.parse(JSON.stringify(obj)) };
+            console.log('[TE Optics] failed restore payload for "%s":', label, window.__tepLastFailedRestore.payload);
+          } catch (_) { /* diagnostics are best-effort */ }
+          const sentKeys = Object.keys(obj).sort().join(', ');
+          log(`Tests restore FAIL "${label}" POST ${writeUrl} → ${resp.status} ${text.slice(0, 200)}`, 'tep-log-err');
+          log(`Tests restore: payload sent for "${label}" had keys: ${sentKeys}. Full body logged to the browser console and saved as window.__tepLastFailedRestore — copy it with: copy(window.__tepLastFailedRestore.payload)`, 'tep-log-err');
           failCount++;
           break;
         } catch (e) {
@@ -14386,10 +14971,19 @@
         }
       }
       if (!done && !failCount) failCount++; // safety net; loop shouldn't reach this
+      tepRestoreProgress(true, i + 1, arr.length, '', okCount, failCount);
     }
     const summary = `Tests restore: ${okCount} succeeded, ${failCount} failed`;
+    tepRestoreProgress(true, arr.length, arr.length, '', okCount, failCount);
+    const label = $('#tep-restore-progress-label');
+    if (label) label.textContent = summary;
     log(summary, failCount ? 'tep-log-err' : 'tep-log-ok');
     toast(summary, failCount ? 'err' : 'ok');
+    // Result banner is transient: show a manual × and auto-clear after 10s.
+    tepRestoreScheduleDismiss(10000);
+    const runBtn2 = $('#tep-restore-run');
+    if (runBtn2) { delete runBtn2.dataset.tepBusy; }
+    updateTestsRestorePickCount();
     if (okCount > 0) {
       // Refresh so newly-created tests appear immediately in the list.
       try { await loadTests(); } catch (_) { /* */ }
@@ -15404,6 +15998,15 @@
     const count = selectedEndpointTestIds.size;
     if (countEl) countEl.textContent = `${count} selected`;
     if (bar) bar.classList.toggle('active', count > 0);
+  }
+  /** Same "Select all" as the Manage Tests bulk bar — every currently rendered
+   *  (filter-visible) endpoint test card. */
+  function selectAllVisibleEndpointTests() {
+    root.querySelectorAll('.tep-ep-test-card-check').forEach((cb) => {
+      const tid = cb.dataset.tid;
+      if (tid) { cb.checked = true; selectedEndpointTestIds.add(tid); }
+    });
+    updateEndpointBulkUI();
   }
   /** Same "Clear selected" as the Manage Tests bulk bar. */
   function clearEndpointBulkSelection() {
@@ -16896,11 +17499,25 @@
     { label: '1mo', ms: 30 * 24 * 3600e3 },
     { label: 'All', ms: null },
   ];
-  // Defaults to "1mo" (found by label so a future reorder of the stops above
-  // can't silently point this at the wrong one) — hides agents not seen in
-  // over a month right away, rather than the old "show everything, All time"
-  // default.
-  let dashMapSeenFilterIdx = Math.max(0, TEP_SEEN_FILTER_STOPS.findIndex((s) => s.label === '1mo'));
+  // Default window: "1w" — unless the map is CROWDED (>100 agents seen within a
+  // week), in which case it auto-tightens to "24h" to keep the board legible.
+  // Recomputed on each map build (tepApplySeenFilterAutoDefault) until the user
+  // moves the slider, after which their choice sticks (dashMapSeenFilterUserSet).
+  // Found by label so a future reorder of the stops can't point this at the wrong
+  // one. CONFIRMED via user request (applies to BOTH the sidebar and fullscreen map).
+  let dashMapSeenFilterIdx = Math.max(0, TEP_SEEN_FILTER_STOPS.findIndex((s) => s.label === '1w'));
+  let dashMapSeenFilterUserSet = false;
+  const TEP_SEEN_AUTO_CROWD_N = 100;   // >this many agents within a week → default to 24h
+  function tepApplySeenFilterAutoDefault() {
+    if (dashMapSeenFilterUserSet) return;
+    const now = Date.now(), WEEK = 7 * 24 * 3600e3;
+    let within = 0;
+    for (const a of agents) if (a && a.agentType === 'Enterprise' && Number.isFinite(a.lastSeenMs) && now - a.lastSeenMs <= WEEK) within++;
+    for (const a of allEndpointAgents) if (a && Number.isFinite(a.lastSeenMs) && now - a.lastSeenMs <= WEEK) within++;
+    const label = within > TEP_SEEN_AUTO_CROWD_N ? '24h' : '1w';
+    const idx = TEP_SEEN_FILTER_STOPS.findIndex((s) => s.label === label);
+    if (idx >= 0) dashMapSeenFilterIdx = idx;
+  }
   function tepPassesSeenFilter(lastSeenMs) {
     const stop = TEP_SEEN_FILTER_STOPS[dashMapSeenFilterIdx];
     if (!stop || stop.ms == null) return true;
@@ -17387,6 +18004,7 @@
 
   /** Combine enterprise (global agents[]) + endpoint agents into plottable points. */
   function buildDashboardMapAgents() {
+    tepApplySeenFilterAutoDefault();   // 1w default, or 24h when crowded (until user overrides)
     const list = [];
     let entTotal = 0, entMapped = 0, epTotal = 0, epMapped = 0;
     // During a LIVE TEST (running or showing results) only online agents are
@@ -18601,9 +19219,18 @@
     if (tepEpWirelessInflight) { if (onRound) tepEpWirelessInflight.then((c) => { try { onRound(c); } catch (_) { /* */ } }); return tepEpWirelessInflight; }
     tepEpWirelessInflight = (async () => {
       const byMachineId = new Map();
-      const index = new Map();
       const histById = new Map();   // machineId → Array(SAMPLES) of quality per round (0 = newest)
       const roamById = new Map();   // machineId → Map(bssid → {bssid,ssid,channel,…,snrs[],quals[],rssis[],count}) across ALL samples
+      // Build the bssid→[client] index (exact MAC + LA-bit variant) from the
+      // current records — rebuilt on each publish since a record's newest BSSID
+      // can change round to round (roaming).
+      const buildIndex = () => {
+        const idx = new Map();
+        for (const rec of byMachineId.values()) {
+          for (const key of [rec.bssid, tepMacToggleLA(rec.bssid)]) { if (!idx.has(key)) idx.set(key, []); idx.get(key).push(rec); }
+        }
+        return idx;
+      };
       try {
         const headers = {};
         const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
@@ -18614,7 +19241,11 @@
         if (typeof ver === 'string' && ver) headers['x-thousandeyes-version'] = ver;
         const url = '/namespace/endpoint-api/local-networks-service/v1/wireless-metrics-reports/endpoint-agents';
         const pageSize = scopeIds ? Math.min(1000, Math.max(50, scopeIds.length + 20)) : 200;
-        const ingest = (els, si) => {
+        // Rounds are polled OLDEST → NEWEST (so the first request hits a settled
+        // round and paints fast); each agent's record is OVERWRITTEN every round it
+        // appears in, so after the loop it holds the NEWEST values. `off` = offset
+        // from now (0 = newest), used for the history slot.
+        const ingest = (els, off) => {
           for (const el of els) {
             const m = el && el.meta, machine = m && m.machine;
             if (!machine || machine.machineId == null) continue;
@@ -18624,14 +19255,11 @@
             const met = el.metrics || {};
             const q = met.quality != null ? Math.round(Number(met.quality)) : null;
             const id = String(machine.machineId);
-            // Per-sample signal timeline (index 0 = newest round) — filled every
-            // round the agent appears in, even after its main record is set.
+            // Per-sample signal timeline (index 0 = newest round).
             let hist = histById.get(id);
             if (!hist) { hist = new Array(TEP_EP_WIRELESS_SAMPLES).fill(null); histById.set(id, hist); }
-            if (si != null && si >= 0 && si < hist.length) hist[si] = q;
-            // Roaming record: every distinct BSSID this agent used across the
-            // window, with its per-BSSID signal samples — the basis for the
-            // "Wireless Active Testing" flag and the agent-centric AP view.
+            if (off != null && off >= 0 && off < hist.length) hist[off] = q;
+            // Roaming record: every distinct BSSID this agent used across the window.
             let roam = roamById.get(id);
             if (!roam) { roam = new Map(); roamById.set(id, roam); }
             let rap = roam.get(bssid);
@@ -18640,27 +19268,30 @@
             if (met.snr != null) rap.snrs.push(Number(met.snr));
             if (q != null) rap.quals.push(q);
             if (met.rssi != null) rap.rssis.push(Number(met.rssi));
-            if (byMachineId.has(id)) continue;   // keep the newest full record
+            // Create once (stable object so the index can point at it), then
+            // overwrite the primary fields — the last (newest) round wins.
+            let rec = byMachineId.get(id);
+            if (!rec) { rec = { machineId: id, history: hist, roam: roam }; byMachineId.set(id, rec); }
             const wr = m.whoisRange || {};
-            const rec = { machineId: id, name: machine.name || id, platform: machine.platform || '',
-              ssid: wp.ssid || '', quality: q,
-              rssi: met.rssi != null ? Number(met.rssi) : null, channel: wp.channel != null ? wp.channel : null,
-              phyMode: wp.phyMode || '', vendor: wp.vendor || '', bssid,
-              snr: met.snr != null ? Number(met.snr) : null, noise: met.noise != null ? Number(met.noise) : null,
-              txRate: met.txRate != null ? Number(met.txRate) : null, throughput: met.throughput != null ? Number(met.throughput) : null,
-              pubStart: tepIpToNum(wr.startIp), pubEnd: tepIpToNum(wr.endIp), history: hist, roam: roam };
-            byMachineId.set(id, rec);
-            for (const key of [bssid, tepMacToggleLA(bssid)]) { if (!index.has(key)) index.set(key, []); index.get(key).push(rec); }
+            rec.name = machine.name || id; rec.platform = machine.platform || '';
+            rec.ssid = wp.ssid || ''; rec.quality = q;
+            rec.rssi = met.rssi != null ? Number(met.rssi) : null; rec.channel = wp.channel != null ? wp.channel : null;
+            rec.phyMode = wp.phyMode || ''; rec.vendor = wp.vendor || ''; rec.bssid = bssid;
+            rec.snr = met.snr != null ? Number(met.snr) : null; rec.noise = met.noise != null ? Number(met.noise) : null;
+            rec.txRate = met.txRate != null ? Number(met.txRate) : null; rec.throughput = met.throughput != null ? Number(met.throughput) : null;
+            rec.pubStart = tepIpToNum(wr.startIp); rec.pubEnd = tepIpToNum(wr.endIp);
           }
         };
-        // Run the N sample rounds (newest first) with a filter set; report whether
-        // ANY request succeeded (to detect an unsupported filter).
+        // Poll the N sample rounds OLDEST → NEWEST (the oldest round has settled
+        // data, so the first request paints fast); report whether ANY request
+        // succeeded (to detect an unsupported filter).
         const deadline = Date.now() + TEP_EP_WIRELESS_MAX_MS;
         const runRounds = async (filters) => {
           let anyOk = false;
-          for (let i = 0; i < TEP_EP_WIRELESS_SAMPLES; i++) {
+          for (let step = 0; step < TEP_EP_WIRELESS_SAMPLES; step++) {
             if (Date.now() > deadline) break;   // total-time cap so a slow site can't hang the scan
-            const roundId = round0 - i * 60;
+            const off = TEP_EP_WIRELESS_SAMPLES - 1 - step;   // oldest → newest (off = minutes ago)
+            const roundId = round0 - off * 60;
             const body = JSON.stringify({ roundId, searchTerm: '', pageSize, filters, sort: 'SIGNAL_QUALITY', direction: 'ASCENDING', savedEventId: null, pageId: null });
             let j = null, ok = false, status = 0;
             const ctrl = new AbortController();
@@ -18669,12 +19300,12 @@
             if (ok) anyOk = true;
             const els = j && Array.isArray(j.elements) ? j.elements : null;
             // Feed the live scan console the REAL request (method/path/status only).
-            if (tepWtopoNetFeed) { try { tepWtopoNetFeed({ method: 'POST', path: url, offset: i, status, ok, count: els ? els.length : 0 }); } catch (_) { /* */ } }
+            if (tepWtopoNetFeed) { try { tepWtopoNetFeed({ method: 'POST', path: url, offset: off, status, ok, count: els ? els.length : 0 }); } catch (_) { /* */ } }
             if (els && els.length) {
-              ingest(els, i);
-              // Progressive paint: publish a partial cache and notify the caller so
-              // the board appears as soon as the first sample lands (never "stuck").
-              tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, byMachineId, index };
+              ingest(els, off);
+              // Progressive paint: publish a partial cache (index rebuilt from the
+              // current records) so the board appears as soon as the first sample lands.
+              tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, byMachineId, index: buildIndex() };
               if (onRound) { try { onRound(tepEpWirelessCache); } catch (_) { /* */ } }
             }
           }
@@ -18685,7 +19316,7 @@
         let anyOk = await runRounds(useMachineFilter ? baseFilter.concat([{ key: 'machineId', values: scopeIds }]) : baseFilter);
         if (useMachineFilter && !anyOk) {   // endpoint rejected the machineId filter — fall back once
           tepEpWirelessFilterUnsupported = true;
-          byMachineId.clear(); index.clear(); histById.clear(); roamById.clear();
+          byMachineId.clear(); histById.clear(); roamById.clear();
           anyOk = await runRounds(baseFilter);
         }
         const outside = scopeIds ? Array.from(byMachineId.keys()).filter((id) => !scope.has(id)).length : 0;
@@ -18695,7 +19326,7 @@
           + (scopeIds ? ' · ' + inScope + ' at this site ' + (localized ? '(server-scoped poll)' : '(filtered locally)') : ' (account-wide)')
           + (byMachineId.size ? ' — ' + Array.from(byMachineId.values()).map((c) => c.name + '=' + c.bssid).join(', ') : ''), 'tep-log-info');
       } finally { tepEpWirelessInflight = null; }
-      tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, byMachineId, index };
+      tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, byMachineId, index: buildIndex() };
       return tepEpWirelessCache;
     })();
     return tepEpWirelessInflight;
@@ -19694,14 +20325,41 @@
       + '<div class="tl-ax"><span>' + n + 'm ago</span><span>now</span></div></div>';
   }
 
-  /** Full client detail for a hover card: the endpoint-agent card + wireless stats. */
+  /** Build a dashboard-map ITEM from an endpoint agent, so the wireless view can
+   *  render the SAME hover card the main map uses (tepDashTooltipHtml). */
+  function tepEpAgentToMapItem(a) {
+    const hasReal = a.lat != null && a.lng != null;
+    const g = hasReal ? { lat: a.lat, lng: a.lng } : (epAgentGeo(a) || null);
+    const base = buildEndpointAgentViewUrl(a);
+    return {
+      kind: 'endpoint', name: a.name, location: a.location || '',
+      lat: g ? g.lat : null, lng: g ? g.lng : null, health: tepEndpointHealth(a.lastSeenMs),
+      lastSeenMs: a.lastSeenMs, url: base, liveResultLink: false, baseUrl: base,
+      mapUrl: g ? tepGoogleMapsUrl(g.lat, g.lng) : null,
+      agentId: a.id, latencyMs: null, ip: a.ip || '', localIp: a.localIp || '', users: a.users || [],
+      cpu: a.cpu || null, ram: a.ram || null, disk: a.disk || null, battery: a.battery || null,
+      batteryHealthPct: a.batteryHealthPct,
+      connKind: a.connKind || null, wifiScore: a.wifiScore != null ? a.wifiScore : null, vpn: a.vpn === true,
+    };
+  }
+
+  /** Full client detail for a hover card: the SAME map hover card the main map
+   *  uses for endpoints, plus the wireless stat chips + signal timeline. */
   function tepWtopoClientDetailHtml(c) {
     const esc = tepEscapeHtmlText;
     let cardHtml = '';
     const agent = allEndpointAgents.find((a) => String(a.id) === String(c.machineId));
-    if (agent) { try { cardHtml = buildEndpointAgentCard(agent, false).outerHTML; } catch (_) { /* */ } }
-    if (!cardHtml) cardHtml = '<div class="tep-test-card"><div class="tep-test-card-header"><a class="tep-test-card-name tep-test-link" href="' + esc(buildEndpointAgentViewUrl({ id: c.machineId })) + '" target="_blank" rel="noopener">' + esc(c.name) + '</a></div></div>';
-    return '<div class="tep-wtopo-cdetail">' + cardHtml + '<div class="tep-wtopo-cl-wifi">' + tepWtopoWifiBits(c) + '</div>' + tepWtopoSignalTimeline(c) + '</div>';
+    if (agent) {
+      try {
+        const it = tepEpAgentToMapItem(agent);
+        // It's a wireless client — reflect that in the conn icon (coloured by signal).
+        it.connKind = 'wifi'; if (c.quality != null) it.wifiScore = c.quality;
+        cardHtml = tepDashTooltipHtml({ items: [it] });
+      } catch (_) { /* */ }
+    }
+    if (!cardHtml) cardHtml = '<div class="tep-map-tip-head"><span>' + esc(c.name) + '</span></div>';
+    return '<div class="tep-wtopo-cdetail tep-wtopo-cdetail--map">' + cardHtml
+      + '<div class="tep-wtopo-cl-wifi">' + tepWtopoWifiBits(c) + '</div>' + tepWtopoSignalTimeline(c) + '</div>';
   }
 
   /** Paint the wireless topology: SSID → BSSID columns; each BSSID collapses to a
@@ -19725,19 +20383,17 @@
     const hbar = (q) => '<div class="tep-wtopo-hbar"><i style="width:' + (q != null ? Math.max(6, Math.min(100, q)) : 0) + '%;background:' + qColor(q) + '"></i></div>';
     const AV = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M6 20a6 6 0 0 1 12 0"/></svg>';
     const bigWifi = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 8.5a16 16 0 0 1 19 0"/><path d="M5.5 12a11 11 0 0 1 13 0"/><path d="M8.5 15.5a6 6 0 0 1 7 0"/><circle cx="12" cy="19" r="1.35" fill="currentColor" stroke="none"/></svg>';
-    // Apply the search filter into a visible SSID→BSSID→client structure.
+    // Search HIGHLIGHTS rather than filters (like the map): keep every SSID / AP /
+    // client on the board; matches are lit and everything else dims (applied per
+    // client at render time via searchActive/isHit below).
+    const searchActive = !!search;
     const vis = [];
     for (const s of model.ssids) {
-      const ssidHit = matchSsid(s.ssid);
       const bs = [];
-      for (const b of s.bssids) {
-        const cl = (search && !ssidHit) ? b.clients.filter(matchClient) : b.clients;
-        if (search && !ssidHit && !cl.length) continue;
-        bs.push({ b: b, clients: cl });
-      }
+      for (const b of s.bssids) bs.push({ b: b, clients: b.clients });
       if (bs.length) vis.push({ s: s, bssids: bs });
     }
-    if (!vis.length) { stage.innerHTML = '<div class="tep-devtopo-empty">No matches for &ldquo;' + esc(tepWtopoSearch) + '&rdquo;.</div>'; return; }
+    if (!vis.length) return;
     // ── Radial hub-and-spoke: each SSID is a hub; its BSSIDs are GROUPED into
     // physical access points (shared MAC prefix) that ring the hub; each AP's
     // clients bead outward along its spoke. Clusters pack into rows that fit the
@@ -19763,7 +20419,7 @@
       const aps = Array.from(apMap.values());
       aps.forEach((a) => { a.radios.sort((p, q) => (p.channel || 0) - (q.channel || 0)); a.clients.sort((p, q) => (q.quality || 0) - (p.quality || 0)); });
       const nA = aps.length;
-      const R1 = Math.max(100, Math.round(nA * 140 / TWO_PI));   // AP ring (pulled a bit closer to the hub)
+      const R1 = Math.max(170, Math.round(nA * 210 / TWO_PI));   // AP ring — further from the hub so each AP's client fan has room
       return { v, aps, nA, R1, radius: R1 + CLIENT_FAR + 70 };   // margin for de-clump spread
     });
     // Number physical APs (by prefix) once across the whole view: AP1, AP2, …
@@ -19787,6 +20443,10 @@
     stage.style.minWidth = stageW + 'px'; stage.style.minHeight = stageH + 'px';
     const w = stage.clientWidth, h = stage.clientHeight;
     stage.innerHTML = '';
+    // Global wall clock (seconds) so pulse rings phase-lock to it: a ring recreated
+    // on a progressive repaint (each agent that streams in) resumes the timeline
+    // where it already is, instead of restarting from its negative-delay start.
+    const nowSec = Date.now() / 1000;
     const offX = Math.max(0, (w - (rowMax + PAD)) / 2) + PAD / 2;
     const svg = document.createElementNS(TEP_SVGNS, 'svg');
     svg.setAttribute('class', 'tep-devtopo-svg'); svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); svg.setAttribute('preserveAspectRatio', 'none');
@@ -19818,18 +20478,22 @@
         // no dashes → no spiral) from the AP and fading out — the calm broadcast
         // motif the SSID hub used before, now emanating from the access point.
         if (!reduceMotion) {
-          const RINGS = 3, DUR = 4.2;
-          // Per-AP phase offset (golden-ratio spread, negative begin = start
-          // mid-cycle) so the APs don't all pulse in unison.
-          const apPhase = ((i * 0.6180339887) % 1) * DUR;
+          // Full radiating broadcast pulse (the look you liked). Driven by a CSS
+          // animation on the radius `r` with a NEGATIVE animation-delay, so each
+          // ring starts already mid-cycle — identical to its settled state, no
+          // first-load jerk — and no transform, so nothing mis-scales.
+          const RINGS = 3, DUR = 4.2, R0 = 20, maxR = CLIENT_FAR - 40;
+          const apPhase = ((i * 0.6180339887) % 1) * DUR;   // per-AP stagger
           for (let k = 0; k < RINGS; k++) {
             const ring = document.createElementNS(TEP_SVGNS, 'circle');
-            ring.setAttribute('cx', AX.toFixed(1)); ring.setAttribute('cy', AY.toFixed(1)); ring.setAttribute('r', '20');
+            ring.setAttribute('cx', AX.toFixed(1)); ring.setAttribute('cy', AY.toFixed(1)); ring.setAttribute('r', String(R0));
             ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', apq); ring.setAttribute('stroke-width', '1.4');
-            const beg = (k * DUR / RINGS - apPhase).toFixed(2) + 's';
-            const aR = document.createElementNS(TEP_SVGNS, 'animate'); aR.setAttribute('attributeName', 'r'); aR.setAttribute('values', '20;' + (CLIENT_FAR - 40)); aR.setAttribute('dur', DUR + 's'); aR.setAttribute('begin', beg); aR.setAttribute('repeatCount', 'indefinite');
-            const aO = document.createElementNS(TEP_SVGNS, 'animate'); aO.setAttribute('attributeName', 'opacity'); aO.setAttribute('values', '0.42;0'); aO.setAttribute('dur', DUR + 's'); aO.setAttribute('begin', beg); aO.setAttribute('repeatCount', 'indefinite');
-            ring.appendChild(aR); ring.appendChild(aO); svg.appendChild(ring);
+            ring.setAttribute('class', 'tep-appulse'); ring.setAttribute('vector-effect', 'non-scaling-stroke');
+            ring.style.setProperty('--tep-appulse-max', maxR.toFixed(0) + 'px');
+            ring.style.animationDuration = DUR + 's';
+            // Phase from the global clock so repaints don't restart the ring.
+            ring.style.animationDelay = '-' + ((nowSec + apPhase + k * DUR / RINGS) % DUR).toFixed(2) + 's';
+            svg.appendChild(ring);
           }
         }
         const apEl = document.createElement('div'); apEl.className = 'tep-wtopo-ap';
@@ -19871,12 +20535,18 @@
           // No wired line to clients — the AP's Wi-Fi pulse is the "connection".
           // Render each client as a compact map-style endpoint marker (health-
           // filled avatar + signal badge). Name + details live on hover.
-          const cq = qColor(cl.quality);
+          const cc = tepWifiScoreColor(cl.quality);   // same colour fn the map uses
+          const cq = cc.fill;
           const roamInfo = tepClientRoamInfo(cl);
-          const cEl = document.createElement('div'); cEl.className = 'tep-wtopo-ep' + (roamInfo.roaming ? ' tep-wtopo-ep--roam' : '');
+          // Search: highlight matches (name or this SSID), dim the rest — never remove.
+          const isHit = searchActive && (matchClient(cl) || matchSsid(v.s.ssid));
+          const cEl = document.createElement('div'); cEl.className = 'tep-wtopo-ep' + (roamInfo.roaming ? ' tep-wtopo-ep--roam' : '')
+            + (isHit ? ' tep-wtopo-ep--hit' : '') + (searchActive && !isHit ? ' tep-wtopo-ep--dim' : '');
           cEl.setAttribute('data-mid', String(cl.machineId));
           cEl.title = cl.name + (cl.quality != null ? ' · ' + cl.quality + '%' : '') + (roamInfo.roaming ? ' · wireless active testing (' + roamInfo.bssids + ' APs)' : '');
-          cEl.innerHTML = '<span class="ep-mk" style="color:' + cq + '"><svg viewBox="0 0 24 24" width="20" height="20">' + tepUserIconInner('fill="currentColor" stroke="none"') + '</svg>'
+          // Same marker as the main map: the filled person glyph (health fill +
+          // stroke), not a circled avatar — plus a small signal badge + name.
+          cEl.innerHTML = '<span class="ep-mk"><svg viewBox="0 0 24 24" width="22" height="22">' + tepUserIconInner('style="fill:' + cc.fill + ';stroke:' + cc.stroke + ';stroke-width:2"') + '</svg>'
             + (cl.quality != null ? '<span class="ep-q" style="background:' + cq + '">' + cl.quality + '</span>' : '') + '</span>'
             + '<span class="ep-nm">' + esc(cl.name) + '</span>'
             + (roamInfo.roaming ? '<span class="ep-pill" title="Seen on ' + roamInfo.bssids + ' access points / ' + roamInfo.ssids + ' SSID' + (roamInfo.ssids === 1 ? '' : 's') + ' — open the agent-centric AP view">Wireless Active Testing</span>' : '');
@@ -19929,7 +20599,14 @@
     canvas.classList.add('tep-devtopo-canvas--pz');
     let s = 1, tx = 0, ty = 0;
     const MIN = 0.3, MAX = 3.2;
-    const apply = () => { stage.style.transformOrigin = '0 0'; stage.style.transform = 'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) scale(' + s.toFixed(3) + ')'; };
+    const apply = () => {
+      stage.style.transformOrigin = '0 0';
+      stage.style.transform = 'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) scale(' + s.toFixed(3) + ')';
+      // Map-style zoom: when zooming IN, counter-scale the node cards so they keep
+      // a constant on-screen size (only the spread grows) instead of the SSID/AP
+      // cards bloating. Zooming OUT (fit) still shrinks everything so it all fits.
+      stage.style.setProperty('--tep-zinv', String(1 / Math.max(1, s)));
+    };
     const zoomAt = (cx, cy, factor) => { const ns = Math.max(MIN, Math.min(MAX, s * factor)); const k = ns / s; tx = cx - (cx - tx) * k; ty = cy - (cy - ty) * k; s = ns; apply(); };
     // Fit the whole content box (cw×ch, in stage px) into the canvas, centered —
     // the "zoom out to show everything" the map does. Never scales up past 1×.
@@ -20009,9 +20686,16 @@
       if (reduceMotion) return;
       const ctx = canvas.getContext && canvas.getContext('2d');
       if (!ctx) return;
-      const FS = 14, glyphs = 'アカサタナハマヤラワ0123456789ABCDEF/<>[]{}=+*\\|';
+      // Networking-themed "code rain": protocols, common ports, and random IPs
+      // instead of movie digits — purely decorative.
+      const ROWH = 20, COLW = 84;
+      const NET_WORDS = ['TCP', 'UDP', 'BGP', 'OSPF', 'DNS', 'TLS', 'SSL', 'SYN', 'ACK', 'FIN', 'RST', 'ARP', 'NAT', 'VPN', 'ICMP', 'HTTP', 'HTTPS', 'SSH', 'LLDP', 'CDP', 'QoS', 'MTU', 'VLAN', 'MPLS', 'SNMP', 'DHCP', 'GRE', 'ESP', 'EIGRP', '802.1X'];
+      const NET_PORTS = ['80', '443', '22', '53', '179', '8080', '123', '161', '389', '3389', '1812', '500'];
+      const pick = (a) => a[(Math.random() * a.length) | 0];
+      const randIp = () => (1 + (Math.random() * 253 | 0)) + '.' + (Math.random() * 256 | 0) + '.' + (Math.random() * 256 | 0) + '.' + (1 + (Math.random() * 253 | 0));
+      const tok = () => { const r = Math.random(); return r < 0.46 ? pick(NET_WORDS) : r < 0.64 ? ':' + pick(NET_PORTS) : r < 0.8 ? 'port ' + pick(NET_PORTS) : randIp(); };
       let W = 0, H = 0, cols = 0, drops = [];
-      const resize = () => { W = canvas.clientWidth || 760; H = canvas.clientHeight || 480; canvas.width = W; canvas.height = H; cols = Math.max(1, Math.floor(W / FS)); drops = Array.from({ length: cols }, () => Math.floor(Math.random() * -40)); };
+      const resize = () => { W = canvas.clientWidth || 760; H = canvas.clientHeight || 480; canvas.width = W; canvas.height = H; cols = Math.max(1, Math.floor(W / COLW)); drops = Array.from({ length: cols }, () => Math.floor(Math.random() * -40)); };
       resize();
       let last = 0;
       const frame = (t) => {
@@ -20020,13 +20704,13 @@
         if (t - last < 55) return; last = t;   // ~18fps → that stepped code-rain cadence
         if (canvas.clientWidth && canvas.clientWidth !== W) resize();
         ctx.fillStyle = 'rgba(8,12,20,0.34)'; ctx.fillRect(0, 0, W, H);
-        ctx.font = FS + 'px ' + MONO;
+        ctx.font = '600 11px ' + MONO;
         for (let i = 0; i < cols; i++) {
-          const x = i * FS, y = drops[i] * FS;
+          const x = i * COLW + 4, y = drops[i] * ROWH;
           ctx.fillStyle = 'rgba(255,150,66,0.82)';                      // bright head — TE neon orange
-          ctx.fillText(glyphs[(Math.random() * glyphs.length) | 0], x, y);
-          ctx.fillStyle = 'rgba(249,115,22,0.34)';                      // dim trailing glyph, transparent
-          ctx.fillText(glyphs[(Math.random() * glyphs.length) | 0], x, y - FS);
+          ctx.fillText(tok(), x, y);
+          ctx.fillStyle = 'rgba(249,115,22,0.32)';                      // dim trailing token, transparent
+          ctx.fillText(tok(), x, y - ROWH);
           if (y > H && Math.random() > 0.975) drops[i] = 0; else drops[i]++;
         }
       };
@@ -22706,6 +23390,20 @@
         return null;
       }
       const placedPx = destPx.slice();
+      // Spatial grid over placed points so each marker only collision-checks its
+      // ~3×3 local neighbourhood instead of every other marker — turns the
+      // overlap-avoidance from O(markers²) into ~O(markers). CELL ≥ any possible
+      // separation (marker radii + gap), so a conflict is always in an adjacent
+      // cell. placedPx is still kept in full for the downstream trace-label pass.
+      const GRID_CELL = 96;
+      const grid = new Map();
+      const gridAdd = (pt) => { const k = Math.floor(pt.x / GRID_CELL) + ',' + Math.floor(pt.y / GRID_CELL); let a = grid.get(k); if (!a) { a = []; grid.set(k, a); } a.push(pt); };
+      const gridNear = (px, py) => { const cx = Math.floor(px / GRID_CELL), cy = Math.floor(py / GRID_CELL); const out = []; for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) { const a = grid.get(gx + ',' + gy); if (a) for (let i = 0; i < a.length; i++) out.push(a[i]); } return out; };
+      for (const p of destPx) gridAdd(p);
+      // Zoomed out, a small nudge into open water is imperceptible, so skip the
+      // per-conflict basemap hit-tests (up to 14 isPointInFill each) and use a
+      // plain bearing nudge; keep the land-safe search only when zoomed in.
+      const skipLandTest = epDashMapZoom.s < 1.5;
       const markerPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
                                           // flow line starting from the same agent marker
       // While a pan/zoom animation is actively running (animateZoomTo's own
@@ -22740,7 +23438,7 @@
         // rather than looping forever on a genuinely packed cluster.
         if (!midAnimation) for (let pass = 0; pass < 6; pass++) {
           let moved = false;
-          for (const p of placedPx) {
+          for (const p of gridNear(x, y)) {
             const sep = rM + (p.radius != null ? p.radius : DEFAULT_RADIUS) + SEP_GAP;
             const ddx = x - p.x, ddy = y - p.y;
             const dist = Math.hypot(ddx, ddy);
@@ -22751,7 +23449,9 @@
               const bx = trueX - p.x, by = trueY - p.y;
               const blen = Math.hypot(bx, by);
               const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
-              const spot = landSafeSpot(angle, p.x, p.y, sep);
+              const spot = skipLandTest
+                ? { x: p.x + Math.cos(angle) * sep, y: p.y + Math.sin(angle) * sep }
+                : landSafeSpot(angle, p.x, p.y, sep);
               if (spot) {
                 x = spot.x; y = spot.y;
               } else if (p.movable && p.el) {
@@ -22781,7 +23481,8 @@
         m.style.top = y + 'px';
         const mapKey = m._fx.toFixed(6) + ',' + m._fy.toFixed(6);
         markerPxByKey.set(mapKey, { x, y });
-        placedPx.push({ x, y, movable: true, el: m, mapKey, radius: rM });
+        const pt = { x, y, movable: true, el: m, mapKey, radius: rM };
+        placedPx.push(pt); gridAdd(pt);
       }
 
       // Cloud-on-hover markers: de-collide against everything already placed
@@ -23323,6 +24024,22 @@
     // zoom/pan survive), then jump the view to the first hit so a match is
     // never off-screen.
     dashMapSearchHook = {
+      // Distinct agents matching the current query (for the search results list).
+      matches: () => {
+        if (!dashMapSearchQuery) return [];
+        const out = [], seen = new Set();
+        for (const m of markerEls) {
+          if (m.style.display === 'none' || !m._cluster) continue;
+          for (const it of m._cluster.items) {
+            if (it.agentId == null || !dashMapItemMatchesQuery(it, dashMapSearchQuery)) continue;
+            const key = it.kind + ':' + it.agentId;
+            if (seen.has(key)) continue; seen.add(key);
+            out.push({ kind: it.kind, agentId: String(it.agentId), name: it.name, location: it.location, users: it.users });
+            if (out.length >= 80) return out;
+          }
+        }
+        return out;
+      },
       refresh: () => {
         for (const m of markerEls) paintMarker(m);
         layoutMarkers();
@@ -27285,9 +28002,74 @@
     };
     tick();
   }
+  // ── TE UI theme swap for the fullscreen map ──────────────────────────────
+  // While the fullscreen map is open, flip the native ThousandEyes UI theme to
+  // 'iris' (POST /ajax/menu/settings), and restore whatever it was before on
+  // close. The prior theme is also stashed in localStorage so a page reload while
+  // fullscreen still reverts on the next load. Cosmetic + always self-reverting;
+  // this is the explicit behaviour the user asked for. Best-effort throughout.
+  const TEP_TE_THEME_RESTORE_KEY = 'tep-te-theme-restore';
+  const TEP_TE_FULLSCREEN_THEME = 'iris';
+  let tepTeThemePrior = null;
+  function tepMenuThemeHeaders() {
+    const h = {};
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    if (aid) h['x-thousandeyes-aid'] = aid;
+    const uid = readBrowserCookie('teUid'); if (uid) h['x-thousandeyes-uid'] = uid;
+    const hero = readBrowserCookie('teHeroUserId'); if (hero) h['x-thousandeyes-heroid'] = hero;
+    const ver = teInitData ? (teInitData.version ?? teInitData.appVersion ?? teInitData.teVersion) : null;
+    if (typeof ver === 'string' && ver) h['x-thousandeyes-version'] = ver;
+    return h;
+  }
+  async function tepGetTeTheme() {
+    try {
+      const r = await ajax('/ajax/menu/settings', { method: 'GET', headers: tepMenuThemeHeaders() });
+      if (r && r.ok) { const j = await r.json().catch(() => null); if (j && typeof j.theme === 'string' && j.theme) return j.theme; }
+    } catch (_) { /* */ }
+    return null;
+  }
+  function tepSetTeTheme(theme) {
+    try { return ajax('/ajax/menu/settings', { method: 'POST', headers: tepMenuThemeHeaders(), body: JSON.stringify({ theme: theme }) }); } catch (_) { return Promise.resolve(); }
+  }
+  async function tepMapThemeApply() {
+    try {
+      // DIAGNOSTIC: report what the GET returns, how the DOM carries the theme,
+      // and the POST result — mirrored to the console so it's easy to copy.
+      const dlog = (m, c) => { log(m, c); try { console.log('[TEP theme] ' + m); } catch (_) { /* */ } };
+      const themeAttrs = (el) => {
+        if (!el) return '(none)';
+        const bits = [];
+        if (el.className && typeof el.className === 'string' && el.className.trim()) bits.push('class="' + el.className.trim() + '"');
+        for (const a of el.attributes) { if (/theme|mode|skin|iris/i.test(a.name) || /theme|iris/i.test(a.value)) bits.push(a.name + '="' + a.value + '"'); }
+        return bits.length ? bits.join(' ') : '(no theme-ish attrs)';
+      };
+      let getStatus = '?', getBody = '', cur = null;
+      try {
+        const r = await ajax('/ajax/menu/settings', { method: 'GET', headers: tepMenuThemeHeaders() });
+        getStatus = r ? String(r.status) : 'no-resp';
+        getBody = (await r.text().catch(() => '')).slice(0, 240);
+        try { cur = JSON.parse(getBody).theme; } catch (_) { /* */ }
+      } catch (e) { getStatus = 'err:' + (e && e.message); }
+      dlog('Theme DIAG: GET /ajax/menu/settings → ' + getStatus + '  body=' + getBody, 'tep-log-info');
+      dlog('Theme DIAG: <html> ' + themeAttrs(document.documentElement), 'tep-log-info');
+      dlog('Theme DIAG: <body> ' + themeAttrs(document.body), 'tep-log-info');
+      if (cur && cur !== TEP_TE_FULLSCREEN_THEME) { tepTeThemePrior = cur; try { localStorage.setItem(TEP_TE_THEME_RESTORE_KEY, cur); } catch (_) { /* */ } }
+      const pr = tepSetTeTheme(TEP_TE_FULLSCREEN_THEME);
+      if (pr && pr.then) pr.then(async (r) => { const b = r ? (await r.text().catch(() => '')).slice(0, 160) : ''; dlog('Theme DIAG: POST {theme:iris} → ' + (r ? r.status : '?') + '  body=' + b, r && r.ok ? 'tep-log-ok' : 'tep-log-err'); }).catch((e) => { dlog('Theme DIAG: POST failed — ' + (e && e.message), 'tep-log-err'); });
+    } catch (_) { /* */ }
+  }
+  function tepMapThemeRestore() {
+    let prior = tepTeThemePrior;
+    if (!prior) { try { prior = localStorage.getItem(TEP_TE_THEME_RESTORE_KEY); } catch (_) { /* */ } }
+    if (prior && prior !== TEP_TE_FULLSCREEN_THEME) { tepSetTeTheme(prior); log('Theme: restored TE UI to "' + prior + '"', 'tep-log-info'); }
+    tepTeThemePrior = null;
+    try { localStorage.removeItem(TEP_TE_THEME_RESTORE_KEY); } catch (_) { /* */ }
+  }
+
   function openDashMapFullscreen() {
     if (dashMapFullEl) return;
     tepPlayRadarSweep(0.5);
+    tepMapThemeApply();   // flip TE UI to 'iris' while fullscreen (reverts on close)
     // A just-closed overlay can still be fading out (closeDashMapFullscreen's
     // own setTimeout hasn't removed it yet) even though dashMapFullEl is
     // already null — a rapid re-open (fast double-toggle) would otherwise
@@ -27327,6 +28109,7 @@
       + '<input type="text" id="tep-dashmap-search-input" placeholder="Search host, IP, user, location…" autocomplete="off" spellcheck="false" aria-label="Search agents by host, IP, user, or location" />'
       + '<span class="tep-dashmap-search-count" id="tep-dashmap-search-count"></span>'
       + '<button type="button" class="tep-dashmap-search-clear" id="tep-dashmap-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">✕</button>'
+      + '<div class="tep-dashmap-search-results" id="tep-dashmap-search-results" role="listbox" style="display:none;"></div>'
       + '</div>'
       + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>'
       + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>'
@@ -27376,6 +28159,43 @@
     const searchInput = ov.querySelector('#tep-dashmap-search-input');
     const searchCount = ov.querySelector('#tep-dashmap-search-count');
     const searchClear = ov.querySelector('#tep-dashmap-search-clear');
+    const searchResults = ov.querySelector('#tep-dashmap-search-results');
+    // Results dropdown: hover the count / focus the box to reveal the match list;
+    // click (or Enter on) a row to fly the map to that agent and open its card.
+    const esc2 = tepEscapeHtmlText;
+    const rUserIc = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M6 20a6 6 0 0 1 12 0"/></svg>';
+    const rEntIc = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg>';
+    let searchResultsWanted = false;
+    const renderSearchResults = () => {
+      const list = dashMapSearchHook ? dashMapSearchHook.matches() : [];
+      if (!list.length) { searchResults.innerHTML = ''; searchResults.style.display = 'none'; return; }
+      searchResults.innerHTML = '<div class="sr-hd">' + list.length + ' match' + (list.length === 1 ? '' : 'es') + ' · click to focus</div>'
+        + list.map((r) => {
+          const users = Array.isArray(r.users) ? r.users.filter(Boolean).join(', ') : (r.users || '');
+          return '<div class="tep-dashmap-search-result" role="option" data-kind="' + esc2(r.kind) + '" data-aid="' + esc2(r.agentId) + '">'
+            + '<span class="sr-ic">' + (r.kind === 'endpoint' ? rUserIc : rEntIc) + '</span>'
+            + '<span class="sr-tx"><span class="sr-nm">' + esc2(r.name || '—') + '</span>'
+            + (users ? '<span class="sr-user">' + esc2(users) + '</span>' : '')
+            + (r.location ? '<span class="sr-loc">' + esc2(r.location) + '</span>' : '') + '</span>'
+            + '<span class="sr-go">&#8618;</span></div>';
+        }).join('');
+      if (searchResultsWanted) searchResults.style.display = '';
+    };
+    const showSearchResults = () => { searchResultsWanted = true; if (searchResults.querySelector('.tep-dashmap-search-result')) searchResults.style.display = ''; };
+    const hideSearchResults = () => { searchResultsWanted = false; searchResults.style.display = 'none'; };
+    // mousedown (not click) so it fires before the input's blur hides the list.
+    searchResults.addEventListener('mousedown', (e) => {
+      const row = e.target.closest('.tep-dashmap-search-result'); if (!row) return;
+      e.preventDefault();
+      if (dashMapFocusHook) dashMapFocusHook.focusAgent(row.dataset.kind, row.dataset.aid);
+    });
+    // The results list only opens when you hover the "N matches" message (or the
+    // list itself), not on plain focus — CONFIRMED via user request.
+    const scheduleHideResults = () => setTimeout(() => { if (!searchResults.matches(':hover') && !searchCount.matches(':hover')) hideSearchResults(); }, 130);
+    searchCount.addEventListener('mouseenter', showSearchResults);
+    searchCount.addEventListener('mouseleave', scheduleHideResults);
+    searchResults.addEventListener('mouseenter', showSearchResults);
+    searchResults.addEventListener('mouseleave', scheduleHideResults);
     const runDashMapSearch = () => {
       const q = searchInput.value.trim();
       dashMapSearchQuery = q.toLowerCase();
@@ -27392,6 +28212,7 @@
       const n = dashMapSearchHook ? dashMapSearchHook.refresh() : 0;
       searchCount.textContent = q ? (n ? `${n} match${n === 1 ? '' : 'es'}` : 'No matches') : '';
       searchCount.classList.toggle('tep-dashmap-search-count--none', !!q && !n);
+      renderSearchResults();
     };
     searchInput.addEventListener('input', runDashMapSearch);
     searchClear.addEventListener('click', () => { searchInput.value = ''; runDashMapSearch(); searchInput.focus(); });
@@ -27417,6 +28238,7 @@
     seenInput.addEventListener('input', () => {
       const seenIdx = parseInt(seenInput.value, 10) || 0;
       if (seenIdx !== dashMapSeenFilterIdx) tepPlayDigitalBlip(0.5);
+      dashMapSeenFilterUserSet = true;   // user chose a window → stop auto-defaulting it
       dashMapSeenFilterIdx = seenIdx;
       seenInput.title = TEP_SEEN_FILTER_STOPS[dashMapSeenFilterIdx].label;
       seenLabels.innerHTML = tepSeenFilterLabelsHtml();
@@ -27447,6 +28269,7 @@
   function closeDashMapFullscreen() {
     if (!dashMapFullEl) return;
     tepPlayRadarSweep(0.5);
+    tepMapThemeRestore();   // put the TE UI theme back to what it was before fullscreen
     hideIspAgentsPopover();
     hideAgentsListPopover();
     hideAlertsPopover();
@@ -31727,18 +32550,26 @@
       });
     }
     const restoreMode = $('#tep-restore-agent-mode');
-    if (restoreMode) restoreMode.addEventListener('change', syncTestsRestoreAgentUi);
+    if (restoreMode) restoreMode.addEventListener('change', () => { restoreModeUserSet = true; syncTestsRestoreAgentUi(); });
     syncTestsRestoreAgentUi();
     const restoreRunBtn = $('#tep-restore-run');
     if (restoreRunBtn) {
       restoreRunBtn.addEventListener('click', () => {
-        restoreTestsFromImport().catch((e) => log(`Tests restore: ${e.message}`, 'tep-log-err'));
+        restoreTestsFromImport().catch((e) => { log(`Tests restore: ${e.message}`, 'tep-log-err'); tepRestoreScheduleDismiss(10000); });
       });
     }
+    const restoreProgClose = $('#tep-restore-progress-close');
+    if (restoreProgClose) restoreProgClose.addEventListener('click', () => tepRestoreDismiss());
     const restorePickAll = $('#tep-restore-pick-all');
     if (restorePickAll) restorePickAll.addEventListener('click', () => setAllTestsRestorePick(true));
     const restorePickNone = $('#tep-restore-pick-none');
     if (restorePickNone) restorePickNone.addEventListener('click', () => setAllTestsRestorePick(false));
+    const restoreAgentFilter = $('#tep-restore-agent-filter');
+    if (restoreAgentFilter) restoreAgentFilter.addEventListener('input', () => renderRestoreAgentPicker(restoreAgentFilter.value));
+    // Toggling an agent re-renders the picker internally; keep the Run gate in
+    // sync via delegation on the persistent box (survives innerHTML rebuilds).
+    const restoreAgentBox = $('#tep-restore-agent-box');
+    if (restoreAgentBox) restoreAgentBox.addEventListener('change', () => updateTestsRestorePickCount());
   }
   $('#tep-create').addEventListener('click', createTests);
   {
@@ -32173,6 +33004,19 @@
   // (it builds its own overlay from already-loaded agent data).
   const dashMapFull = root.querySelector('#tep-dash-map-full');
   if (dashMapFull) dashMapFull.addEventListener('click', () => openDashMapFullscreen());
+  // Persistent-refresh recovery: if a prior fullscreen session flipped the TE UI
+  // to 'iris' and the page reloaded before it reverted, a prior theme is still
+  // stashed — restore it now (the fullscreen map isn't open on a fresh load).
+  if (!dashMapFullEl) {
+    try {
+      const pendingTheme = localStorage.getItem(TEP_TE_THEME_RESTORE_KEY);
+      if (pendingTheme && pendingTheme !== TEP_TE_FULLSCREEN_THEME) {
+        tepSetTeTheme(pendingTheme);
+        localStorage.removeItem(TEP_TE_THEME_RESTORE_KEY);
+        log('Theme: restored TE UI to "' + pendingTheme + '" after a reload left the fullscreen theme applied', 'tep-log-info');
+      }
+    } catch (_) { /* */ }
+  }
 
   if (isDashboardToolsPage()) {
     function wireDashSectionToggle(toggleId, expandId, defaultOpen, { onExpand } = {}) {
@@ -32393,6 +33237,8 @@
     }
     const epBulkApply = root.querySelector('#tep-ep-bulk-apply');
     if (epBulkApply) epBulkApply.addEventListener('click', () => { void endpointBulkApply(); });
+    const epBulkSelectAll = root.querySelector('#tep-ep-bulk-selectall');
+    if (epBulkSelectAll) epBulkSelectAll.addEventListener('click', selectAllVisibleEndpointTests);
     const epBulkClear = root.querySelector('#tep-ep-bulk-clear');
     if (epBulkClear) epBulkClear.addEventListener('click', clearEndpointBulkSelection);
     const epRestoreChoose = root.querySelector('#tep-ep-restore-choose-file');
