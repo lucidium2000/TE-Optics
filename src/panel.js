@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.00';
+  const TEP_VERSION = '4.01';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -20201,7 +20201,24 @@
     requestAnimationFrame(() => {
       if (!svg.isConnected) return;   // a newer paint replaced this render
       const sr = stage.getBoundingClientRect();
-      const center = (cell) => { const r = cell.getBoundingClientRect(); return { x: r.left + r.width / 2 - sr.left, y: r.top + r.height / 2 - sr.top }; };
+      // getBoundingClientRect reports POST-transform viewport pixels, but these
+      // coordinates are fed straight into the SVG viewBox, which is in
+      // UNTRANSFORMED stage units. That was equivalent while the stage was never
+      // transformed — it no longer is, since the pan/zoom layer scales it. At a
+      // fit scale of ~0.2 every port-anchored edge endpoint came out at a fifth
+      // of its true offset, collapsing the links into a fan pointing at the
+      // stage origin while the cards stayed put. Divide the live scale back out.
+      // Derived from the rect vs the layout box rather than asking the pan/zoom
+      // layer, so this stays correct at scale 1 and needs no coupling to it.
+      const sx = stage.offsetWidth ? sr.width / stage.offsetWidth : 1;
+      const sy = stage.offsetHeight ? sr.height / stage.offsetHeight : 1;
+      const center = (cell) => {
+        const r = cell.getBoundingClientRect();
+        return {
+          x: (r.left + r.width / 2 - sr.left) / (sx || 1),
+          y: (r.top + r.height / 2 - sr.top) / (sy || 1),
+        };
+      };
       const findPortCell = (nodeEl, ifIndex) => {
         if (!nodeEl || ifIndex == null) return null;
         let c = nodeEl.querySelector('.tep-port[data-ifi="' + ifIndex + '"]');
