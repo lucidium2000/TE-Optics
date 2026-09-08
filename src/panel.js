@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.01';
+  const TEP_VERSION = '4.02';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -24149,15 +24149,53 @@
       // .16 so even an aggressive fast pinch can't zoom faster than the old
       // worst case. The +/- buttons and keyboard shortcut (see
       // dashFullZoomKeyHandler) keep their own separate, unchanged 1.4 step.
-      const step = Math.min(0.16, Math.abs(e.deltaY) * 0.0016);
+      // Browsers synthesize a TRACKPAD PINCH as a wheel event with ctrlKey set;
+      // a plain mouse notch or a two-finger scroll never carries it. That is the
+      // only signal separating the two here, since both arrive through this same
+      // handler. CONFIRMED via user request: trackpad pinch runs at 2x the
+      // mouse-wheel rate (rate and cap both doubled, so the whole curve scales
+      // rather than just clipping later). Mouse-wheel zoom is untouched, and so
+      // is the touchscreen pinch, which never reaches this handler — it is
+      // ratio-driven off pointer events further down.
+      // Caveat: Ctrl + a real mouse wheel is the browser's own zoom gesture and
+      // lands here as a pinch too. That matches what the user is asking for.
+      const trackpadPinch = e.ctrlKey;
+      const rate = trackpadPinch ? 0.0032 : 0.0016;
+      const cap = trackpadPinch ? 0.32 : 0.16;
+      const step = Math.min(cap, Math.abs(e.deltaY) * rate);
       zoomAt(e.deltaY < 0 ? 1 + step : 1 / (1 + step), e.clientX, e.clientY);
     }, { passive: false });
 
     let down = null, moved = false;
+    // ── Touch pinch-zoom ──────────────────────────────────────────────────
+    // A trackpad pinch arrives as a ctrl+wheel event and is already handled by
+    // the wheel listener above. A TOUCHSCREEN pinch does not: it arrives as two
+    // independent pointers, and with only the single-pointer pan below, the
+    // second finger's pointerdown simply overwrote the pan anchor and every
+    // subsequent move yanked the map from the new anchor — the "jerky" zoom.
+    // Track the live pointers so two of them mean zoom, not pan.
+    const mapPts = new Map();
+    let pinchDist = 0;
+    /** Separation + midpoint (CLIENT coords, what zoomAt expects) of the first
+     *  two live pointers. */
+    const pinchState = () => {
+      const [a, b] = [...mapPts.values()];
+      return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+    };
     wrap.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.tep-agent-map-zoom') || e.target.closest('.tep-agent-map-tip')) return;
       cancelZoomAnim();
       hideTip();
+      mapPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (mapPts.size >= 2) {
+        // Second finger: hand the gesture to pinch. Drop the pan anchor so the
+        // map doesn't also drag, and set `moved` so releasing never registers
+        // as a click (which would select a geographic point).
+        down = null;
+        moved = true;
+        pinchDist = pinchState().d;
+        return;
+      }
       // Record the REAL element under the press now — setPointerCapture below
       // retargets every later pointer event (incl. pointerup) to `wrap`, so
       // pointerup's own e.target is useless for figuring out what was clicked.
@@ -24166,6 +24204,20 @@
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     });
     wrap.addEventListener('pointermove', (e) => {
+      if (mapPts.has(e.pointerId)) mapPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (mapPts.size >= 2) {
+        const st = pinchState();
+        // Zoom by the RATIO of finger separation, anchored at the midpoint —
+        // the same proportional feel as a trackpad pinch, which goes through
+        // zoomAt as well. The 0.5px deadband skips a full re-layout on the
+        // micro-jitter a resting finger produces.
+        if (pinchDist > 0 && st.d > 0 && Math.abs(st.d - pinchDist) > 0.5) {
+          zoomAt(st.d / pinchDist, st.cx, st.cy);
+          pinchDist = st.d;
+        }
+        moved = true;
+        return;
+      }
       if (!down) return;
       const dx = e.clientX - down.x, dy = e.clientY - down.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
@@ -24175,7 +24227,32 @@
       epDashMapZoom.ty = down.ty + dy;
       apply();
     });
+    // Lifting one finger of a pinch leaves a single pointer still down. Re-anchor
+    // the pan to it so the map keeps following that finger instead of feeling
+    // stuck until the user lifts and touches again.
+    const endMapPointer = (e) => {
+      if (!mapPts.has(e.pointerId)) return;
+      mapPts.delete(e.pointerId);
+      if (mapPts.size < 2) pinchDist = 0;
+      if (mapPts.size === 1 && !down) {
+        const [only] = [...mapPts.values()];
+        down = { x: only.x, y: only.y, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: null };
+        moved = true;   // still mid-gesture; never let this become a click
+      }
+    };
+    // Touch gestures routinely end in pointercancel (scroll takeover, palm
+    // rejection) rather than pointerup — without this the pointer would stay in
+    // the map forever and the next single touch would look like a pinch.
+    wrap.addEventListener('pointercancel', (e) => {
+      endMapPointer(e);
+      if (!mapPts.size) { down = null; try { wrap.releasePointerCapture(e.pointerId); } catch (_) { /* */ } }
+    });
     wrap.addEventListener('pointerup', (e) => {
+      endMapPointer(e);
+      // Still another finger down (one half of a pinch lifted) — the gesture is
+      // not over. Bail before the release logic below, which unconditionally
+      // clears `down` and would throw away the pan anchor just re-established.
+      if (mapPts.size >= 1) return;
       if (!down) return;
       // Use the element recorded at pointerdown — pointer capture retargets
       // this event's own e.target to `wrap`, so it can't identify what was
