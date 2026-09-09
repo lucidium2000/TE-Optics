@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.02';
+  const TEP_VERSION = '4.03';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -24199,7 +24199,9 @@
       // Record the REAL element under the press now — setPointerCapture below
       // retargets every later pointer event (incl. pointerup) to `wrap`, so
       // pointerup's own e.target is useless for figuring out what was clicked.
-      down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: e.target };
+      // pointerType is recorded at DOWN (the authoritative start of the
+      // gesture) and read at up, to tell a finger tap from a mouse click.
+      down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: e.target, ptype: e.pointerType };
       moved = false;
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     });
@@ -24258,6 +24260,7 @@
       // this event's own e.target to `wrap`, so it can't identify what was
       // clicked (see the pointerdown handler).
       const tgt = down.target || e.target;
+      const downPtype = down.ptype;
       down = null;
       try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
       if (moved) return;
@@ -24297,6 +24300,19 @@
       // still reachable from the hover card's name link.
       if (marker && dashMapSelectedTestDest && testDestFlowLines.length && tepToggleTracePin(marker)) {
         tepMapToast(tracePinFocus ? 'Trace pinned — showing only this source\nClick it again or click empty map to release' : 'Trace unpinned', 'ok');
+        return;
+      }
+      // TOUCH: a touchscreen has no hover, so the card that a mouse user gets
+      // by hovering was unreachable — the tap fell straight through to the
+      // desktop CLICK action and navigated away to the agent page. Make a tap
+      // do what hovering does instead: show the card. The agent page is still
+      // one tap away from the card's own name link, and this also un-breaks
+      // multi-agent cluster markers, whose click is a deliberate no-op
+      // ("already explorable via hover") that left them inert under a finger.
+      // Undefined pointerType (very old browsers) falls through as mouse, so
+      // existing behaviour is never changed by a missing signal.
+      if (marker && downPtype && downPtype !== 'mouse') {
+        showTip(marker);
         return;
       }
       if (marker && marker._cluster && marker._cluster.items.length === 1) {
