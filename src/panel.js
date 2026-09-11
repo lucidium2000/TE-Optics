@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.05';
+  const TEP_VERSION = '4.06';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2705,6 +2705,13 @@
       margin: 8px -13px 0; padding: 7px 13px 0;
       border-top: 1px solid rgba(148,163,184,.18);
       font-size: 12px; line-height: 1.4;
+      /* .tep-saas-breakdown-row is color:inherit (it picks up the popover's
+         own colour when it lives in one). A widget card sets no colour of its
+         own - every child sets its own - so without this the rows inherited
+         the document default and rendered BLACK on the dark tile. CONFIRMED
+         via user screenshot. The var resolves dark here regardless of theme:
+         .tep-dashmap-full pins the dark --tep-slate-* set (see .tep-fs-pop). */
+      color: var(--tep-slate-200);
       /* Capped + scrollable so a broad query ("a") can't grow a widget tile
          down over the whole map. Same thin scrollbar as the popovers. */
       max-height: 184px; overflow-y: auto; overflow-x: hidden;
