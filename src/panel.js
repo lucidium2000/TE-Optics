@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.03';
+  const TEP_VERSION = '4.04';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3288,6 +3288,25 @@
       border-radius: 5px; transition: background .12s ease;
     }
     .tep-map-tip-subnetbtn:hover { background: rgba(26,115,232,.22); color: #dbeafe; }
+    /* Solo-agent footer: device-topology launcher. Sits in the slot the
+       multi-agent card gives "Open subnet view", replacing the plain hint —
+       CONFIRMED via user request. Renders GREY and inert, and is promoted to
+       the orange active state only once the SNMP check (run when the card
+       first shows, never before) actually finds devices this agent polls. */
+    .tep-map-tip-topobtn {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; margin-top: 6px; padding: 5px 8px;
+      font: inherit; font-size: 11px; font-weight: 700; text-align: center;
+      color: var(--tep-slate-500); cursor: default;
+      background: rgba(148,163,184,.08); border: 1px solid rgba(148,163,184,.22);
+      border-radius: 5px; transition: background .12s ease, color .12s ease, border-color .12s ease;
+    }
+    .tep-map-tip-topobtn svg { flex: 0 0 auto; }
+    .tep-map-tip-topobtn--on {
+      color: #ffb066; cursor: pointer;
+      background: rgba(255,176,102,.12); border-color: rgba(255,176,102,.42);
+    }
+    .tep-map-tip-topobtn--on:hover { background: rgba(255,176,102,.22); color: #ffd0a8; }
     /* Pinned-test row(s) in a source agent's hover card: test name + this
        agent's latency, linking to the test view. */
     .tep-map-tip-testdest-sec { margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(148,163,184,.18); }
@@ -21321,6 +21340,33 @@
    *  already seen in the poll) — these light up. When there are endpoint agents
    *  but no evidence yet, 'idle' keeps a grey button for a manual scan. Only a
    *  column with nothing scannable (no endpoints, no SNMP) returns '' (no button). */
+  /** SNMP devices polled by ONE agent. tepColumnDevices already matches a
+   *  device's agentIds against a set of agent/physical ids, so a solo agent is
+   *  just a one-entry column — no separate matching rule to keep in sync. */
+  function tepAgentSnmpDevices(it, devices) {
+    if (!it || !Array.isArray(devices) || !devices.length) return [];
+    return tepColumnDevices([{ it }], devices);
+  }
+
+  /** Device Layer joins a device to its POLLING agent (deviceAgents[].vAgentId),
+   *  which is always an enterprise agent — an endpoint agent's id lives in a
+   *  different space and can never match. Endpoints keep the plain hint (and
+   *  already have their own wireless launcher). */
+  function tepAgentCanHaveSnmp(it) {
+    return !!it && it.kind !== 'endpoint' && (it.agentId != null || it.physicalId != null);
+  }
+
+  /** Open the device topology scoped to ONE agent. tepOpenDeviceTopoView works
+   *  off a cluster + network label, and tepClusterNetworkGroups is happy with a
+   *  single item, so synthesize the one-item cluster rather than duplicating the
+   *  view. The result is the topology of the devices THIS agent polls. */
+  function tepOpenDeviceTopoForAgent(it) {
+    if (!it) return;
+    const groups = tepClusterNetworkGroups([it]);
+    if (!groups.length) return;
+    tepOpenDeviceTopoView({ items: [it] }, groups[0].label);
+  }
+
   function tepClusterEnrichMode(entries, invReady) {
     if (invReady && tepColumnDevices(entries, invReady).length) return 'topo';
     const wl = tepEpWirelessCache && tepEpWirelessCache.byMachineId;
@@ -21419,9 +21465,17 @@
     // Bottom row: for a multi-agent cluster it's a centered "Open subnet view"
     // action (same expand the top-right button triggers, grouping agents by
     // network); a lone agent keeps the plain hint.
+    // Solo agent: the "Click an agent to open it" hint carried no action, and a
+    // lone agent had NO route to its device topology at all (every path was
+    // gated behind n > 1). It now gets a topology launcher in that slot —
+    // rendered grey/inert, promoted to orange by showTip's SNMP check once the
+    // card is actually on screen. Agents that can't have SNMP keep the hint.
+    const topoIco = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="19" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7l-6 10M12 7l6 10"/></svg>';
     const foot = n > 1
       ? '<button type="button" class="tep-map-tip-subnetbtn" data-action="tep-cluster-max" title="Group this cluster’s agents by network / subnet">Open subnet view</button>'
-      : '<div class="tep-map-tip-foot">Click an agent to open it</div>';
+      : tepAgentCanHaveSnmp(cluster.items[0])
+        ? '<button type="button" class="tep-map-tip-topobtn" data-action="tep-agent-topo" title="Checking this agent for SNMP-monitored devices…" aria-disabled="true">' + topoIco + '<span class="tt-tx">Device topology</span></button>'
+        : '<div class="tep-map-tip-foot">Click an agent to open it</div>';
     // The test name + latency/loss ride at the BOTTOM of each agent's own card
     // (see tepDashTipRow's traceRowHtml), not as a summary header up top — a
     // cluster-level header here read as a duplicate/misplaced row.
@@ -23099,6 +23153,32 @@
         if (marker && marker.isConnected) positionTip(marker);
       }
     }
+    /** Promote the solo-agent card's grey topology button to active if this
+     *  agent actually polls SNMP devices. Deliberately fired from showTip and
+     *  nowhere else — CONFIRMED via user request: nothing probes until the card
+     *  is on screen, so panning past markers costs no traffic. Both fetches are
+     *  cached for 5 minutes and de-duped in flight (tepDeviceTopoInflight), so
+     *  repeat hovers cost nothing either, and tepSnmpInvUnavailable short-
+     *  circuits entirely on accounts without Device Layer. */
+    function checkSoloAgentSnmp(it, clusterRef) {
+      if (tepSnmpInvUnavailable || !tepAgentCanHaveSnmp(it)) return;
+      if (!tip.querySelector('.tep-map-tip-topobtn')) return;
+      Promise.all([tepFetchSnmpInventory(), tepFetchDeviceTopology()]).then(([devs]) => {
+        // The card may have been swapped for another marker's, or hidden,
+        // while the fetch was in flight — same guard the other async card
+        // updaters use.
+        if (tip._cluster !== clusterRef || tip.style.display === 'none') return;
+        const live = tip.querySelector('.tep-map-tip-topobtn');
+        if (!live) return;
+        const n = tepAgentSnmpDevices(it, devs || []).length;
+        if (!n) { live.title = 'No SNMP-monitored devices are polled by this agent'; return; }
+        live.classList.add('tep-map-tip-topobtn--on');
+        live.removeAttribute('aria-disabled');
+        live.title = 'Open the live device topology for the ' + n + ' device' + (n === 1 ? '' : 's') + ' this agent polls';
+        const tx = live.querySelector('.tt-tx');
+        if (tx) tx.textContent = n === 1 ? '1 device · topology' : n + ' devices · topology';
+      }).catch(() => { /* device layer is optional — never block the card */ });
+    }
     function showTip(marker) {
       // Was a DIFFERENT marker's tip already showing? Only that case gets
       // the fade-in below — a fresh first open should appear instantly, not
@@ -23145,6 +23225,7 @@
       // hover (see the mouseover listener below).
       if (marker._cluster.items.length === 1) {
         void enrichEndpointAgentForTip(marker._cluster.items[0], marker._cluster, marker);
+        checkSoloAgentSnmp(marker._cluster.items[0], marker._cluster);
       }
       // Battery isn't in segment-visualisation, so it's fetched per-agent on
       // demand (tepFetchBatteryForAgent — one small targeted call each, not a
@@ -23652,6 +23733,18 @@
       // where the hover visually was. The card's own center tracks the
       // marker much more closely.
       if (maxBtn) { openClusterMaxView(tip._cluster, tip.getBoundingClientRect()); return; }
+      // Solo-agent device-topology launcher. Inert while grey — the check
+      // either has not resolved yet or found nothing to show, and opening the
+      // view then would just early-return on an empty device list.
+      const topoBtn = e.target.closest('.tep-map-tip-topobtn');
+      if (topoBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!topoBtn.classList.contains('tep-map-tip-topobtn--on')) return;
+        const c = tip._cluster;
+        if (c && c.items && c.items.length === 1) tepOpenDeviceTopoForAgent(c.items[0]);
+        return;
+      }
       const wifiIco = e.target.closest('.tep-agent-conn--wifi[data-wifi-agent]');
       if (wifiIco) { e.preventDefault(); e.stopPropagation(); tepOpenWirelessTopoForAgent(wifiIco.getAttribute('data-wifi-agent')); return; }
       if (e.target.closest('.tep-map-tip-geo')) return; // let the Google Maps link open
