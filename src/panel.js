@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.04';
+  const TEP_VERSION = '4.05';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2688,6 +2688,39 @@
     .tep-saas-breakdown-pop::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
     .tep-saas-breakdown-head { font-weight: 700; margin-bottom: 6px; color: var(--tep-slate-100); }
     .tep-saas-breakdown-hint { display: block; font-weight: 400; font-size: 10.5px; color: var(--tep-slate-500); margin-top: 2px; }
+    /* Search-driven inline test list inside the SaaS / Network Health widget
+       cards. The map search box matches agents AND test names; a test-name
+       match can't be shown as a map marker, so each health category grows a
+       short list of ITS matching tests right under the ring - the same rows
+       the click-through breakdown popover renders, narrowed to the matches.
+       CONFIRMED via user request ("show under each category, like when
+       clicked on, but only showing the matching tests"). */
+    .tep-widget-testmatches {
+      /* Full-bleed to the card's padding edge (.tep-dash-widget is 10px 13px),
+         then padded back in. Two reasons: the divider spans the whole tile
+         like a footer rule instead of floating short of both edges, and the
+         rows' own -6px hover bleed (.tep-saas-breakdown-row) then has room
+         INSIDE this box - left to overflow it, it raised a horizontal
+         scrollbar, since overflow-y:auto makes overflow-x:auto too. */
+      margin: 8px -13px 0; padding: 7px 13px 0;
+      border-top: 1px solid rgba(148,163,184,.18);
+      font-size: 12px; line-height: 1.4;
+      /* Capped + scrollable so a broad query ("a") can't grow a widget tile
+         down over the whole map. Same thin scrollbar as the popovers. */
+      max-height: 184px; overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) transparent;
+    }
+    .tep-widget-testmatches::-webkit-scrollbar { width: 6px; }
+    .tep-widget-testmatches::-webkit-scrollbar-track { background: transparent; }
+    .tep-widget-testmatches::-webkit-scrollbar-thumb { background: rgba(148,163,184,.35); border-radius: 3px; }
+    /* Not sticky: the widget card is translucent (backdrop-filter over the
+       map), so an opaque sticky strip would read as a foreign block. It
+       scrolls with its rows instead. */
+    .tep-widget-testmatches-hd {
+      margin-bottom: 3px;
+      font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+      color: var(--tep-orange-fg);
+    }
     /* Minimized breakdown list (after a pin click): collapse to just the header
        so the map is interactable; click the header to restore. */
     .tep-breakdown-min .tep-saas-breakdown-list { display: none; }
@@ -26727,34 +26760,116 @@
     focus.innerHTML = `<b>${esc(info.testName)}</b>${stat}`;
     pop.classList.add('tep-breakdown-hasfocus');
   }
-  /** Toggle the "what's behind this average" breakdown for the SaaS Health
-   *  widget — one row per HTTP Server test (enterprise/cloud AND, now,
-   *  endpoint — see tepFetchEndpointTestBreakdownCore), worst-first, each
-   *  linking straight to that test's own results. Enterprise rows link to
-   *  /view/tests/?testId=…; endpoint rows link to the CONFIRMED (via live
-   *  capture) /endpoint/views/?metric=availability&scenarioId=eyebrowHttp
-   *  URL instead — same real-link, no-JS-needed navigation either way, just
-   *  a different URL shape per row kind. Hovering an enterprise row
-   *  highlights its agents by name (tepFetchHttpAgentsByTest,
-   *  dashMapTestHighlight); hovering an endpoint row highlights its agents
-   *  by id (r.agentIds, already resolved synchronously — no extra fetch —
-   *  via dashMapAgentsListHoverHighlight, the same mechanism the map's own
-   *  agent-list popovers use). */
-  function toggleSaasBreakdownPopover(anchorEl) {
-    if (tepSaasPopoverEl) { hideSaasBreakdownPopover(); return; }
-    if (!tepSaasBreakdownData || !tepSaasBreakdownData.rows || !tepSaasBreakdownData.rows.length || !anchorEl) return;
-    hideOtherBreakdownPopovers(hideSaasBreakdownPopover);
-    const { rows, epCount } = tepSaasBreakdownData;
-    // testId → Set<agentId>, built directly from the rows we already have
-    // (each endpoint row carries its own agentIds from the fetch) — no
-    // separate async lookup needed, unlike the enterprise name-based path.
-    const byTestAgentIds = new Map();
-    for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
-    const pop = document.createElement('div');
-    // Fullscreen-widgets-only popover (see toggleSaasBreakdownPopover's
-    // caller) — always dark, same as the map it's anchored to (tep-fs-pop).
-    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
-    const rowsHtml = rows.map((r) => {
+  /** Wire the shared row behaviours onto anything that renders
+   *  .tep-saas-breakdown-row rows - the SaaS/Network breakdown popovers and
+   *  the search-driven inline lists inside their widget cards. Extracted so
+   *  those three call sites can't drift apart: locate-pin click -> pin the
+   *  test's destination, hover -> highlight that test's agents on the map
+   *  (by id for endpoint rows, by name for enterprise/cloud ones), leave ->
+   *  undo it all.
+   *
+   *  `getIds` returns the CURRENT testId -> Set<agentId> map for endpoint
+   *  rows (a function, not the map itself, because the inline lists rewrite
+   *  their rows on every keystroke while these listeners stay put), and
+   *  `fetchAgentsByTest` is tepFetchHttpAgentsByTest or
+   *  tepFetchNetworkAgentsByTest - resolved once, eagerly, off the cache the
+   *  widget's own fetch already filled. Its result is parked on the root
+   *  (not a closure var) so a re-render can re-badge its new rows from it. */
+  function tepWireBreakdownRows(root, getIds, fetchAgentsByTest) {
+    if (root._tepBreakdownWired) return;
+    root._tepBreakdownWired = true;
+    fetchAgentsByTest().then((m) => { root._tepAgentsByTest = m; tepMarkBreakdownRowAgentBadges(root, m); });
+    root.addEventListener('click', (e) => {
+      const loc = e.target.closest('.tep-testdest-locate');
+      if (!loc) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const tid = loc.dataset.locateTest;
+      if (!tid) return;
+      tepCancelTraceHover();   // a click supersedes any pending hover trace
+      loc.classList.add('tep-testdest-locate--loading');
+      const popToMin = loc.closest('.tep-saas-breakdown-pop');
+      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset), true).then((ok) => {
+        loc.classList.remove('tep-testdest-locate--loading', 'tep-testdest-locate--glow');
+        if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
+        // Committing to a trace (pin click) MINIMIZES the list so the map is
+        // interactable — the collapsed header now shows THIS test's name + stats;
+        // click it to bring the list back.
+        else if (popToMin) { tepBreakdownSetFocus(popToMin); popToMin.classList.add('tep-breakdown-min'); }
+      });
+    }, true);
+    root.addEventListener('mouseover', (e) => {
+      const row = e.target.closest('.tep-saas-breakdown-row');
+      if (!row || !row.dataset.testId) return;
+      // Hover-to-trace: after a short dwell, draw this test's destination trace
+      // on the map (popover stays open) — for BOTH enterprise and endpoint rows,
+      // so it runs BEFORE the endpoint highlight branch returns. Cancelled on
+      // mouseout below.
+      const locEl = row.querySelector('.tep-testdest-locate');
+      if (locEl && row.dataset.testId) {
+        tepCancelTraceHover();
+        const tid = row.dataset.testId;
+        const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
+        tepTraceHoverTimer = setTimeout(() => {
+          tepTraceHoverTimer = null;
+          // Pulse a "Tracing…" state on the pin while the destination resolves,
+          // then swap to the "Pin it" glow on success (or just drop it). The
+          // load-sequence guard in tepShowTraceForTest means a resolve that lands
+          // after the user moved on is ignored — see tepAbortTraceLoad.
+          if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
+          void tepShowTraceForTest(tid, ds).then((ok) => {
+            if (!locEl.isConnected) return;
+            locEl.classList.remove('tep-testdest-locate--tracing');
+            if (ok) locEl.classList.add('tep-testdest-locate--glow');
+          });
+        }, TEP_TRACE_HOVER_DELAY_MS);
+      }
+      if (row.dataset.endpoint) {
+        if (dashMapAgentsListHoverLocked) return;
+        const agentIds = getIds().get(row.dataset.testId);
+        if (!agentIds || !agentIds.size) return;
+        dashMapAgentsListHoverHighlight = agentIds;
+        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        return;
+      }
+      const byTestAgents = root._tepAgentsByTest;
+      if (!byTestAgents) return;
+      const names = byTestAgents.get(row.dataset.testId);
+      if (!names || !names.size) return;
+      dashMapTestHighlight = names;
+      tepShowTestCloudAgents(names);   // light-blue cloud icons for this test's Cloud agents
+      if (dashMapSearchHook) dashMapSearchHook.refresh();
+    });
+    root.addEventListener('mouseout', (e) => {
+      const row = e.target.closest('.tep-saas-breakdown-row');
+      if (!row) return;
+      const to = e.relatedTarget;
+      if (to && row.contains(to)) return; // moved within the same row
+      const glowEl = row.querySelector('.tep-testdest-locate--glow');
+      if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
+      tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
+      tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
+      if (row.dataset.endpoint) {
+        if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
+          dashMapAgentsListHoverHighlight = null;
+          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+          if (dashMapSearchHook) dashMapSearchHook.refresh();
+        }
+        return;
+      }
+      tepCancelTraceHover();   // a pending (not-yet-shown) trace shouldn't fire after leaving the row
+      tepClearTestCloudAgents();
+      if (dashMapTestHighlight) {
+        dashMapTestHighlight = null;
+        if (dashMapSearchHook) dashMapSearchHook.refresh();
+      }
+    });
+  }
+  /** One <a>/<div> row per HTTP Server test for the SaaS Health breakdown -
+   *  shared by the click-through popover and the inline search-match list. */
+  function tepSaasBreakdownRowsHtml(rows) {
+    return rows.map((r) => {
       const p = Math.max(0, Math.min(100, Number(r.value) || 0));
       // Same smooth gradient as the widget's own ring (TEP_HEALTH_RED_FLOOR_PCT)
       // instead of the old 99%/95% buckets, so a row's colour matches the ring.
@@ -26783,6 +26898,35 @@
         : '';
       return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${epBadge}${locateIcon}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${url ? 'a' : 'div'}>`;
     }).join('');
+  }
+  /** Toggle the "what's behind this average" breakdown for the SaaS Health
+   *  widget — one row per HTTP Server test (enterprise/cloud AND, now,
+   *  endpoint — see tepFetchEndpointTestBreakdownCore), worst-first, each
+   *  linking straight to that test's own results. Enterprise rows link to
+   *  /view/tests/?testId=…; endpoint rows link to the CONFIRMED (via live
+   *  capture) /endpoint/views/?metric=availability&scenarioId=eyebrowHttp
+   *  URL instead — same real-link, no-JS-needed navigation either way, just
+   *  a different URL shape per row kind. Hovering an enterprise row
+   *  highlights its agents by name (tepFetchHttpAgentsByTest,
+   *  dashMapTestHighlight); hovering an endpoint row highlights its agents
+   *  by id (r.agentIds, already resolved synchronously — no extra fetch —
+   *  via dashMapAgentsListHoverHighlight, the same mechanism the map's own
+   *  agent-list popovers use). */
+  function toggleSaasBreakdownPopover(anchorEl) {
+    if (tepSaasPopoverEl) { hideSaasBreakdownPopover(); return; }
+    if (!tepSaasBreakdownData || !tepSaasBreakdownData.rows || !tepSaasBreakdownData.rows.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideSaasBreakdownPopover);
+    const { rows, epCount } = tepSaasBreakdownData;
+    // testId → Set<agentId>, built directly from the rows we already have
+    // (each endpoint row carries its own agentIds from the fetch) — no
+    // separate async lookup needed, unlike the enterprise name-based path.
+    const byTestAgentIds = new Map();
+    for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
+    const pop = document.createElement('div');
+    // Fullscreen-widgets-only popover (see toggleSaasBreakdownPopover's
+    // caller) — always dark, same as the map it's anchored to (tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
+    const rowsHtml = tepSaasBreakdownRowsHtml(rows);
     const headTitle = epCount ? 'Tests behind this average' : 'HTTP tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head"><span class="tep-breakdown-title">${headTitle}</span><span class="tep-breakdown-focus" aria-hidden="true"></span>`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · pin to map its destination</span></div>'
@@ -26793,103 +26937,12 @@
     // appended there would render tinted or hidden behind the map overlay.
     document.documentElement.appendChild(pop);
     tepSaasPopoverEl = pop;
-    // Phase 2: locate-pin click → resolve + pin this test's destination.
-    pop.addEventListener('click', (e) => {
-      const loc = e.target.closest('.tep-testdest-locate');
-      if (!loc) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const tid = loc.dataset.locateTest;
-      if (!tid) return;
-      tepCancelTraceHover();   // a click supersedes any pending hover trace
-      loc.classList.add('tep-testdest-locate--loading');
-      const popToMin = loc.closest('.tep-saas-breakdown-pop');
-      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset), true).then((ok) => {
-        loc.classList.remove('tep-testdest-locate--loading', 'tep-testdest-locate--glow');
-        if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
-        // Committing to a trace (pin click) MINIMIZES the list so the map is
-        // interactable — the collapsed header now shows THIS test's name + stats;
-        // click it to bring the list back.
-        else if (popToMin) { tepBreakdownSetFocus(popToMin); popToMin.classList.add('tep-breakdown-min'); }
-      });
-    }, true);
     // Click the header to toggle minimize/restore (the pin also minimizes).
     pop.addEventListener('click', (e) => {
       if (e.target.closest('.tep-testdest-locate')) return;
       if (e.target.closest('.tep-saas-breakdown-head')) { tepBreakdownSetFocus(pop); pop.classList.toggle('tep-breakdown-min'); }
     });
-    // Resolved once eagerly (reuses the already-cached raw fetch behind the
-    // widget itself — see tepFetchHttpAgentsByTest), not per hover: a null
-    // check in the mouseover handler below just means nothing highlights
-    // until this resolves, which given the cache is near-instant.
-    let byTestAgents = null;
-    tepFetchHttpAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
-    pop.addEventListener('mouseover', (e) => {
-      const row = e.target.closest('.tep-saas-breakdown-row');
-      if (!row || !row.dataset.testId) return;
-      // Hover-to-trace: after a short dwell, draw this test's destination trace
-      // on the map (popover stays open) — for BOTH enterprise and endpoint rows,
-      // so it runs BEFORE the endpoint highlight branch returns. Cancelled on
-      // mouseout below.
-      const locEl = row.querySelector('.tep-testdest-locate');
-      if (locEl && row.dataset.testId) {
-        tepCancelTraceHover();
-        const tid = row.dataset.testId;
-        const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
-        tepTraceHoverTimer = setTimeout(() => {
-          tepTraceHoverTimer = null;
-          // Pulse a "Tracing…" state on the pin while the destination resolves,
-          // then swap to the "Pin it" glow on success (or just drop it). The
-          // load-sequence guard in tepShowTraceForTest means a resolve that lands
-          // after the user moved on is ignored — see tepAbortTraceLoad.
-          if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
-          void tepShowTraceForTest(tid, ds).then((ok) => {
-            if (!locEl.isConnected) return;
-            locEl.classList.remove('tep-testdest-locate--tracing');
-            if (ok) locEl.classList.add('tep-testdest-locate--glow');
-          });
-        }, TEP_TRACE_HOVER_DELAY_MS);
-      }
-      if (row.dataset.endpoint) {
-        if (dashMapAgentsListHoverLocked) return;
-        const agentIds = byTestAgentIds.get(row.dataset.testId);
-        if (!agentIds || !agentIds.size) return;
-        dashMapAgentsListHoverHighlight = agentIds;
-        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
-        return;
-      }
-      if (!byTestAgents) return;
-      const names = byTestAgents.get(row.dataset.testId);
-      if (!names || !names.size) return;
-      dashMapTestHighlight = names;
-      tepShowTestCloudAgents(names);   // light-blue cloud icons for this test's Cloud agents
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
-    });
-    pop.addEventListener('mouseout', (e) => {
-      const row = e.target.closest('.tep-saas-breakdown-row');
-      if (!row) return;
-      const to = e.relatedTarget;
-      if (to && row.contains(to)) return; // moved within the same row
-      const glowEl = row.querySelector('.tep-testdest-locate--glow');
-      if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
-      tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
-      tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
-      if (row.dataset.endpoint) {
-        if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
-          dashMapAgentsListHoverHighlight = null;
-          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-          if (dashMapSearchHook) dashMapSearchHook.refresh();
-        }
-        return;
-      }
-      tepCancelTraceHover();   // a pending (not-yet-shown) trace shouldn't fire after leaving the row
-      tepClearTestCloudAgents();
-      if (dashMapTestHighlight) {
-        dashMapTestHighlight = null;
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
-      }
-    });
+    tepWireBreakdownRows(pop, () => byTestAgentIds, tepFetchHttpAgentsByTest);
     const rect = anchorEl.getBoundingClientRect();
     const popRect = pop.getBoundingClientRect();
     let top = rect.bottom + 6, left = rect.left;
@@ -27128,30 +27181,11 @@
     if (tepNetworkPopoverEl && !tepNetworkPopoverEl.contains(e.target) && !e.target.closest('#tep-w-network')) hideNetworkBreakdownPopover();
   }
   function tepNetworkPopoverEscHandler(e) { if (e.key === 'Escape') hideNetworkBreakdownPopover(); }
-  /** Toggle the "what's behind this average" breakdown for the Network Health
-   *  widget — one row per Network-category test (enterprise/cloud AND, now,
-   *  endpoint — see tepFetchEndpointTestBreakdownCore), worst-first,
-   *  coloured by severity (tepSeverityColor) rather than SaaS's uptime-style
-   *  99%/95% cutoffs, since a health SCORE isn't an availability percent
-   *  (see tepSeverityRingHtml). Enterprise rows link to
-   *  /view/tests/?testId=…; endpoint rows link to the CONFIRMED (via live
-   *  capture) /endpoint/views/?metric=latency&scenarioId=eyebrowNetworkTest
-   *  URL instead. Hovering an enterprise row highlights its agents by name
-   *  (tepFetchNetworkAgentsByTest, dashMapTestHighlight); hovering an
-   *  endpoint row highlights its agents by id (r.agentIds, already resolved
-   *  synchronously — via dashMapAgentsListHoverHighlight, same mechanism
-   *  the map's own agent-list popovers use). */
-  function toggleNetworkBreakdownPopover(anchorEl) {
-    if (tepNetworkPopoverEl) { hideNetworkBreakdownPopover(); return; }
-    if (!tepNetworkBreakdownData || !tepNetworkBreakdownData.rows || !tepNetworkBreakdownData.rows.length || !anchorEl) return;
-    hideOtherBreakdownPopovers(hideNetworkBreakdownPopover);
-    const { rows, epCount } = tepNetworkBreakdownData;
-    const byTestAgentIds = new Map();
-    for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
-    const pop = document.createElement('div');
-    // Fullscreen-widgets-only popover — always dark (see tep-fs-pop).
-    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
-    const rowsHtml = rows.map((r) => {
+  /** One <a>/<div> row per Network-category test for the Network Health
+   *  breakdown - shared by the click-through popover and the inline
+   *  search-match list, same as tepSaasBreakdownRowsHtml. */
+  function tepNetworkBreakdownRowsHtml(rows) {
+    return rows.map((r) => {
       // Same compressed gradient as the widget's own ring (matches
       // TEP_HEALTH_RED_FLOOR_PCT — full red at that score, not score 0) so a
       // row's colour matches what the ring above it is already showing.
@@ -27186,107 +27220,119 @@
         : '';
       return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:var(--tep-slate-500);font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}${locateIcon}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
     }).join('');
+  }
+  /** Drop whatever map highlight a breakdown row's hover left behind. The
+   *  mouseout handler normally does this, but an inline search-match list can
+   *  have its rows swapped out from under the pointer (the next keystroke
+   *  re-renders them), so the row the map is lit up for can simply cease to
+   *  exist without ever firing mouseout. No-ops when nothing is lit. */
+  function tepClearBreakdownRowHover() {
+    tepCancelTraceHover();
+    tepClearTestCloudAgents();
+    let dirty = false;
+    if (dashMapTestHighlight) { dashMapTestHighlight = null; dirty = true; }
+    if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
+      dashMapAgentsListHoverHighlight = null;
+      renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+      dirty = true;
+    }
+    if (dirty && dashMapSearchHook) dashMapSearchHook.refresh();
+  }
+  /** Tests whose name matches the fullscreen map's search query. The search
+   *  box hunts agents by host/IP/user/location; a test is matched on its
+   *  TITLE only (which is what a user types when they mean a test - the
+   *  target host or app name usually IS the test name), case-insensitively,
+   *  substring. Ordering is left alone: the breakdown rows arrive worst-
+   *  health-first and that's still the most useful order for a subset. */
+  function tepBreakdownRowsMatching(data, q) {
+    if (!q || !data || !Array.isArray(data.rows)) return [];
+    return data.rows.filter((r) => String(r.title || '').toLowerCase().includes(q));
+  }
+  /** Render (or clear) one health widget's inline "tests matching your search"
+   *  list. Rows are the SAME markup the click-through breakdown popover uses,
+   *  so they keep their health colour, agent-count badge, deep link and
+   *  locate pin; only the set is narrowed. Returns how many matched.
+   *
+   *  The list container is created once and kept: tepWireBreakdownRows binds
+   *  delegated listeners to it, so rewriting .innerHTML on every keystroke
+   *  re-renders the rows without re-binding anything (or re-fetching the
+   *  agents-by-test map, which is why the resolved map is re-read off the
+   *  container to re-badge the new rows). */
+  function tepRenderWidgetMatchList(cardId, data, rowsHtmlFn, fetchAgentsByTest, noun) {
+    const card = document.getElementById(cardId);
+    if (!card) return 0;
+    const list = tepBreakdownRowsMatching(data, dashMapSearchQuery);
+    let box = card.querySelector('.tep-widget-testmatches');
+    // Rows about to be replaced (or removed) may be the ones currently
+    // highlighting agents on the map — they'd never get their own mouseout.
+    if (box) tepClearBreakdownRowHover();
+    if (!list.length) { if (box) box.remove(); return 0; }
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'tep-widget-testmatches';
+      card.appendChild(box);
+      // Endpoint rows highlight their agents from a testId -> Set<agentId>
+      // map; it's re-derived per render, so the handlers read it back through
+      // this getter rather than closing over one keystroke's copy.
+      tepWireBreakdownRows(box, () => box._tepByTestAgentIds || new Map(), fetchAgentsByTest);
+    }
+    const ids = new Map();
+    for (const r of list) { if (r.isEndpoint && r.testId && r.agentIds) ids.set(r.testId, r.agentIds); }
+    box._tepByTestAgentIds = ids;
+    box.innerHTML = `<div class="tep-widget-testmatches-hd">${list.length} matching ${noun}${list.length === 1 ? '' : 's'}</div>`
+      + `<div class="tep-saas-breakdown-list">${rowsHtmlFn(list)}</div>`;
+    // Re-badge the fresh rows from the already-resolved map (the one-shot
+    // fetch in tepWireBreakdownRows only ran for the first render).
+    if (box._tepAgentsByTest) tepMarkBreakdownRowAgentBadges(box, box._tepAgentsByTest);
+    return list.length;
+  }
+  /** Both health widgets' inline search-match lists. Called on every keystroke
+   *  in the fullscreen search box AND whenever either widget's own fetch lands
+   *  (so a query typed while the tiles were still loading fills in by itself).
+   *  Returns the total match count so the search box can say so. Safe to call
+   *  when the fullscreen map isn't open - the widget lookups just miss. */
+  function tepRenderWidgetTestMatches() {
+    return tepRenderWidgetMatchList('tep-dashmap-widget-saas', tepSaasBreakdownData,
+      tepSaasBreakdownRowsHtml, tepFetchHttpAgentsByTest, 'SaaS test')
+      + tepRenderWidgetMatchList('tep-dashmap-widget-network', tepNetworkBreakdownData,
+        tepNetworkBreakdownRowsHtml, tepFetchNetworkAgentsByTest, 'Network test');
+  }
+  /** Toggle the "what's behind this average" breakdown for the Network Health
+   *  widget — one row per Network-category test (enterprise/cloud AND, now,
+   *  endpoint — see tepFetchEndpointTestBreakdownCore), worst-first,
+   *  coloured by severity (tepSeverityColor) rather than SaaS's uptime-style
+   *  99%/95% cutoffs, since a health SCORE isn't an availability percent
+   *  (see tepSeverityRingHtml). Enterprise rows link to
+   *  /view/tests/?testId=…; endpoint rows link to the CONFIRMED (via live
+   *  capture) /endpoint/views/?metric=latency&scenarioId=eyebrowNetworkTest
+   *  URL instead. Hovering an enterprise row highlights its agents by name
+   *  (tepFetchNetworkAgentsByTest, dashMapTestHighlight); hovering an
+   *  endpoint row highlights its agents by id (r.agentIds, already resolved
+   *  synchronously — via dashMapAgentsListHoverHighlight, same mechanism
+   *  the map's own agent-list popovers use). */
+  function toggleNetworkBreakdownPopover(anchorEl) {
+    if (tepNetworkPopoverEl) { hideNetworkBreakdownPopover(); return; }
+    if (!tepNetworkBreakdownData || !tepNetworkBreakdownData.rows || !tepNetworkBreakdownData.rows.length || !anchorEl) return;
+    hideOtherBreakdownPopovers(hideNetworkBreakdownPopover);
+    const { rows, epCount } = tepNetworkBreakdownData;
+    const byTestAgentIds = new Map();
+    for (const r of rows) { if (r.isEndpoint && r.testId && r.agentIds) byTestAgentIds.set(r.testId, r.agentIds); }
+    const pop = document.createElement('div');
+    // Fullscreen-widgets-only popover — always dark (see tep-fs-pop).
+    pop.className = 'tep-saas-breakdown-pop tep-saas-breakdown-pop--wide tep-fs-pop';
+    const rowsHtml = tepNetworkBreakdownRowsHtml(rows);
     const headTitle = epCount ? 'Tests behind this average' : 'Network tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head"><span class="tep-breakdown-title">${headTitle}</span><span class="tep-breakdown-focus" aria-hidden="true"></span>`
       + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · pin to map its destination</span></div>'
       + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
     document.documentElement.appendChild(pop);
     tepNetworkPopoverEl = pop;
-    // EXPERIMENTAL: clicking the locate pin resolves this test's destination
-    // and pins it on the map (capture phase + preventDefault so the row's own
-    // <a> link never fires). Closes the popover so the pin is visible.
-    pop.addEventListener('click', (e) => {
-      const loc = e.target.closest('.tep-testdest-locate');
-      if (!loc) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const tid = loc.dataset.locateTest;
-      if (!tid) return;
-      tepCancelTraceHover();   // a click supersedes any pending hover trace
-      loc.classList.add('tep-testdest-locate--loading');
-      const popToMin = loc.closest('.tep-saas-breakdown-pop');
-      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset), true).then((ok) => {
-        loc.classList.remove('tep-testdest-locate--loading', 'tep-testdest-locate--glow');
-        if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
-        // Committing to a trace (pin click) MINIMIZES the list so the map is
-        // interactable — the collapsed header now shows THIS test's name + stats;
-        // click it to bring the list back.
-        else if (popToMin) { tepBreakdownSetFocus(popToMin); popToMin.classList.add('tep-breakdown-min'); }
-      });
-    }, true);
     // Click the header to toggle minimize/restore (the pin also minimizes).
     pop.addEventListener('click', (e) => {
       if (e.target.closest('.tep-testdest-locate')) return;
       if (e.target.closest('.tep-saas-breakdown-head')) { tepBreakdownSetFocus(pop); pop.classList.toggle('tep-breakdown-min'); }
     });
-    let byTestAgents = null;
-    tepFetchNetworkAgentsByTest().then((m) => { byTestAgents = m; tepMarkBreakdownRowAgentBadges(pop, m); });
-    pop.addEventListener('mouseover', (e) => {
-      const row = e.target.closest('.tep-saas-breakdown-row');
-      if (!row || !row.dataset.testId) return;
-      // Hover-to-trace: after a short dwell, draw this test's destination trace
-      // on the map (popover stays open) — for BOTH enterprise and endpoint rows,
-      // so it runs BEFORE the endpoint highlight branch returns. Cancelled on
-      // mouseout below.
-      const locEl = row.querySelector('.tep-testdest-locate');
-      if (locEl && row.dataset.testId) {
-        tepCancelTraceHover();
-        const tid = row.dataset.testId;
-        const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
-        tepTraceHoverTimer = setTimeout(() => {
-          tepTraceHoverTimer = null;
-          // Pulse a "Tracing…" state on the pin while the destination resolves,
-          // then swap to the "Pin it" glow on success (or just drop it). The
-          // load-sequence guard in tepShowTraceForTest means a resolve that lands
-          // after the user moved on is ignored — see tepAbortTraceLoad.
-          if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
-          void tepShowTraceForTest(tid, ds).then((ok) => {
-            if (!locEl.isConnected) return;
-            locEl.classList.remove('tep-testdest-locate--tracing');
-            if (ok) locEl.classList.add('tep-testdest-locate--glow');
-          });
-        }, TEP_TRACE_HOVER_DELAY_MS);
-      }
-      if (row.dataset.endpoint) {
-        if (dashMapAgentsListHoverLocked) return;
-        const agentIds = byTestAgentIds.get(row.dataset.testId);
-        if (!agentIds || !agentIds.size) return;
-        dashMapAgentsListHoverHighlight = agentIds;
-        renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
-        return;
-      }
-      if (!byTestAgents) return;
-      const names = byTestAgents.get(row.dataset.testId);
-      if (!names || !names.size) return;
-      dashMapTestHighlight = names;
-      tepShowTestCloudAgents(names);   // light-blue cloud icons for this test's Cloud agents
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
-    });
-    pop.addEventListener('mouseout', (e) => {
-      const row = e.target.closest('.tep-saas-breakdown-row');
-      if (!row) return;
-      const to = e.relatedTarget;
-      if (to && row.contains(to)) return; // moved within the same row
-      const glowEl = row.querySelector('.tep-testdest-locate--glow');
-      if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
-      tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
-      tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
-      if (row.dataset.endpoint) {
-        if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
-          dashMapAgentsListHoverHighlight = null;
-          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-          if (dashMapSearchHook) dashMapSearchHook.refresh();
-        }
-        return;
-      }
-      tepCancelTraceHover();   // a pending (not-yet-shown) trace shouldn't fire after leaving the row
-      tepClearTestCloudAgents();
-      if (dashMapTestHighlight) {
-        dashMapTestHighlight = null;
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
-      }
-    });
+    tepWireBreakdownRows(pop, () => byTestAgentIds, tepFetchNetworkAgentsByTest);
     const rect = anchorEl.getBoundingClientRect();
     const popRect = pop.getBoundingClientRect();
     let top = rect.bottom + 6, left = rect.left;
@@ -28233,6 +28279,7 @@
       log(`Network Health: fetch failed — ${e.message}`, 'tep-log-info');
       netEl.innerHTML = tepWidgetPending();
     }
+    tepRenderWidgetTestMatches();   // a search may already be active while this tile was loading
   }
 
   /** Fetch + render just the SaaS Health tile — split out from
@@ -28275,6 +28322,7 @@
       log(`SaaS widget: availability fetch failed — ${e.message}`, 'tep-log-info');
       saasEl.innerHTML = tepWidgetPending();
     }
+    tepRenderWidgetTestMatches();   // a search may already be active while this tile was loading
   }
 
   /**
@@ -28808,8 +28856,15 @@
       // input the user is typing into is never touched/refocused.
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
       const n = dashMapSearchHook ? dashMapSearchHook.refresh() : 0;
-      searchCount.textContent = q ? (n ? `${n} match${n === 1 ? '' : 'es'}` : 'No matches') : '';
-      searchCount.classList.toggle('tep-dashmap-search-count--none', !!q && !n);
+      // Tests match by name too, and they have no marker to focus - they list
+      // themselves under the SaaS/Network Health tiles instead. They still
+      // count here, so a query that only hits a test never reads "No matches".
+      const t = tepRenderWidgetTestMatches();
+      const parts = [];
+      if (n) parts.push(`${n} match${n === 1 ? '' : 'es'}`);
+      if (t) parts.push(`${t} test${t === 1 ? '' : 's'}`);
+      searchCount.textContent = q ? (parts.length ? parts.join(' \u00b7 ') : 'No matches') : '';
+      searchCount.classList.toggle('tep-dashmap-search-count--none', !!q && !n && !t);
       renderSearchResults();
     };
     searchInput.addEventListener('input', runDashMapSearch);
