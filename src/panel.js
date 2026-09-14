@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.06';
+  const TEP_VERSION = '4.07';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2970,6 +2970,36 @@
     .tep-dashmap-search .tep-dashmap-search-count { cursor: pointer; }
     .tep-dashmap-search .tep-dashmap-search-count:hover { color: var(--tep-orange-fg); text-decoration: underline; text-underline-offset: 2px; }
     .tep-dashmap-search-count--none { color: var(--tep-red); }
+    /* Results mode: the count is lit orange (and underlined - it is the
+       affordance that opens the match list) the whole time a query is
+       returning something, not only while the pointer is on it, so "you are
+       looking at filtered results" is obvious at a glance. Hover then just
+       brightens it further. CONFIRMED via user request. Scoped to the
+       fullscreen box: the inline map's count has no list to open, so
+       advertising it as clickable there would be a lie. */
+    .tep-dashmap-search .tep-dashmap-search-count--on {
+      color: var(--tep-orange-fg); text-decoration: underline; text-underline-offset: 2px;
+    }
+    .tep-dashmap-search .tep-dashmap-search-count--on:hover { color: #fff7ed; }
+    /* "Clear results" - the explicit way back to the default map, directly
+       under the search bar (the match list opens ABOVE it, so below is the
+       one edge that stays free). Hidden until a query is actually active.
+       CONFIRMED via user request. */
+    .tep-dashmap-search-reset {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      top: calc(100% + 7px); z-index: 30;
+      display: none; align-items: center; gap: 5px;
+      padding: 3px 11px; border-radius: 999px;
+      font: inherit; font-size: 11px; font-weight: 800; letter-spacing: .03em;
+      color: var(--tep-orange-fg); cursor: pointer; white-space: nowrap;
+      background: rgba(var(--tep-slate-900-rgb),.95);
+      border: 1px solid rgba(249,115,22,.55);
+      box-shadow: 0 0 0 1px rgba(249,115,22,.12), 0 2px 8px rgba(0,0,0,.5);
+    }
+    .tep-dashmap-search-reset--on { display: inline-flex; }
+    .tep-dashmap-search-reset:hover {
+      color: #fff7ed; border-color: #fb923c; background: rgba(249,115,22,.22);
+    }
     .tep-dashmap-search .tep-dashmap-search-count { font-size: 13px; }
     .tep-dash-map-search .tep-dashmap-search-count { font-size: 11px; }
     .tep-dashmap-search-clear {
@@ -3504,7 +3534,17 @@
       flex: 0 0 auto; font-family: inherit; font-weight: 700; font-size: 10.5px; color: var(--tep-slate-400);
       background: var(--tep-slate-800); border-radius: 8px; padding: 1px 7px;
     }
-    .tep-cluster-max-col-body { padding: 4px 10px 8px; }
+    /* Agent cards here are the SAME markup the map's hover card renders
+       (tepDashTipRow builds both), but this panel mounts on <html> - outside
+       #te-panel-root and its 13px - so the rows inherited the DOCUMENT's
+       16px and came out ~45% larger than the hover card, whose
+       .tep-agent-map-tip pins 11px/1.35 on the bubble. Pinning the same
+       values here makes one card format read identically in both places.
+       CONFIRMED via user screenshot (hover card vs subnet column).
+       Deliberately scoped to the col BODY, not the whole column: the
+       column head (WAN/LAN, 11.5px) and the "Devices on this network"
+       section are siblings, separately sized, and stay as they are. */
+    .tep-cluster-max-col-body { padding: 4px 10px 8px; font-size: 11px; line-height: 1.35; color: var(--tep-slate-300); }
     .tep-cluster-max-col-body .tep-map-tip-agent:first-child { border-top: none; margin-top: 0; }
     /* Small vertical gap between agent cards, on top of the divider/shading
        below — tied to viewport height (not a flat px) so it stays
@@ -17889,6 +17929,24 @@
   // pegging the GPU on per-frame stroke repaints. Tunable.
   const TEP_TRACE_LITE_N = 20;
   function tepCancelTraceHover() { if (tepTraceHoverTimer) { clearTimeout(tepTraceHoverTimer); tepTraceHoverTimer = null; } }
+  // Set by renderDashboardAgentMap (fullscreen only) so code outside that
+  // render's closure can close the map's hover card. { hide() } | null.
+  let dashMapTipHook = null;
+  // While a breakdown row's hover trace is drawing, the TRACE owns the map:
+  // no marker hover card opens, and any card already open is closed.
+  // CONFIRMED via user request — drawing a trace re-frames the map under a
+  // stationary cursor, so markers slide beneath it and pop cards the user
+  // never asked for, on top of the trace they were actually watching.
+  // Scoped to the hover itself (on when the dwell fires, off on mouseout),
+  // NOT to the trace existing: once a trace is pinned and the list
+  // minimises, the map is the user's again and cards must work normally.
+  let tepTraceHoverOwnsMap = false;
+  function tepSetTraceHoverPriority(on) {
+    on = !!on;
+    if (tepTraceHoverOwnsMap === on) return;
+    tepTraceHoverOwnsMap = on;
+    if (on && dashMapTipHook) dashMapTipHook.hide();
+  }
   // Monotonic token for in-flight trace resolves. tepShowTraceForTest stamps the
   // current value when it starts and bails on resolve if it has since advanced —
   // so a slow destination lookup that finishes AFTER the user moved to another
@@ -22239,7 +22297,7 @@
       // Preserve the pinned-trace source illumination across the className
       // rebuild. paintMarker rewrites className from scratch, so any repaint
       // that ISN'T followed by buildSelectedTestDest (notably
-      // dashMapSearchHook.refresh(), which the endpoint test-row hover/mouseout
+      // dashMapSearchHook.repaint(), which the endpoint test-row hover/mouseout
       // both call) would otherwise silently drop tep-testdest-related — the
       // whole map is in .tep-testdest-active, which dims every marker that
       // isn't .tep-testdest-related, so the trace's own source agents went grey.
@@ -23220,6 +23278,8 @@
       }).catch(() => { /* device layer is optional — never block the card */ });
     }
     function showTip(marker) {
+      // A hover trace owns the map right now — don't pop a card over it.
+      if (tepTraceHoverOwnsMap) return;
       // Was a DIFFERENT marker's tip already showing? Only that case gets
       // the fade-in below — a fresh first open should appear instantly, not
       // fade up from nothing.
@@ -23329,7 +23389,7 @@
         // removed now that the exemption is gone, same as clearing a
         // search query does.
         renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        if (dashMapSearchHook) dashMapSearchHook.repaint();
       }
       // Same locked-highlight lifecycle as dashMapAlertPreviewHighlight
       // above, for a clicked Enterprise/Endpoint Agents list row.
@@ -23337,7 +23397,7 @@
         dashMapAgentsListHoverHighlight = null;
         dashMapAgentsListHoverLocked = false;
         renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        if (dashMapSearchHook) dashMapSearchHook.repaint();
       }
     }
     // clusterOverride: the maximize view (openClusterMaxView, below) lives
@@ -24581,6 +24641,9 @@
       // the marker holding this agent, smooth-zoom to it (same easing as a
       // search jump), then open its hover card — cluster or solo — so the
       // agent is identified either way, never just silently centered.
+      // Lets tepSetTraceHoverPriority close this card from outside the render
+      // closure when a hover trace takes over the map.
+      dashMapTipHook = { hide: hideTip };
       dashMapFocusHook = {
         focusAgent: (kind, agentId) => {
           const key = String(agentId);
@@ -24661,26 +24724,61 @@
     // query (adds the highlight/dim classes, never rebuilds the map —
     // zoom/pan survive), then jump the view to the first hit so a match is
     // never off-screen.
-    dashMapSearchHook = {
-      // Distinct agents matching the current query (for the search results list).
-      matches: () => {
-        if (!dashMapSearchQuery) return [];
-        const out = [], seen = new Set();
-        for (const m of markerEls) {
-          if (m.style.display === 'none' || !m._cluster) continue;
-          for (const it of m._cluster.items) {
-            if (it.agentId == null || !dashMapItemMatchesQuery(it, dashMapSearchQuery)) continue;
-            const key = it.kind + ':' + it.agentId;
-            if (seen.has(key)) continue; seen.add(key);
-            out.push({ kind: it.kind, agentId: String(it.agentId), name: it.name, location: it.location, users: it.users });
-            if (out.length >= 80) return out;
+    // Distinct AGENTS matching the current query, across every visible marker.
+    // One walk feeds both the results dropdown and the search box's count, so
+    // the two can never disagree: refresh() used to return the number of
+    // highlighted MARKERS instead, which made a cluster holding 3 matching
+    // agents read as "1 match" next to a list showing 3 rows. CONFIRMED via
+    // user screenshot ("3 matches" in the box vs "7 MATCHES" in the list).
+    // `total` is the true count; `list` is capped for rendering.
+    const TEP_SEARCH_LIST_CAP = 80;
+    const collectSearchMatches = () => {
+      if (!dashMapSearchQuery) return { list: [], total: 0 };
+      const list = [], seen = new Set();
+      let total = 0;
+      for (const m of markerEls) {
+        if (m.style.display === 'none' || !m._cluster) continue;
+        for (const it of m._cluster.items) {
+          if (it.agentId == null || !dashMapItemMatchesQuery(it, dashMapSearchQuery)) continue;
+          const key = it.kind + ':' + it.agentId;
+          if (seen.has(key)) continue; seen.add(key);
+          total++;
+          if (list.length < TEP_SEARCH_LIST_CAP) {
+            list.push({ kind: it.kind, agentId: String(it.agentId), name: it.name, location: it.location, users: it.users });
           }
         }
-        return out;
-      },
+      }
+      return { list, total };
+    };
+    // Bound to THIS render's markerEls. refresh() calls it directly rather
+    // than hopping through dashMapSearchHook.repaint(), so a stale closure
+    // can't repaint the current render's markers and then filter its own
+    // older ones.
+    const repaintSearchMarkers = () => {
+      for (const m of markerEls) paintMarker(m);
+      layoutMarkers();
+      return collectSearchMatches().total;
+    };
+    dashMapSearchHook = {
+      // Distinct agents matching the current query (for the search results list).
+      matches: () => collectSearchMatches().list,
+      // Same walk, reported in full — what the search box's "N matches" shows.
+      matchCount: () => collectSearchMatches().total,
+      // Repaint every marker's highlight/dim state for the CURRENT query and
+      // highlight sets, and report the match count. Changes NOTHING else: no
+      // pan/zoom, no hover card. This is what a caller that just set or
+      // cleared a highlight wants - a test row hovered, an alert row left, a
+      // popover closed - and it is the overwhelming majority of them.
+      repaint: () => repaintSearchMarkers(),
+      // repaint() PLUS "fly to the first hit and open its card so the user can
+      // see WHICH agent matched". Only a search SUBMIT wants that. Every other
+      // caller used to get it by accident, because the two jobs lived in one
+      // method: hovering a test row calls this purely to repaint its highlight,
+      // so with a query active the map jumped to the first search hit and
+      // popped that agent's card - a card nobody asked for, over the trace the
+      // user was actually watching. CONFIRMED via user report.
       refresh: () => {
-        for (const m of markerEls) paintMarker(m);
-        layoutMarkers();
+        const total = repaintSearchMarkers();
         const hits = markerEls.filter((m) => m.classList.contains('tep-agent-map-marker--searchhit'));
         if (dashMapSearchQuery && hits.length) {
           const first = hits[0];
@@ -24708,7 +24806,7 @@
             showTip(first);
           }
         }
-        return hits.length;
+        return total;   // agents, NOT hits.length (markers) — see collectSearchMatches
       },
     };
 
@@ -24832,9 +24930,11 @@
       if (dashMapSearchQuery) {
         searchInput.value = dashMapSearchQuery;
         searchClear.style.display = '';
-        const hits = markerEls.filter((m) => m.classList.contains('tep-agent-map-marker--searchhit'));
-        searchCount.textContent = hits.length ? `${hits.length} match${hits.length === 1 ? '' : 'es'}` : 'No matches';
-        searchCount.classList.toggle('tep-dashmap-search-count--none', !hits.length);
+        // Agents, not highlighted markers — a cluster holding several
+        // matches is one marker but many matches (see collectSearchMatches).
+        const n = collectSearchMatches().total;
+        searchCount.textContent = n ? `${n} match${n === 1 ? '' : 'es'}` : 'No matches';
+        searchCount.classList.toggle('tep-dashmap-search-count--none', !n);
       }
       // opts.focus=false skips refocusing the fresh input below — used by
       // Escape, which wants to clear AND blur, not clear-and-stay-focused.
@@ -26732,15 +26832,16 @@
     // A hovered row's map highlight shouldn't survive the popover closing —
     // covers both the enterprise (name-based) and endpoint (agentId-based)
     // test-row hover mechanisms.
+    tepSetTraceHoverPriority(false);   // list gone - release the map
     tepClearTestCloudAgents();
     if (dashMapTestHighlight) {
       dashMapTestHighlight = null;
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     }
     if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
       dashMapAgentsListHoverHighlight = null;
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     }
   }
   function tepSaasPopoverOutsideClick(e) {
@@ -26824,6 +26925,7 @@
           // load-sequence guard in tepShowTraceForTest means a resolve that lands
           // after the user moved on is ignored — see tepAbortTraceLoad.
           if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
+          tepSetTraceHoverPriority(true);   // trace takes the map; close/suppress hover cards
           void tepShowTraceForTest(tid, ds).then((ok) => {
             if (!locEl.isConnected) return;
             locEl.classList.remove('tep-testdest-locate--tracing');
@@ -26837,7 +26939,7 @@
         if (!agentIds || !agentIds.size) return;
         dashMapAgentsListHoverHighlight = agentIds;
         renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        if (dashMapSearchHook) dashMapSearchHook.repaint();
         return;
       }
       const byTestAgents = root._tepAgentsByTest;
@@ -26846,7 +26948,7 @@
       if (!names || !names.size) return;
       dashMapTestHighlight = names;
       tepShowTestCloudAgents(names);   // light-blue cloud icons for this test's Cloud agents
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     });
     root.addEventListener('mouseout', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
@@ -26857,11 +26959,12 @@
       if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
       tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
       tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
+      tepSetTraceHoverPriority(false);   // left the row — the map is the user's again
       if (row.dataset.endpoint) {
         if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
           dashMapAgentsListHoverHighlight = null;
           renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-          if (dashMapSearchHook) dashMapSearchHook.refresh();
+          if (dashMapSearchHook) dashMapSearchHook.repaint();
         }
         return;
       }
@@ -26869,7 +26972,7 @@
       tepClearTestCloudAgents();
       if (dashMapTestHighlight) {
         dashMapTestHighlight = null;
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        if (dashMapSearchHook) dashMapSearchHook.repaint();
       }
     });
   }
@@ -27173,15 +27276,16 @@
     // A hovered row's map highlight shouldn't survive the popover closing —
     // covers both the enterprise (name-based) and endpoint (agentId-based)
     // test-row hover mechanisms.
+    tepSetTraceHoverPriority(false);   // list gone - release the map
     tepClearTestCloudAgents();
     if (dashMapTestHighlight) {
       dashMapTestHighlight = null;
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     }
     if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
       dashMapAgentsListHoverHighlight = null;
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     }
   }
   function tepNetworkPopoverOutsideClick(e) {
@@ -27235,6 +27339,7 @@
    *  exist without ever firing mouseout. No-ops when nothing is lit. */
   function tepClearBreakdownRowHover() {
     tepCancelTraceHover();
+    tepSetTraceHoverPriority(false);
     tepClearTestCloudAgents();
     let dirty = false;
     if (dashMapTestHighlight) { dashMapTestHighlight = null; dirty = true; }
@@ -27243,7 +27348,7 @@
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
       dirty = true;
     }
-    if (dirty && dashMapSearchHook) dashMapSearchHook.refresh();
+    if (dirty && dashMapSearchHook) dashMapSearchHook.repaint();
   }
   /** Tests whose name matches the fullscreen map's search query. The search
    *  box hunts agents by host/IP/user/location; a test is matched on its
@@ -27378,7 +27483,7 @@
       // exempting from the type/ISP/seen-window filters may need its
       // marker actually removed now that the exemption is gone.
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     }
   }
   function tepAlertsPopoverOutsideClick(e) {
@@ -27721,7 +27826,7 @@
           // already exist. dashMapSearchHook/dashMapFocusHook get
           // reassigned to this fresh render's own instances as part of it.
           renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-          if (dashMapSearchHook) dashMapSearchHook.refresh();
+          if (dashMapSearchHook) dashMapSearchHook.repaint();
           // detail.details[] doesn't confirm which kind an entry is — try
           // enterprise first (the common case for these dashboard-wide NAS
           // alerts), then endpoint before giving up.
@@ -27761,7 +27866,7 @@
       // render entirely (see buildDashboardMapAgents), same reasoning as
       // the click handler above.
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     });
     pop.addEventListener('mouseout', (e) => {
       if (dashMapAlertPreviewLocked) return; // survives the popover-removal mouseout a click triggers
@@ -27772,7 +27877,7 @@
       if (dashMapAlertPreviewHighlight) {
         dashMapAlertPreviewHighlight = null;
         renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        if (dashMapSearchHook) dashMapSearchHook.repaint();
       }
     });
     // Sized/positioned against the WHOLE combined widget (both columns), not
@@ -27903,7 +28008,7 @@
     let changed = false;
     if (dashMapTraceHoverAgentIds) { dashMapTraceHoverAgentIds = null; changed = true; }
     if (dashMapAgentsListHoverHighlight) { dashMapAgentsListHoverHighlight = null; changed = true; }
-    if (changed) { if (typeof dashMapLivePaint === 'function') dashMapLivePaint(); else if (dashMapSearchHook) dashMapSearchHook.refresh(); }
+    if (changed) { if (typeof dashMapLivePaint === 'function') dashMapLivePaint(); else if (dashMapSearchHook) dashMapSearchHook.repaint(); }
   }
   function tepTraceIspOutsideClick(e) { if (tepTraceIspPopoverEl && !tepTraceIspPopoverEl.contains(e.target) && !e.target.closest('.tep-trace-isp-widget')) hideTraceIspPopover(); }
   function tepTraceIspEscHandler(e) { if (e.key === 'Escape') hideTraceIspPopover(); }
@@ -27974,13 +28079,13 @@
       dashMapTraceHoverAgentIds = new Set([id]);
       dashMapAgentsListHoverHighlight = new Set([id]);
       if (typeof dashMapLivePaint === 'function') dashMapLivePaint();
-      else if (dashMapSearchHook) dashMapSearchHook.refresh();
+      else if (dashMapSearchHook) dashMapSearchHook.repaint();
     });
     pop.addEventListener('mouseleave', () => {
       let changed = false;
       if (dashMapTraceHoverAgentIds) { dashMapTraceHoverAgentIds = null; changed = true; }
       if (dashMapAgentsListHoverHighlight) { dashMapAgentsListHoverHighlight = null; changed = true; }
-      if (changed) { if (typeof dashMapLivePaint === 'function') dashMapLivePaint(); else if (dashMapSearchHook) dashMapSearchHook.refresh(); }
+      if (changed) { if (typeof dashMapLivePaint === 'function') dashMapLivePaint(); else if (dashMapSearchHook) dashMapSearchHook.repaint(); }
     });
     setTimeout(() => {
       document.addEventListener('click', tepTraceIspOutsideClick, true);
@@ -28069,7 +28174,7 @@
     if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
       dashMapAgentsListHoverHighlight = null;
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     }
   }
   function tepAgentsListPopoverOutsideClick(e) {
@@ -28138,7 +28243,7 @@
       dashMapAgentsListHoverLocked = true;
       hideAgentsListPopover();
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
       const focused = dashMapFocusHook ? dashMapFocusHook.focusAgent(rowKind, agentId) : false;
       if (!focused) {
         dashMapAgentsListHoverHighlight = null;
@@ -28164,7 +28269,7 @@
       if (!agentId) return;
       dashMapAgentsListHoverHighlight = new Set([agentId]);
       renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-      if (dashMapSearchHook) dashMapSearchHook.refresh();
+      if (dashMapSearchHook) dashMapSearchHook.repaint();
     });
     pop.addEventListener('mouseout', (e) => {
       const row = e.target.closest('.tep-isp-agents-row');
@@ -28174,7 +28279,7 @@
       if (dashMapAgentsListHoverHighlight) {
         dashMapAgentsListHoverHighlight = null;
         renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        if (dashMapSearchHook) dashMapSearchHook.refresh();
+        if (dashMapSearchHook) dashMapSearchHook.repaint();
       }
     });
     setTimeout(() => {
@@ -28763,6 +28868,9 @@
       + '<span class="tep-dashmap-search-count" id="tep-dashmap-search-count"></span>'
       + '<button type="button" class="tep-dashmap-search-clear" id="tep-dashmap-search-clear" title="Clear search" aria-label="Clear search" style="display:none;">✕</button>'
       + '<div class="tep-dashmap-search-results" id="tep-dashmap-search-results" role="listbox" style="display:none;"></div>'
+      + '<button type="button" class="tep-dashmap-search-reset" id="tep-dashmap-search-reset" title="Clear the search and show every agent again">'
+      + '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>'
+      + 'Clear results</button>'
       + '</div>'
       + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>'
       + '<button type="button" class="tep-dashmap-full-zoom" id="tep-dashmap-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>'
@@ -28813,6 +28921,7 @@
     const searchCount = ov.querySelector('#tep-dashmap-search-count');
     const searchClear = ov.querySelector('#tep-dashmap-search-clear');
     const searchResults = ov.querySelector('#tep-dashmap-search-results');
+    const searchReset = ov.querySelector('#tep-dashmap-search-reset');
     // Results dropdown: hover the count / focus the box to reveal the match list;
     // click (or Enter on) a row to fly the map to that agent and open its card.
     const esc2 = tepEscapeHtmlText;
@@ -28822,7 +28931,9 @@
     const renderSearchResults = () => {
       const list = dashMapSearchHook ? dashMapSearchHook.matches() : [];
       if (!list.length) { searchResults.innerHTML = ''; searchResults.style.display = 'none'; return; }
-      searchResults.innerHTML = '<div class="sr-hd">' + list.length + ' match' + (list.length === 1 ? '' : 'es') + ' · click to focus</div>'
+      const total = dashMapSearchHook ? dashMapSearchHook.matchCount() : list.length;
+      const shown = total > list.length ? ' · showing ' + list.length : '';
+      searchResults.innerHTML = '<div class="sr-hd">' + total + ' match' + (total === 1 ? '' : 'es') + shown + ' · click to focus</div>'
         + list.map((r) => {
           const users = Array.isArray(r.users) ? r.users.filter(Boolean).join(', ') : (r.users || '');
           return '<div class="tep-dashmap-search-result" role="option" data-kind="' + esc2(r.kind) + '" data-aid="' + esc2(r.agentId) + '">'
@@ -28872,10 +28983,23 @@
       if (t) parts.push(`${t} test${t === 1 ? '' : 's'}`);
       searchCount.textContent = q ? (parts.length ? parts.join(' \u00b7 ') : 'No matches') : '';
       searchCount.classList.toggle('tep-dashmap-search-count--none', !!q && !n && !t);
+      // Results mode: count lit, and an explicit way back to the default map.
+      // Keyed on the QUERY, not on whether it matched - "No matches" is just
+      // as much a state you need a way out of.
+      searchCount.classList.toggle('tep-dashmap-search-count--on', !!q && parts.length > 0);
+      searchReset.classList.toggle('tep-dashmap-search-reset--on', !!q);
       renderSearchResults();
     };
     searchInput.addEventListener('input', runDashMapSearch);
     searchClear.addEventListener('click', () => { searchInput.value = ''; runDashMapSearch(); searchInput.focus(); });
+    // Same reset as the ✕, but blurs instead of refocusing: this one is a
+    // "take me back to the whole map" action, not a "let me retype" one.
+    searchReset.addEventListener('click', () => {
+      searchInput.value = '';
+      runDashMapSearch();
+      hideSearchResults();
+      searchInput.blur();
+    });
     // Typing (including Space, which the capture-phase handlers below could
     // otherwise treat as a shortcut) must stay inside the box, not bubble to
     // the map's own pan/zoom or the Esc-to-close handler.
@@ -28958,6 +29082,7 @@
     dashMapAlertHighlight = null;
     dashMapAlertHook = null;
     dashMapFocusHook = null;
+    dashMapTipHook = null;
     dashMapFocusAgentKey = null;
     document.documentElement.style.overflow = '';
     document.removeEventListener('keydown', dashFullEscHandler, true);
