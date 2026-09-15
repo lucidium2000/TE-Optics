@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.07';
+  const TEP_VERSION = '4.08';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1655,6 +1655,7 @@
          need their own alpha — CSS can't pull a channel out of a #hex var,
          so these exist purely to feed rgba(var(--tep-slate-900-rgb), .75). */
       --tep-slate-900-rgb: 15,23,42; --tep-slate-800-rgb: 30,41,59;
+      --tep-sky-rgb: 56,189,248;   /* --tep-sky at alpha (focus ring) */
     }
     /* Light theme — ramp-inverted neutrals (Tailwind slate-50..900 swap
        roles) so backgrounds/text flip cleanly, plus hand-picked darker
@@ -1680,6 +1681,7 @@
       --tep-toast-ok-bg: #dcfce7; --tep-toast-ok-border: #bbf7d0;
       --tep-toast-err-bg: #fee2e2; --tep-toast-err-border: #fecaca;
       --tep-slate-900-rgb: 244,245,247; --tep-slate-800-rgb: 255,255,255;
+      --tep-sky-rgb: 3,105,161;    /* --tep-sky at alpha (focus ring) */
     }
     /* Two areas deliberately opt OUT of the light/dark toggle entirely,
        regardless of :root[data-tep-theme] — CONFIRMED via user request.
@@ -1737,6 +1739,7 @@
       --tep-badge-dns-bg: #3b3510; --tep-badge-dns-fg: #facc15;
       --tep-badge-critical-bg: #4c1220; --tep-badge-major-bg: #4a1d0c;
       --tep-slate-900-rgb: 15,23,42; --tep-slate-800-rgb: 30,41,59;
+      --tep-sky-rgb: 56,189,248;   /* --tep-sky at alpha (focus ring) */
     }
     #te-panel-root {
       position: fixed; top: 0; right: 0; z-index: 2147483647;
@@ -2696,14 +2699,24 @@
        CONFIRMED via user request ("show under each category, like when
        clicked on, but only showing the matching tests"). */
     .tep-widget-testmatches {
-      /* Full-bleed to the card's padding edge (.tep-dash-widget is 10px 13px),
-         then padded back in. Two reasons: the divider spans the whole tile
-         like a footer rule instead of floating short of both edges, and the
-         rows' own -6px hover bleed (.tep-saas-breakdown-row) then has room
-         INSIDE this box - left to overflow it, it raised a horizontal
-         scrollbar, since overflow-y:auto makes overflow-x:auto too. */
-      margin: 8px -13px 0; padding: 7px 13px 0;
-      border-top: 1px solid rgba(148,163,184,.18);
+      /* HANGS off the tile rather than growing it. The widgets container is a
+         grid whose second row holds the Data Window control (.tep-dashmap-hwindow,
+         grid-column: 1 / -1), so anything that makes a row-1 tile taller shoves
+         that control down the screen - CONFIRMED via user screenshot, it moved
+         only while search results were showing. Absolutely positioned, the list
+         changes no tile's height, so neither the Data Window nor the
+         neighbouring tiles move at all.
+         Inset -1px left/right so its edges sit flush over the card's own
+         border, and z-index so it floats above the sibling tiles rather than
+         being clipped between them. */
+      position: absolute; top: calc(100% - 1px); left: -1px; right: -1px; z-index: 5;
+      padding: 7px 13px 9px;
+      background: rgba(17,28,46,.92);
+      border: 1px solid rgba(148,163,184,.22); border-top-color: rgba(148,163,184,.18);
+      border-radius: 0 0 12px 12px;
+      box-shadow: 0 10px 22px rgba(0,0,0,.45);
+      -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%);
+      box-sizing: border-box;
       font-size: 12px; line-height: 1.4;
       /* .tep-saas-breakdown-row is color:inherit (it picks up the popover's
          own colour when it lives in one). A widget card sets no colour of its
@@ -4668,6 +4681,22 @@
     }
     .tep-test-card:hover { border-color: var(--tep-slate-600); }
     .tep-test-card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    /* The ACTIVE test — the one open on the ThousandEyes page behind the panel
+       — gets a blue ring so it is findable at a glance, not just by spotting
+       the small pointer arrow. CONFIRMED via user request. Same --tep-sky the
+       arrow uses, so the two read as one signal.
+       box-shadow (not a thicker border) so the ring costs no layout: a border
+       change would shift every card below it by a pixel as focus moves. The
+       border tints to match, and the base .tep-test-card already transitions
+       border-color, so it eases rather than snapping. */
+    .tep-test-card--focus {
+      border-color: var(--tep-sky);
+      box-shadow: 0 0 0 2px rgba(var(--tep-sky-rgb), .28), 0 2px 10px rgba(var(--tep-sky-rgb), .12);
+    }
+    /* A disabled active test keeps the ring but not the full-strength border —
+       it should still read as recessed, the same way .tep-test-card--disabled
+       dims everything else about it. */
+    .tep-test-card--focus.tep-test-card--disabled { border-color: rgba(var(--tep-sky-rgb), .45); }
     .tep-test-page-pointer {
       display: inline-flex; align-items: center; flex-shrink: 0; color: var(--tep-sky); font-size: 15px; font-weight: 700;
       line-height: 1; user-select: none; margin: 0 6px 0 0;
@@ -12603,6 +12632,61 @@
   const TEP_PLAYBACK_PLAY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.4-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14Z"/></svg>';
   const TEP_PLAYBACK_STOP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
+  /** True when the ThousandEyes page in view is an ENDPOINT view
+   *  (/endpoint/views/?…testId=…) rather than an enterprise test view
+   *  (/view/tests/?testId=…). Both carry testId in the query, but the two id
+   *  spaces are independent, so a number that happens to exist in both would
+   *  otherwise light the playback control on BOTH lists at once. Which list
+   *  owns the active test is decided by the PATH, not the id. */
+  function tepIsEndpointViewPage() {
+    try { return /^\/endpoint(\/|$)/i.test(window.location.pathname || ''); } catch (_) { return false; }
+  }
+  /** The green play / red stop button for a card's action row. Rendered only
+   *  on the ACTIVE test — playback steps the timeline of the page the user is
+   *  actually looking at, so it is meaningless on any other row. Shared by the
+   *  enterprise (renderTests) and endpoint (renderEndpointTests) lists so the
+   *  two can't drift. */
+  function tepPlaybackBtnHtml(tid) {
+    const on = tepPlaybackIsOn(tid);
+    return `<button type="button" class="tep-test-action-icon tep-test-play${on ? ' tep-test-play--on' : ''}"`
+      + ` data-action="playback" aria-pressed="${on ? 'true' : 'false'}"`
+      + ` title="${on ? 'Stop playback' : 'Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward'}"`
+      + ` aria-label="${on ? 'Stop playback' : 'Start playback'}">${on ? TEP_PLAYBACK_STOP_SVG : TEP_PLAYBACK_PLAY_SVG}</button>`;
+  }
+  /** The speed row that slides in under the card while playback runs. */
+  function tepPlaybackBarHtml(tid) {
+    return `<div class="tep-test-playback"${tepPlaybackIsOn(tid) ? '' : ' hidden'}>
+          <span>Speed</span>
+          <input type="range" class="tep-test-playback-range" min="${TEP_PLAYBACK_MIN_S}" max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackSec}" aria-label="Playback speed in seconds between steps">
+          <span class="tep-test-playback-val">${tepPlaybackSpeedLabel(tepPlaybackSec)}</span>
+        </div>`;
+  }
+  /** Live-update the speed label on drag and restart the interval so a change
+   *  takes effect immediately, not after the current tick elapses. No-op on a
+   *  card without the slider (i.e. every card but the active one). */
+  function tepWirePlaybackSlider(card) {
+    const playRange = card.querySelector('.tep-test-playback-range');
+    if (!playRange) return;
+    playRange.addEventListener('input', (e) => {
+      e.stopPropagation();
+      tepPlaybackSetSpeed(e.target.value);
+    });
+    playRange.addEventListener('click', (e) => e.stopPropagation());
+  }
+  /** The card click-handler branch for data-action="playback". */
+  function tepHandlePlaybackAction(tid, btn, e) {
+    e.stopPropagation();
+    e.preventDefault();
+    // Toggle: pressing the playing card's button stops it; pressing a
+    // different card's button hands playback over to that card.
+    if (tepPlaybackIsOn(tid)) tepPlaybackStop();
+    else tepPlaybackStart(tid);
+    // Focus sits on our button after the click, which is harmless for the
+    // synthetic events (they go to document.body) but leaves a focus ring
+    // over the page the user is now watching.
+    try { btn.blur(); } catch (_) { /* non-fatal */ }
+  }
+
   function renderTests() {
     closeConvertMenu();
     const filtered = getFilteredTests();
@@ -12627,17 +12711,26 @@
     for (let i = 0; i < filtered.length; i++) {
       const t = filtered[i];
       const tid = String(t.testId || t.id || '');
-      const showPageTestPointer = focusTidForPointer && i === 0 && tid === focusTidForPointer;
       // The ACTIVE test: the one currently open on the ThousandEyes page (its
       // testId is in the page URL). Playback steps THAT page's timeline, so the
       // control is meaningless on any other row and only this card gets it.
       // Deliberately not requiring i === 0 like the pointer arrow above does —
       // the arrow is a positional hint, but the test stays the active one no
       // matter where sorting puts it.
-      const isActivePageTest = !!focusTidForPointer && tid === focusTidForPointer;
+      // …and only when the page in view is an enterprise test view — an
+      // endpoint view's testId belongs to the endpoint list (tepIsEndpointViewPage).
+      const isActivePageTest = !!focusTidForPointer && tid === focusTidForPointer && !tepIsEndpointViewPage();
+      // The arrow is the same signal as the ring, just positional: it points
+      // left at the app content, so it only makes sense on the top row (which
+      // getFilteredTests already sorts the focused test to). Derived from
+      // isActivePageTest rather than re-testing the id, so it inherits the
+      // endpoint-page guard instead of drifting from the ring.
+      const showPageTestPointer = isActivePageTest && i === 0;
       const card = document.createElement('div');
       const enabled = testEnabledState(t);   // 'on' | 'off' | 'unknown'
-      card.className = 'tep-test-card' + (enabled === 'off' ? ' tep-test-card--disabled' : '');
+      card.className = 'tep-test-card'
+        + (enabled === 'off' ? ' tep-test-card--disabled' : '')
+        + (isActivePageTest ? ' tep-test-card--focus' : '');
       card.dataset.testId = tid;
       const typeCss = TYPE_CSS[t.testType] || 'tep-type-other';
       const typeLabel = TYPE_LABELS[t.testType] || t.testType || '?';
@@ -12665,7 +12758,7 @@
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="clone" title="Create a new test with the same settings (unsaved edits are not included)">Clone</button>
               ${canConvertTest(t) ? '<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="convert" title="Convert to another test type">Convert</button>' : ''}
             </div>
-            ${isActivePageTest ? `<button type="button" class="tep-test-action-icon tep-test-play${tepPlaybackIsOn(tid) ? ' tep-test-play--on' : ''}" data-action="playback" aria-pressed="${tepPlaybackIsOn(tid) ? 'true' : 'false'}" title="${tepPlaybackIsOn(tid) ? 'Stop playback' : 'Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward'}" aria-label="${tepPlaybackIsOn(tid) ? 'Stop playback' : 'Start playback'}">${tepPlaybackIsOn(tid) ? TEP_PLAYBACK_STOP_SVG : TEP_PLAYBACK_PLAY_SVG}</button>` : ''}
+            ${isActivePageTest ? tepPlaybackBtnHtml(tid) : ''}
             <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -12682,11 +12775,7 @@
             </button>`}
           </div>
         </div>
-        ${isActivePageTest ? `<div class="tep-test-playback"${tepPlaybackIsOn(tid) ? '' : ' hidden'}>
-          <span>Speed</span>
-          <input type="range" class="tep-test-playback-range" min="${TEP_PLAYBACK_MIN_S}" max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackSec}" aria-label="Playback speed in seconds between steps">
-          <span class="tep-test-playback-val">${tepPlaybackSpeedLabel(tepPlaybackSec)}</span>
-        </div>` : ''}
+        ${isActivePageTest ? tepPlaybackBarHtml(tid) : ''}
         <div class="tep-test-card-meta">
           <span class="tep-test-status-row"><span class="tep-enabled-dot ${enabled}"></span>${statusHtml}</span>
           <span>${target ? String(target).substring(0, 50) : '—'}</span>
@@ -12696,17 +12785,7 @@
         </div>
       `;
 
-      // Speed slider — live-updates the label on drag and restarts the
-      // interval so a change takes effect immediately, not after the current
-      // tick elapses.
-      const playRange = card.querySelector('.tep-test-playback-range');
-      if (playRange) {
-        playRange.addEventListener('input', (e) => {
-          e.stopPropagation();
-          tepPlaybackSetSpeed(e.target.value);
-        });
-        playRange.addEventListener('click', (e) => e.stopPropagation());
-      }
+      tepWirePlaybackSlider(card);
 
       // Checkbox handler
       card.querySelector('.tep-test-card-check').addEventListener('change', (e) => {
@@ -12720,19 +12799,7 @@
         if (!btn) return;
         const action = btn.dataset.action;
 
-        if (action === 'playback') {
-          e.stopPropagation();
-          e.preventDefault();
-          // Toggle: pressing the playing card's button stops it; pressing a
-          // different card's button hands playback over to that card.
-          if (tepPlaybackIsOn(tid)) tepPlaybackStop();
-          else tepPlaybackStart(tid);
-          // Focus sits on our button after the click, which is harmless for the
-          // synthetic events (they go to document.body) but leaves a focus ring
-          // over the page the user is now watching.
-          try { btn.blur(); } catch (_) { /* non-fatal */ }
-          return;
-        }
+        if (action === 'playback') { tepHandlePlaybackAction(tid, btn, e); return; }
         if (action === 'edit') {
           const dismissLoad = toastProcessing('Loading test…');
           try {
@@ -16401,15 +16468,29 @@
       return;
     }
     listEl.innerHTML = '';
+    // The ACTIVE endpoint test: the one open on the ThousandEyes page right
+    // now (/endpoint/views/?…testId=…). Playback steps THAT page's timeline,
+    // so only its card gets the control — same rule the enterprise list uses,
+    // with tepIsEndpointViewPage keeping the two id spaces from crossing.
+    const epFocusTid = tepIsEndpointViewPage() ? getUrlQueryTestIdFocus() : null;
     const typeCss = { Http: 'tep-type-http', Network: 'tep-type-network', RADIUS: 'tep-type-dns' };
     const typeLabels = { Http: 'HTTP', Network: 'Network', RADIUS: 'RADIUS' };
-    for (const t of filtered) {
+    for (let i = 0; i < filtered.length; i++) {
+      const t = filtered[i];
       const tid = String(getEndpointTestId(t) || '');
+      const isActivePageTest = !!epFocusTid && tid === epFocusTid;
+      // The arrow is a POSITIONAL hint — it points left at the app content, so
+      // it only makes sense on the top row. getFilteredEndpointTests already
+      // sorts the focused test there, exactly like the enterprise list does.
+      // The RING has no such condition: it marks the active test wherever
+      // sorting puts it.
+      const showPageTestPointer = isActivePageTest && i === 0;
       const isDynamic = isEndpointDynamicTest(t);
       const card = document.createElement('div');
       card.className = 'tep-test-card'
         + (isEndpointTestEnabled(t) ? '' : ' tep-test-card--disabled')
-        + (isDynamic ? ' tep-test-card--dynamic' : '');
+        + (isDynamic ? ' tep-test-card--dynamic' : '')
+        + (isActivePageTest ? ' tep-test-card--focus' : '');
       card.dataset.testId = tid;
       const typeLabel = typeLabels[t.testType] || t.testType || '?';
       const target = getEndpointTestTarget(t);
@@ -16424,10 +16505,12 @@
       const viewHref = buildEndpointTestViewUrl(t);
       card.innerHTML = `
         <div class="tep-test-card-header">
+          ${showPageTestPointer ? '<span class="tep-test-page-pointer" title="This test matches the one on the current ThousandEyes page (URL testId) — points to the app content on the left" aria-hidden="true">&#8592;</span>' : ''}
           <input type="checkbox" class="tep-test-card-check tep-ep-test-card-check" data-tid="${tepEscapeHtmlText(tid)}" ${selectedEndpointTestIds.has(tid) ? 'checked' : ''}>
           <span class="tep-type-badge ${typeCss[t.testType] || 'tep-type-other'}">${tepEscapeHtmlText(typeLabel)}</span>
           <a class="tep-test-card-name tep-test-link" href="${tepEscapeHtmlText(viewHref)}" target="_blank" rel="noopener noreferrer">${tepEscapeHtmlText(getEndpointTestName(t))}</a>
           <div class="tep-test-actions">
+            ${isActivePageTest ? tepPlaybackBtnHtml(tid) : ''}
             <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -16444,6 +16527,7 @@
             </button>
           </div>
         </div>
+        ${isActivePageTest ? tepPlaybackBarHtml(tid) : ''}
         <div class="tep-test-card-meta">
           <span class="tep-test-status-row"><span class="tep-enabled-dot ${enabled}"></span>${statusHtml}</span>
           <span title="Test category">${tepEscapeHtmlText(categoryLabel)}</span>
@@ -16452,6 +16536,7 @@
           <span title="${isDynamic ? 'Not applicable for dynamic tests' : 'networkConfig.networkProtocol (+ tcpProbeMode/tcpConnect when Prefer TCP)'}">Probe: ${tepEscapeHtmlText(probeLabel)}</span>
         </div>
       `;
+      tepWirePlaybackSlider(card);
       const cb = card.querySelector('.tep-ep-test-card-check');
       if (cb) {
         cb.addEventListener('change', (e) => {
@@ -16464,6 +16549,7 @@
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         const action = btn.dataset.action;
+        if (action === 'playback') { tepHandlePlaybackAction(tid, btn, e); return; }
         if (action === 'edit') {
           e.stopPropagation();
           e.preventDefault();
@@ -20514,6 +20600,57 @@
    *  by SSID, then by the BSSID (AP radio) they associate with. AP names come from
    *  matching a BSSID to a monitored device's interface MAC (when the inventory is
    *  loaded). scopeIds limits to specific machineIds; onlySsid limits to one SSID. */
+  /* ── Wireless topology layout ledger ──────────────────────────────────────
+   *  The board paints progressively: 20 sample rounds stream in and each one
+   *  used to re-derive EVERY position from whatever was known at that instant,
+   *  so nodes jumped on every round. This ledger separates "where a thing
+   *  goes" from "what we currently know about it".
+   *
+   *  Rules: an SSID or AP is assigned a slot the first time it is seen and
+   *  keeps it for the life of the view. New arrivals take the next free slot
+   *  rather than reflowing what is already placed. The only geometry that can
+   *  move settled nodes is a CAPACITY step (below), and capacity only ever
+   *  grows. CONFIRMED via user request ("anchor any SSIDs once shown").
+   */
+  let tepWtopoLayout = null;
+  function tepWtopoResetLayout() {
+    tepWtopoLayout = {
+      ssidSlot: new Map(),   // ssid        → grid slot index (never reassigned)
+      apSlot: new Map(),     // ssid\0apKey → ring slot index within that hub
+      apNum: new Map(),      // apKey       → the "AP3" label number
+      apSeq: new Map(),      // ssid        → how many ring slots handed out
+      ringCap: new Map(),    // ssid        → ring slots the hub is drawn for
+      cols: 0,               // frozen grid width; grows only on a capacity step
+      cellD: 0,              // uniform cell size; monotonic, never shrinks
+      sig: null,             // last painted entity set (see tepWtopoModelSig)
+      paints: 0,
+    };
+  }
+  /* Round a count up to the next capacity step. Geometry is sized to CAPACITY
+   * rather than to the current count, so it changes on every 4th arrival at
+   * worst instead of on every single one. The cost is deliberate: a hub drawn
+   * for 8 ring slots holding 5 APs leaves gaps in the ring. Gaps are cheap;
+   * re-dividing the circle under the user's eyes is not. */
+  const TEP_WTOPO_CAP_STEP = 4;
+  function tepWtopoCap(n) {
+    return Math.max(TEP_WTOPO_CAP_STEP, Math.ceil(n / TEP_WTOPO_CAP_STEP) * TEP_WTOPO_CAP_STEP);
+  }
+  /* The ENTITY SET currently on the board — SSIDs, their radios, and which
+   * clients sit on each. Deliberately excludes quality/SNR/counts: those move
+   * every round and would defeat the repaint guard, and a client sliding along
+   * its spoke because its SNR ticked is exactly the motion we are removing.
+   * Sorted so pure ordering churn upstream never reads as a change. */
+  function tepWtopoModelSig(m) {
+    if (!m || !m.ssids) return '';
+    const parts = [];
+    for (const s of m.ssids) {
+      for (const b of s.bssids) {
+        parts.push(s.ssid + '\u0000' + b.bssid + '\u0000'
+          + b.clients.map((c) => String(c.machineId)).sort().join(','));
+      }
+    }
+    return parts.sort().join('|');
+  }
   function tepBuildWirelessTopo(scopeIds, onlySsid) {
     const wl = tepEpWirelessCache;
     const recs = [];
@@ -20551,10 +20688,16 @@
         bssids.push({ bssid, apName: bssidToAp.get(bssid) || '', channel: ch != null ? ch : null, band: tepWirelessBand(ch),
           phyMode: (clients.find((c) => c.phyMode) || {}).phyMode || '', vendor: (clients.find((c) => c.vendor) || {}).vendor || '', clients });
       }
-      bssids.sort((a, b) => b.clients.length - a.clients.length);
+      // Identity order, NOT client count. Counts change every round while the
+      // 20 sample rounds stream in, so a count sort re-ranks radios mid-load and
+      // the layout below hands them different ring positions — the "APs jump
+      // around" half of the loading churn. See tepWtopoLayout.
+      bssids.sort((a, b) => String(a.bssid).localeCompare(String(b.bssid)));
       ssids.push({ ssid, bssids, clientCount: bssids.reduce((s, b) => s + b.clients.length, 0) });
     }
-    ssids.sort((a, b) => b.clientCount - a.clientCount);
+    // Same reasoning as the bssid sort above: by name, so an SSID's rank can't
+    // change just because one more of its clients reported this round.
+    ssids.sort((a, b) => String(a.ssid).localeCompare(String(b.ssid)));
     return { ssids, clientCount: recs.length, ssidCount: ssids.length, bssidCount: ssids.reduce((s, x) => s + x.bssids.length, 0) };
   }
 
@@ -20750,8 +20893,10 @@
    *  client chips (hover a chip for the full card, click to open the agent). A
    *  header search filters agents/SSIDs and auto-expands matches — so large sites
    *  stay readable instead of one endless horizontal wall of cards. */
-  function tepPaintWirelessTopo(canvas, model) {
+  function tepPaintWirelessTopo(canvas, model, reflow) {
     if (!canvas) return;
+    if (!tepWtopoLayout) tepWtopoResetLayout();
+    const L = tepWtopoLayout;
     let stage = canvas.querySelector('.tep-devtopo-stage');
     if (!stage) { stage = document.createElement('div'); stage.className = 'tep-devtopo-stage'; canvas.appendChild(stage); }
     const esc = tepEscapeHtmlText;
@@ -20802,27 +20947,74 @@
       const aps = Array.from(apMap.values());
       aps.forEach((a) => { a.radios.sort((p, q) => (p.channel || 0) - (q.channel || 0)); a.clients.sort((p, q) => (q.quality || 0) - (p.quality || 0)); });
       const nA = aps.length;
-      const R1 = Math.max(170, Math.round(nA * 210 / TWO_PI));   // AP ring — further from the hub so each AP's client fan has room
-      return { v, aps, nA, R1, radius: R1 + CLIENT_FAR + 70 };   // margin for de-clump spread
+      // Ring sized to CAPACITY, and monotonic: the hub never shrinks back and
+      // re-divides when an AP stops reporting for a round. R1 therefore holds
+      // still for the whole load unless a 4-AP boundary is crossed.
+      // Ring slot per AP, assigned on first sight and kept. Handed out in the
+      // identity order tepBuildWirelessTopo produced, so reopening the same
+      // site lays the board out identically.
+      for (const ap of aps) {
+        const k = v.s.ssid + '\u0000' + ap.key;
+        if (!L.apSlot.has(k)) {
+          const n = L.apSeq.get(v.s.ssid) || 0;
+          L.apSlot.set(k, n);
+          L.apSeq.set(v.s.ssid, n + 1);
+        }
+        ap.slot = L.apSlot.get(k);
+      }
+      // Capacity covers every slot HANDED OUT, not the radios reporting right
+      // now — otherwise an AP missing from one round would shrink the ring and
+      // rotate its neighbours, then grow it back when the AP returned.
+      const cap = Math.max(L.ringCap.get(v.s.ssid) || 0, tepWtopoCap(L.apSeq.get(v.s.ssid) || nA));
+      L.ringCap.set(v.s.ssid, cap);
+      const R1 = Math.max(170, Math.round(cap * 210 / TWO_PI));   // AP ring — further from the hub so each AP's client fan has room
+      return { v, aps, nA, cap, R1, radius: R1 + CLIENT_FAR + 70 };   // margin for de-clump spread
     });
-    // Number physical APs (by prefix) once across the whole view: AP1, AP2, …
-    { const apNum = new Map(); let seq = 0; for (const c of clusters) for (const ap of c.aps) { if (!apNum.has(ap.key)) apNum.set(ap.key, ++seq); ap.label = 'AP' + apNum.get(ap.key); } }
-    // Pack clusters into a roughly square GRID (≈√N per row) sized to the biggest
-    // cluster, so many SSIDs fill 2-D space instead of stacking into one tall
-    // column. The whole board is then zoom-fitted to the viewport (below), the
-    // same way the map zooms out to show everything.
-    const PAD = 46;
-    const maxD = clusters.reduce((m, c) => Math.max(m, c.radius * 2), 0) + PAD;
-    const gridCols = Math.max(1, Math.round(Math.sqrt(clusters.length * Math.max(1, canvas.clientWidth) / Math.max(1, canvas.clientHeight))));
-    const availW = Math.max(canvas.clientWidth, gridCols * maxD);
-    let cur = 0, top = 0, rowH = 0, rowMax = 0;
-    for (const c of clusters) {
-      const d = c.radius * 2;
-      if (cur > 0 && cur + d > availW) { cur = 0; top += rowH + PAD; rowH = 0; }
-      c.cx = cur + c.radius; c.cy = top + c.radius; cur += d + PAD; rowH = Math.max(rowH, d); rowMax = Math.max(rowMax, cur - PAD);
+    // AP numbering is ledgered too — "AP3" re-pointing at a different radio
+    // mid-load is the same churn in text form.
+    for (const c of clusters) for (const ap of c.aps) {
+      if (!L.apNum.has(ap.key)) L.apNum.set(ap.key, L.apNum.size + 1);
+      ap.label = 'AP' + L.apNum.get(ap.key);
     }
+    // UNIFORM, slot-addressed grid. The old packer walked the cluster list and
+    // placed each one after the last, so a cluster changing size (or the list
+    // changing length) shifted everything downstream of it. Here a slot maps to
+    // a fixed cell: col = slot % cols, row = slot / cols. Appending only ever
+    // adds rows, and rows below do not move what is above them.
+    //
+    // Uniform cells are the trade: a small SSID now gets the same box as the
+    // biggest one, so the board is airier than the old tight packing. That is
+    // the price of a slot being a fixed place on the board.
+    const PAD = 46;
+    for (const c of clusters) {
+      if (!L.ssidSlot.has(c.v.s.ssid)) L.ssidSlot.set(c.v.s.ssid, L.ssidSlot.size);
+      c.slot = L.ssidSlot.get(c.v.s.ssid);
+    }
+    // Monotonic cell size — shrinking it would drag every settled node inward.
+    L.cellD = Math.max(L.cellD, clusters.reduce((m, c) => Math.max(m, c.radius * 2), 0) + PAD);
+    // Columns from slot CAPACITY, not the live count, and never fewer than
+    // before: without the capacity step the grid would re-shape on most new
+    // SSIDs (cols changes at n = 2, 5, 8, 13 …), moving every cluster.
+    if (reflow || !L.cols) {
+      const capSlots = tepWtopoCap(L.ssidSlot.size);
+      const want = Math.max(1, Math.round(Math.sqrt(capSlots * Math.max(1, canvas.clientWidth) / Math.max(1, canvas.clientHeight))));
+      L.cols = reflow ? want : Math.max(L.cols, want);
+    } else {
+      const capSlots = tepWtopoCap(L.ssidSlot.size);
+      const want = Math.max(1, Math.round(Math.sqrt(capSlots * Math.max(1, canvas.clientWidth) / Math.max(1, canvas.clientHeight))));
+      L.cols = Math.max(L.cols, want);   // grow only
+    }
+    const cols = L.cols, cellD = L.cellD;
+    let rowsUsed = 1;
+    for (const c of clusters) {
+      const col = c.slot % cols, row = Math.floor(c.slot / cols);
+      c.cx = col * cellD + cellD / 2;
+      c.cy = row * cellD + cellD / 2;
+      rowsUsed = Math.max(rowsUsed, row + 1);
+    }
+    const rowMax = cols * cellD;
     const stageW = Math.max(canvas.clientWidth, rowMax + PAD, 760);
-    const stageH = Math.max(canvas.clientHeight, top + rowH + PAD, 480);
+    const stageH = Math.max(canvas.clientHeight, rowsUsed * cellD + PAD, 480);
     stage.style.minWidth = stageW + 'px'; stage.style.minHeight = stageH + 'px';
     const w = stage.clientWidth, h = stage.clientHeight;
     stage.innerHTML = '';
@@ -20852,7 +21044,10 @@
       sEl.addEventListener('click', (ev) => { ev.stopPropagation(); window.open(tepSsidWirelessViewUrl(v.s.ssid), '_blank', 'noopener'); });
       place(sEl, HX, HY); stage.appendChild(sEl);
       c.aps.forEach((ap, i) => {
-        const th = -Math.PI / 2 + i * TWO_PI / Math.max(1, c.nA);
+        // Angle from the AP's OWN frozen slot over the hub's capacity — not
+        // from its index over the live count, which re-divided the circle and
+        // rotated every other AP whenever one arrived.
+        const th = -Math.PI / 2 + (ap.slot != null ? ap.slot : i) * TWO_PI / Math.max(1, c.cap || c.nA);
         const ct = Math.cos(th), stt = Math.sin(th);
         const AX = HX + c.R1 * ct, AY = HY + c.R1 * stt;
         line(HX, HY, AX, AY, 0.42);
@@ -20949,8 +21144,12 @@
     stage.addEventListener('click', (ev) => { if (ev.target === stage || ev.target === svg) tepDevtopoHideTip(true); });
     // Zoom-to-fit the whole board into the viewport (like the map) — kept fitted
     // as clusters stream in / on resize, but left alone once the user pans/zooms.
+    const boxChanged = canvas._tepContentW !== stageW || canvas._tepContentH !== stageH;
     canvas._tepContentW = stageW; canvas._tepContentH = stageH;
-    if (!canvas._tepUserZoomed && canvas._tepPZfit) canvas._tepPZfit(stageW, stageH);
+    // Only re-fit when the board's box actually changed. This used to run on
+    // every progressive paint, rescaling the entire view on top of whatever
+    // else was moving - the zoom itself read as part of the jitter.
+    if (boxChanged && !canvas._tepUserZoomed && canvas._tepPZfit) canvas._tepPZfit(stageW, stageH);
   }
 
   /** Blue screen-wide pulse radiating from the viewport centre when a wireless
@@ -21149,6 +21348,7 @@
       + '<div class="tep-devtopo-canvas"><div class="tep-devtopo-stage"></div></div>'
       + '</div><div class="tep-devtopo-tip" role="tooltip"></div>';
     tepWtopoCollapsed = new Set(); tepWtopoSearch = '';
+    tepWtopoResetLayout();   // slots are per-view; never carry them across sites
     document.documentElement.appendChild(overlay);
     tepDeviceTopoEl = overlay;
     overlay._tepWireless = true;
@@ -21161,9 +21361,12 @@
     tepAttachDevtopoPanZoom(canvas, overlay.querySelector('.tep-devtopo-stage'));
     let model = { ssids: [], clientCount: 0, ssidCount: 0, bssidCount: 0 };
     let painted = false;
-    const paint = () => { if (tepDeviceTopoEl === overlay) { tepPaintWirelessTopo(canvas, model); painted = true; } };
+    const paint = (reflow) => { if (tepDeviceTopoEl === overlay) { tepPaintWirelessTopo(canvas, model, reflow); painted = true; } };
     tepWtopoRepaint = paint;
-    const onResize = () => paint();
+    // A window resize is a user action where re-shaping the grid is expected and
+    // not jarring, so that is the ONE path allowed to re-derive the column count.
+    // Data arriving never reflows.
+    const onResize = () => paint(true);
     window.addEventListener('resize', onResize);
     overlay._tepOnResize = onResize;
     const updateSub = () => { const s = overlay.querySelector('#tep-wtopo-sub'); if (s) s.textContent = model.clientCount + ' client' + (model.clientCount === 1 ? '' : 's') + ' · ' + model.ssidCount + ' SSID' + (model.ssidCount === 1 ? '' : 's') + ' · ' + model.bssidCount + ' BSSID' + (model.bssidCount === 1 ? '' : 's'); };
@@ -21207,7 +21410,17 @@
       model = m;
       if (opts.agentId && ssid) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssid; }
       if (overlay._tepScanStop) overlay._tepScanStop();   // stop the code-rain before the board replaces it
+      // Repaint ONLY when the set of SSIDs / radios / clients actually changed.
+      // Every one of the 20 sample rounds used to repaint, even when it carried
+      // nothing new but fresher signal numbers — and a repaint is a full DOM
+      // teardown, so that alone was most of the flicker. Quality and SNR still
+      // land: the settle paint after the last round picks them all up.
+      const sig = tepWtopoModelSig(m);
+      const L = tepWtopoLayout;
+      if (L && L.sig === sig) return;
+      if (L) { L.sig = sig; L.paints++; }
       updateSub(); paint();
+      log(`Wireless topo: paint ${L ? L.paints : '?'} — ${m.ssidCount} SSID(s), ${m.bssidCount} radio(s), ${m.clientCount} client(s)`, 'tep-log-info');
       if (!firstPaint) { firstPaint = true; try { tepPlaySignalLock(0.7); } catch (_) { /* */ } }
     };
     Promise.resolve()
@@ -21220,6 +21433,10 @@
         const ssid = resolveSsid();
         if (opts.agentId && ssid) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssid; }
         model = tepBuildWirelessTopo(opts.scopeIds, ssid);
+        // Unconditional: this is the settle paint. Nothing new may have arrived
+        // in the last rounds, but every client's final SNR lands here, so this
+        // is the one place positions are allowed to move without a set change.
+        if (tepWtopoLayout) tepWtopoLayout.sig = tepWtopoModelSig(model);
         updateSub(); paint();
         // Signal-lock chirp once the board resolves with real clients (if the
         // progressive path didn't already fire it).
