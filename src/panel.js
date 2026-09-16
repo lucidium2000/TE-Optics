@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.08';
+  const TEP_VERSION = '4.09';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3169,6 +3169,91 @@
          visible but completely unclickable (inherited none). */
       pointer-events: auto;
     }
+    /* ── "As of" picker ──────────────────────────────────────────────────
+       Calendar + clock for point-in-time mode. Hand-rolled: TE's CSP blocks
+       external scripts, and the repo has no bundler, so a date library is not
+       an option here. Mounted on <html> like the rest of the panel's floating
+       chrome, and carries .tep-fs-pop's pinned dark palette via the class the
+       opener adds. */
+    .tep-asof-overlay {
+      position: fixed; inset: 0; z-index: 2147483647;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(2,6,23,.62); opacity: 0; transition: opacity .18s ease;
+    }
+    .tep-asof-overlay--in { opacity: 1; }
+    .tep-asof-panel {
+      width: 372px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow-y: auto;
+      background: var(--tep-slate-900); color: var(--tep-slate-200);
+      border: 1px solid var(--tep-slate-700); border-radius: 14px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.65);
+      padding: 16px 18px 14px;
+      font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      transform: scale(.96); transition: transform .18s cubic-bezier(.16,1,.3,1);
+    }
+    .tep-asof-overlay--in .tep-asof-panel { transform: scale(1); }
+    .tep-asof-title { font-size: 14px; font-weight: 800; color: var(--tep-slate-100); margin-bottom: 2px; }
+    .tep-asof-sub { font-size: 11.5px; color: var(--tep-slate-400); margin-bottom: 13px; line-height: 1.45; }
+    .tep-asof-lbl {
+      font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      color: var(--tep-slate-400); margin: 0 0 6px;
+    }
+    .tep-asof-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
+    .tep-asof-cal-month { font-size: 12.5px; font-weight: 700; color: var(--tep-slate-100); }
+    .tep-asof-nav {
+      width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 6px; cursor: pointer; color: var(--tep-slate-300);
+      background: rgba(var(--tep-slate-900-rgb),.6); border: 1px solid var(--tep-slate-600);
+    }
+    .tep-asof-nav:hover:not(:disabled) { color: #fff; border-color: var(--tep-orange); }
+    .tep-asof-nav:disabled { opacity: .3; cursor: default; }
+    .tep-asof-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+    .tep-asof-dow {
+      text-align: center; font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--tep-slate-500); padding-bottom: 3px;
+    }
+    .tep-asof-day {
+      aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+      border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
+      color: var(--tep-slate-200); background: rgba(148,163,184,.07);
+      border: 1px solid transparent; font-variant-numeric: tabular-nums;
+    }
+    .tep-asof-day:hover:not(.tep-asof-day--off) { border-color: var(--tep-orange); color: #fff; }
+    .tep-asof-day--off { opacity: .22; cursor: default; background: transparent; }
+    .tep-asof-day--blank { background: transparent; cursor: default; }
+    .tep-asof-day--sel {
+      background: rgba(var(--tep-sky-rgb), .22); border-color: var(--tep-sky); color: #fff;
+      box-shadow: 0 0 0 2px rgba(var(--tep-sky-rgb), .22);
+    }
+    .tep-asof-day--today { color: var(--tep-orange-fg); }
+    .tep-asof-row { display: flex; align-items: center; gap: 8px; margin-top: 13px; }
+    .tep-asof-time {
+      font: inherit; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
+      color: var(--tep-slate-100); background: rgba(var(--tep-slate-900-rgb),.6);
+      border: 1px solid var(--tep-slate-600); border-radius: 7px; padding: 5px 8px;
+    }
+    .tep-asof-time:focus { outline: none; border-color: var(--tep-orange); }
+    .tep-asof-wins { display: flex; flex-wrap: wrap; gap: 5px; }
+    .tep-asof-win {
+      font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
+      color: var(--tep-slate-300); background: rgba(148,163,184,.08);
+      border: 1px solid var(--tep-slate-600); border-radius: 999px; padding: 4px 11px;
+    }
+    .tep-asof-win:hover { color: #fff; border-color: var(--tep-orange); }
+    .tep-asof-win--on { color: #fff7ed; background: rgba(249,115,22,.22); border-color: var(--tep-orange); }
+    .tep-asof-note {
+      margin-top: 12px; padding: 8px 10px; border-radius: 8px;
+      font-size: 11px; line-height: 1.45; color: var(--tep-slate-400);
+      background: rgba(148,163,184,.07); border: 1px solid rgba(148,163,184,.18);
+    }
+    .tep-asof-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 13px; }
+    .tep-asof-btn {
+      font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; border-radius: 8px; padding: 6px 14px;
+      color: var(--tep-slate-200); background: rgba(148,163,184,.1); border: 1px solid var(--tep-slate-600);
+    }
+    .tep-asof-btn:hover { color: #fff; border-color: var(--tep-slate-500); }
+    .tep-asof-btn--go { color: #fff7ed; background: rgba(249,115,22,.24); border-color: var(--tep-orange); }
+    .tep-asof-btn--go:hover { background: rgba(249,115,22,.36); }
+    .tep-asof-btn--live { margin-right: auto; }
     .tep-dashmap-hwindow-inner {
       display: flex; align-items: center; gap: 8px;
     }
@@ -3722,7 +3807,7 @@
     /* ---- nodes ---- */
     .tep-devtopo-node {
       position: absolute; transform: translate(-50%, -50%); z-index: 3;
-      display: flex; align-items: center; gap: 9px; padding: 8px 11px 8px 9px; min-width: 150px; max-width: 250px;
+      display: flex; align-items: center; gap: 9px; padding: 8px 11px 8px 9px; min-width: 150px; max-width: 250px; box-sizing: border-box;
       border-radius: 12px; cursor: pointer;
       background: linear-gradient(180deg, var(--tdt-surface2), var(--tdt-surface));
       border: 1px solid var(--tdt-line); box-shadow: 0 10px 24px -14px rgba(0,0,0,.85);
@@ -3794,6 +3879,21 @@
     .tep-wtopo-bssid-nm { flex: 1 1 auto; font-size: 12.5px; font-weight: 700; color: #e6ecf5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tep-wtopo-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11.5px; margin: 0; }
     .tep-wtopo-kv dt { color: #7c8aa5; } .tep-wtopo-kv dd { margin: 0; color: #d7e2f4; font-family: var(--tdt-mono); text-align: right; }
+    /* Wired endpoints served by this device's subnet — the wired counterpart of
+       the AP's Wi-Fi client section. Muted slate rather than the wireless accent
+       so the two read as different attachment kinds at a glance. */
+    .tep-devtopo-wired { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--tdt-line); }
+    .tep-devtopo-wired-hd {
+      display: flex; align-items: center; gap: 5px; margin-bottom: 4px;
+      font-family: var(--tdt-mono); font-size: 8.5px; font-weight: 800;
+      letter-spacing: .07em; text-transform: uppercase; color: #8fa1bd;
+    }
+    .tep-devtopo-wired-sub { font-weight: 600; letter-spacing: .02em; color: #6b7a94; text-transform: none; }
+    .tep-devtopo-wired-list { display: flex; flex-direction: column; gap: 2px; }
+    .tep-devtopo-wired-row { display: flex; align-items: baseline; gap: 6px; font-size: 10.5px; min-width: 0; }
+    .tep-devtopo-wired-row .wr-nm { flex: 1 1 auto; color: #d7e2f4; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-devtopo-wired-row .wr-ip { flex: 0 0 auto; font-family: var(--tdt-mono); font-size: 9.5px; color: #7c8aa5; }
+    .tep-devtopo-wired-more { font-size: 9.5px; color: #6b7a94; margin-top: 2px; }
     .tep-wtopo-client { position: absolute; transform: translate(-50%, -50%); z-index: 3; width: 300px; display: flex; flex-direction: column; gap: 0; }
     .tep-wtopo-client .tep-test-card { margin: 0 !important; width: 100%; box-shadow: 0 12px 30px -16px rgba(0,0,0,.9); }
     .tep-wtopo-cl-wifi { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: -1px; padding: 7px 12px; font-size: 10.5px; color: #aebbd4;
@@ -3885,6 +3985,15 @@
     .tep-wtopo-ap .ap-n { position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
       border-radius: 999px; background: var(--tdt-ac); color: #06121f; font-family: var(--tdt-mono); font-size: 9.5px; font-weight: 800;
       display: grid; place-items: center; box-shadow: 0 0 0 2px var(--tdt-bg); }
+    /* BSSID under the SSID, on the agent-AP view only — one AP name can front
+       several radios, so the MAC is what actually identifies which one this is.
+       CONFIRMED via user request. A formatted MAC is 17 characters, wider than
+       the 72px node, so it is allowed to overflow the node's centred column
+       (nowrap) rather than wrap onto two lines; the negative margin pulls it up
+       against the name so the two read as one label. */
+    .tep-wtopo-ap .ap-mac { font-family: var(--tdt-mono); font-size: 8.5px; font-weight: 700; letter-spacing: .01em;
+      color: #8fa1bd; white-space: nowrap; margin-top: -2px; padding: 0 5px; border-radius: 999px;
+      background: color-mix(in srgb, var(--tdt-surface2) 72%, transparent); }
     .tep-wtopo-ap .ap-lb { font-family: var(--tdt-mono); font-size: 10.5px; font-weight: 800; letter-spacing: .04em; color: #e6ecf5;
       padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--tdt-surface2) 88%, transparent); border: 1px solid var(--tdt-line); }
     /* Client node: the SAME filled person glyph the main map uses (no ring), with
@@ -3955,7 +4064,21 @@
     .tep-ap-ssid--link { cursor: pointer; transition: color .12s ease, background .12s ease, border-color .12s ease; }
     .tep-ap-ssid--link:hover { color: var(--tdt-ac); background: color-mix(in srgb, var(--tdt-ac) 18%, transparent); border-color: color-mix(in srgb, var(--tdt-ac) 55%, var(--tdt-line)); }
     /* ---- faceplate ---- */
-    .tep-devtopo-node--faceplate { flex-direction: column; align-items: stretch; gap: 8px; }
+    /* A full-width faceplate is wider than the base 250px node cap, so the ports
+       ran straight out of the node box. Widened to fit them: the widest possible
+       faceplate is TEP_FP_MAXCELLS/TEP_FP_ROWS = 12 columns of TEP_FP_GROUP_PX
+       (16px) + 3px gaps = 225px, plus the WAN uplink column, the faceplate's own
+       padding/border and the node's — 298px in total. 300px covers it and matches
+       the --wifi cap, so TEP_TOPO_NODE_SLOT (312px) still clears the widest node.
+       CONFIRMED via user screenshot (ports overflowing the switch body). */
+    .tep-devtopo-node--faceplate { flex-direction: column; align-items: stretch; gap: 8px; max-width: 300px; }
+    .tep-devtopo-node--wired { flex-direction: column; align-items: stretch; gap: 8px; }
+    /* Sections must be allowed to shrink, or their min-content width drags the
+       whole node past its 250px cap and it starts colliding with its neighbours
+       (the topology spacing assumes the cap holds). */
+    .tep-devtopo-node--wired .tep-devtopo-node-hd,
+    .tep-devtopo-node--faceplate .tep-devtopo-node-hd { min-width: 0; }
+    .tep-devtopo-wired { min-width: 0; }
     .tep-devtopo-node-hd { display: flex; align-items: center; gap: 9px; }
     .tep-devtopo-faceplate {
       display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 9px;
@@ -16192,7 +16315,7 @@
   }
 
   function getEndpointViewRoundId() {
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = Math.floor(tepMetricsNowMs() / 1000);
     return Math.floor(nowSec / ENDPOINT_VIEW_ROUND_BIN_SEC) * ENDPOINT_VIEW_ROUND_BIN_SEC;
   }
 
@@ -16828,18 +16951,36 @@
    *  window ending now, independent of the Data Window slider — that slider
    *  controls what this panel fetches for itself, not the window TE's own
    *  results page opens to. */
-  function buildEnterpriseHttpTestAgentUrl(testId, agentId) {
-    if (testId == null || agentId == null) return null;
-    const now = Math.floor(Date.now() / 1000);
+  /** Enterprise test results view, anchored at the instant the panel is showing
+   *  and spanning the Data Window it is showing.
+   *
+   *  /network-app-synthetics/views/ is the timeline-aware results page — it
+   *  takes startTime + timelineWindow. The plain /view/tests/?testId= link the
+   *  health breakdown rows used carries no time at all, so clicking a row
+   *  always landed on live data even while the map was showing a past moment.
+   *  CONFIRMED via user report.
+   *
+   *  Routing every enterprise test link through here also means a click lands
+   *  on the SAME span the row's number was averaged over, which is the right
+   *  behaviour in live mode too — these builders previously pinned a hardcoded
+   *  24h regardless of which window was selected. */
+  function tepEnterpriseTestViewUrl(testId, detailId, metrics, agentId) {
+    if (testId == null || testId === '') return null;
+    const at = Math.floor(tepMetricsNowMs() / 1000);
+    const span = Math.max(300, Math.floor(tepMetricsWindowSec()) || 3600);
     const params = new URLSearchParams({
       testId: String(testId),
-      startTime: String(now),
-      detailId: 'map',
-      metrics: 'httpAvailability',
-      timelineWindow: `${now - 86400},${now}`,
-      agentId: String(agentId),
+      startTime: String(at),
+      detailId: detailId || 'map',
+      metrics: metrics || 'httpAvailability',
+      timelineWindow: `${at - span},${at}`,
     });
+    if (agentId != null && agentId !== '') params.set('agentId', String(agentId));
     return `${ENTERPRISE_TEST_VIEW_BASE}?${params.toString()}`;
+  }
+  function buildEnterpriseHttpTestAgentUrl(testId, agentId) {
+    if (testId == null || agentId == null) return null;
+    return tepEnterpriseTestViewUrl(testId, 'map', 'httpAvailability', agentId);
   }
   /** Same idea as buildEnterpriseHttpTestAgentUrl, for a Network-category test
    *  instead — detailId=pathvis/metrics=netLatency,netLoss is the same param
@@ -16848,16 +16989,7 @@
    *  per-agent popover's row links instead of a LIVE TEST result. */
   function buildEnterpriseNetworkTestAgentUrl(testId, agentId) {
     if (testId == null || agentId == null) return null;
-    const now = Math.floor(Date.now() / 1000);
-    const params = new URLSearchParams({
-      testId: String(testId),
-      startTime: String(now),
-      detailId: 'pathvis',
-      metrics: 'netLatency,netLoss',
-      timelineWindow: `${now - 86400},${now}`,
-      agentId: String(agentId),
-    });
-    return `${ENTERPRISE_TEST_VIEW_BASE}?${params.toString()}`;
+    return tepEnterpriseTestViewUrl(testId, 'pathvis', 'netLatency,netLoss', agentId);
   }
 
   /** Google Maps pin link for a precise coordinate. */
@@ -17552,7 +17684,7 @@
       const m = document.createElement('div');
       const count = cl.agents.length;
       // Pulse the marker when at least one agent here was seen in the last 24h.
-      const online = cl.agents.some((a) => a.lastSeenMs && (Date.now() - a.lastSeenMs) <= 24 * 3600e3);
+      const online = cl.agents.some((a) => a.lastSeenMs && (tepMetricsNowMs() - a.lastSeenMs) <= 24 * 3600e3);
       m.className = 'tep-agent-map-marker' + (count > 1 ? ' tep-agent-map-marker--cluster' : '')
         + (online ? ' tep-agent-map-marker--online' : '');
       m._fx = pos.xPct / 100;
@@ -17861,6 +17993,38 @@
   ];
   // Defaults to 1h (index 3 of the 24h→Live left-to-right order above).
   let dashMetricsWindowIdx = 3;
+  /* ── Point-in-time ("as of") mode ─────────────────────────────────────────
+   *  null  = live: every time anchor derives from the wall clock, as always.
+   *  <ms>  = historical: the map, its metrics, traces, topology and wireless
+   *          all resolve AS OF that instant instead of now.
+   *
+   *  Why a point rather than a range: of the five time systems on this map,
+   *  only the dashboard metrics aggregate over a period. SNMP topology,
+   *  endpoint rounds, wireless samples and path-vis traces are all SNAPSHOTS
+   *  of one round. A point + the existing window length maps cleanly onto all
+   *  five — "as of then, averaged over the last 1h" — where a range would have
+   *  forced an arbitrary instant on four of them anyway. CONFIRMED via user
+   *  request after weighing both.
+   *
+   *  The whole feature rests on one assumption: that TE honours a PAST `now`
+   *  in timeSpanConfig rather than clamping it to server time. If it does not,
+   *  the metrics silently show live data — so tepMetricsAsOfLabel surfaces the
+   *  requested instant in the UI, and the widgets carry an "as of" note, so a
+   *  clamp is visible rather than quietly wrong. */
+  let dashMetricsAtMs = null;
+  /** The instant all data resolves at: the chosen one, or now. Every time
+   *  anchor in the panel goes through this rather than calling Date.now()
+   *  directly, so "as of" mode is one switch instead of N. */
+  function tepMetricsNowMs() { return dashMetricsAtMs != null ? dashMetricsAtMs : Date.now(); }
+  function tepMetricsIsAsOf() { return dashMetricsAtMs != null; }
+  /** Cache discriminator. Caches used to key on windowSec alone; with "as of"
+   *  they must also key on the instant, or two different instants sharing a
+   *  window length would serve each other's data. */
+  function tepMetricsCacheKey() { return tepMetricsWindowSec() + '@' + (dashMetricsAtMs != null ? dashMetricsAtMs : 0); }
+  function tepMetricsAsOfLabel() {
+    if (dashMetricsAtMs == null) return '';
+    try { return new Date(dashMetricsAtMs).toLocaleString(); } catch (_) { return String(dashMetricsAtMs); }
+  }
   function tepMetricsWindowSec() { return DASH_METRICS_WINDOWS[dashMetricsWindowIdx].sec; }
   function tepMetricsWindowLabel() { return DASH_METRICS_WINDOWS[dashMetricsWindowIdx].label; }
   /** "the last 5 minutes" / "the last 1h" / … for widget tooltips. */
@@ -17930,10 +18094,29 @@
     const idx = TEP_SEEN_FILTER_STOPS.findIndex((s) => s.label === label);
     if (idx >= 0) dashMapSeenFilterIdx = idx;
   }
+  /* Agent POSITION has no time dimension available: lat/lng comes from the
+   * agent-management metadata roster, which reports where an agent is NOW and
+   * takes no time parameter. So in "as of" mode the markers stay where the
+   * agents are today while their metrics come from the chosen moment — see the
+   * note in tepOpenAsOfPicker. What CAN be made time-correct is the SET of
+   * agents and their online/offline state, which is what these two do.
+   * CONFIRMED via user report that geolocation did not follow the time change. */
+  /** An agent that did not exist yet at the moment being viewed should not be
+   *  on the map at all. createdMs is only present for endpoint agents; when it
+   *  is missing the agent is kept (better to show it than to hide a real one). */
+  function tepExistedAtViewedMoment(a) {
+    if (!tepMetricsIsAsOf()) return true;
+    const created = a && Number(a.createdMs);
+    if (!Number.isFinite(created) || created <= 0) return true;
+    return created <= tepMetricsNowMs();
+  }
   function tepPassesSeenFilter(lastSeenMs) {
     const stop = TEP_SEEN_FILTER_STOPS[dashMapSeenFilterIdx];
     if (!stop || stop.ms == null) return true;
-    return Number.isFinite(lastSeenMs) && (Date.now() - lastSeenMs) <= stop.ms;
+    // Measured from the moment being viewed: "seen within 1h" has to mean an
+    // hour before THAT instant, or every agent reads as long-offline the moment
+    // you look at a past date.
+    return Number.isFinite(lastSeenMs) && (tepMetricsNowMs() - lastSeenMs) <= stop.ms;
   }
   /** Tick labels for the seen-within slider, one per stop, evenly spaced down
    *  the track and re-rendered on every change so the active one can bold. */
@@ -18209,7 +18392,7 @@
   }
   function tepEndpointHealth(lastSeenMs) {
     if (!lastSeenMs) return 'unknown';
-    const age = Date.now() - lastSeenMs;
+    const age = tepMetricsNowMs() - lastSeenMs;
     if (age <= 24 * 3600e3) return 'healthy';
     if (age <= 7 * 24 * 3600e3) return 'warning';
     return 'unhealthy';
@@ -18337,7 +18520,7 @@
   const TEP_RECENCY_MAX_AGE_MS = 30 * 24 * 3600e3;
   function tepRecencyFreshness(lastSeenMs) {
     if (!Number.isFinite(lastSeenMs)) return TEP_RECENCY_FRESHNESS_FLOOR;
-    const age = Math.max(0, Date.now() - lastSeenMs);
+    const age = Math.max(0, tepMetricsNowMs() - lastSeenMs);
     const frac = Math.min(1, age / TEP_RECENCY_MAX_AGE_MS);
     return 1 - frac * (1 - TEP_RECENCY_FRESHNESS_FLOOR);
   }
@@ -18373,7 +18556,7 @@
   const TEP_SEEN_TEXT_STALE_MS = 7 * 24 * 3600e3;
   function tepSeenTextColor(lastSeenMs) {
     if (!Number.isFinite(lastSeenMs)) return tepHealthColorFrac(1); // never seen = worst
-    const age = Math.max(0, Date.now() - lastSeenMs);
+    const age = Math.max(0, tepMetricsNowMs() - lastSeenMs);
     const f = Math.max(0, Math.min(1, (age - TEP_SEEN_TEXT_FRESH_MS) / (TEP_SEEN_TEXT_STALE_MS - TEP_SEEN_TEXT_FRESH_MS)));
     return tepHealthColorFrac(f);
   }
@@ -18467,6 +18650,10 @@
         if (!ih || ih.isp !== dashMapIspFilter) continue;
       }
       if (!exempt && !tepPassesSeenFilter(a.lastSeenMs)) continue;
+      // An agent registered AFTER the moment being viewed wasn't there yet.
+      // Deliberately not exempted by a search hit: showing an agent that did
+      // not exist at that moment is wrong however you arrived at it.
+      if (!tepExistedAtViewedMoment(a)) continue;
       if (liveMapSession && !exempt && tepEnterpriseHealth(a.status) !== 'healthy') continue;
       entTotal++;
       // Prefer the agent's configured coordinates; fall back to geocoding text.
@@ -18517,13 +18704,27 @@
         if (!ih || ih.isp !== dashMapIspFilter) continue;
       }
       if (!exempt && !tepPassesSeenFilter(a.lastSeenMs)) continue;
+      // An agent registered AFTER the moment being viewed wasn't there yet.
+      // Deliberately not exempted by a search hit: showing an agent that did
+      // not exist at that moment is wrong however you arrived at it.
+      if (!tepExistedAtViewedMoment(a)) continue;
       if (liveMapSession && !exempt && tepEndpointHealth(a.lastSeenMs) !== 'healthy') continue;
       epTotal++;
-      // Prefer the agent's real coordinates; fall back to geocoding its location text.
+      // Prefer the agent's real coordinates; fall back to geocoding its
+      // location text. While looking BACK, a position captured from that
+      // round's own payload wins over either — the roster only ever knows
+      // where an agent is registered today, which is why markers did not
+      // move with the timeline. See tepEpRoundGeo.
       let lat = a.lat, lng = a.lng;
+      const roundGeo = tepEpGeoAtViewedMoment(a);
+      if (roundGeo) { lat = roundGeo.lat; lng = roundGeo.lng; }
       const hasRealCoords = lat != null && lng != null;
       if (!hasRealCoords) {
-        const g = epAgentGeo(a);
+        // If that round carried a location STRING but no coordinates,
+        // geocode that rather than the roster's current one — same
+        // gazetteer, just a historical input.
+        const rt = tepMetricsIsAsOf() ? tepEpRoundGeo.get(String(a.id)) : null;
+        const g = (rt && rt.text ? epGeocode(rt.text) : null) || epAgentGeo(a);
         if (!g) continue;
         lat = g.lat; lng = g.lng;
       }
@@ -18918,7 +19119,7 @@
   const TEP_SNMP_CACHE_MS = 5 * 60 * 1000;
   const TEP_DEVICE_KIND_LABEL = { switch: 'Switch', router: 'Router', firewall: 'Firewall', ap: 'Access point', device: 'Device' };
 
-  function tepSnmpRoundId() { return Math.floor(Date.now() / 1000 / 300) * 300; }
+  function tepSnmpRoundId() { return Math.floor(tepMetricsNowMs() / 1000 / 300) * 300; }
 
   /** Coarse device kind. deviceClassId is blunt (1 Other, 2 Switch, 4 Router —
    *  but firewalls AND Wi-Fi APs both come back class 4), so sniff sysDescription
@@ -19445,7 +19646,19 @@
     const agentNames = [];
     const seenA = new Set();
     for (const e of colEntries) { const it = e.it || e; const nm = it.agentName || it.name; if (nm && !seenA.has(nm)) { seenA.add(nm); agentNames.push(nm); } }
-    return { nodes, nodeIndex, edges, linksByDevice, uplinkIf, rootSet: new Set([rootId]), rootId, gatewayId, tierCount, agentName: agentNames[0] || 'Enterprise agent', agentCount: agentNames.length };
+    const model = { nodes, nodeIndex, edges, linksByDevice, uplinkIf, rootSet: new Set([rootId]), rootId, gatewayId, tierCount, agentName: agentNames[0] || 'Enterprise agent', agentCount: agentNames.length };
+    // Wired endpoints -> the device serving their subnet. Done here rather than
+    // in the painter because the decision needs BOTH the finished model (tiers
+    // and the identified gateway) and colEntries, which the painter never sees.
+    // Costs no fetch - see tepEndpointServingDevice.
+    model.servingDevice = tepEndpointServingDevice(model, colEntries);
+    model.wiredByDevice = new Map();
+    for (const n of nodes) {
+      if (n.ghost) continue;
+      const eps = tepDeviceSubnetEndpoints(n.id, model.servingDevice, colEntries);
+      if (eps.length) model.wiredByDevice.set(String(n.id), eps);
+    }
+    return model;
   }
 
   /** Build the physical-port faceplate model for one device: every physical port
@@ -19585,6 +19798,31 @@
   // CONFIRMED via user capture (BSSID fc:ec:da:d7:d5:0b == that device's rai0
   // interface). So we fetch every agent's BSSID in bulk and match it against the
   // subnet devices' interface MACs to list each AP's wireless clients.
+  /* machineId -> { lat, lng, text, round } captured from the per-ROUND endpoint
+   * payload: where the agent was at the moment being viewed, rather than where
+   * it is registered today.
+   *
+   * The roster (/agent-management/metadata/search) has no time dimension, so it
+   * can only say where an agent is NOW - which is why markers did not move when
+   * looking back. The per-round payload is a different matter: its `meta`
+   * carries machine / wirelessProfile / whoisRange, and whether it ALSO carries
+   * a position is not something the panel's own field picks can answer, since
+   * they only read the keys they name.
+   *
+   * So this scans each round's payload with the SAME deep lat/lng finder the
+   * roster path uses (tepAgentLatLng -> tepDeepFindNumber, 5 levels deep) and
+   * logs what it found. If TE does expose a per-round position, markers start
+   * following the timeline for free; if it does not, the log says so outright
+   * instead of leaving it to be guessed at. */
+  let tepEpRoundGeo = new Map();
+  let tepEpRoundGeoLogged = false;
+  /** Per-round position for an endpoint agent, only while viewing a past
+   *  moment. Live mode uses the roster, which is current by definition. */
+  function tepEpGeoAtViewedMoment(a) {
+    if (!tepMetricsIsAsOf() || !a || a.id == null) return null;
+    const g = tepEpRoundGeo.get(String(a.id));
+    return (g && g.lat != null && g.lng != null) ? g : null;
+  }
   let tepEpWirelessCache = null;     // { ts, round, byMachineId:Map, index:Map<macHex,[client]> }
   let tepEpWirelessInflight = null;
   // Optional live feed: the scan loader sets this to a fn that renders each real
@@ -19636,7 +19874,7 @@
    *  if the endpoint rejects that filter we fall back once to hardwareType-only.
    *  Cached per (round + scope). */
   function tepFetchEndpointWirelessMap(force, onRound) {
-    const round0 = Math.floor(Date.now() / 1000 / 60) * 60;
+    const round0 = Math.floor(tepMetricsNowMs() / 1000 / 60) * 60;
     const scope = tepDevtopoScopeMachineIds;
     const scopeIds = scope && scope.size ? [...scope] : null;
     const scopeKey = scopeIds ? ('n' + scopeIds.length + ':' + scopeIds.slice().sort().join(',')) : 'all';
@@ -19704,6 +19942,15 @@
             rec.phyMode = wp.phyMode || ''; rec.vendor = wp.vendor || ''; rec.bssid = bssid;
             rec.snr = met.snr != null ? Number(met.snr) : null; rec.noise = met.noise != null ? Number(met.noise) : null;
             rec.txRate = met.txRate != null ? Number(met.txRate) : null; rec.throughput = met.throughput != null ? Number(met.throughput) : null;
+              // Does this round's payload carry a position? Deep-scan it the
+              // same way the roster path does. Newest round wins, and since
+              // round0 already follows the viewed instant, "newest" IS the
+              // round being looked at.
+              const rg = tepAgentLatLng(m);
+              const rtxt = tepAgentLocationText(m);
+              if (rg || rtxt) {
+                tepEpRoundGeo.set(id, { lat: rg ? rg.lat : null, lng: rg ? rg.lng : null, text: rtxt || '', round: round0 });
+              }
             rec.pubStart = tepIpToNum(wr.startIp); rec.pubEnd = tepIpToNum(wr.endIp);
           }
         };
@@ -19737,7 +19984,16 @@
           return anyOk;
         };
         const baseFilter = [{ key: 'hardwareType', values: ['WIRELESS'] }];
+        tepEpRoundGeo = new Map(); tepEpRoundGeoLogged = false;
         const useMachineFilter = scopeIds && scopeIds.length <= 1000 && !tepEpWirelessFilterUnsupported;
+        if (!tepEpRoundGeoLogged) {
+          tepEpRoundGeoLogged = true;
+          let withCoords = 0, withText = 0;
+          for (const g of tepEpRoundGeo.values()) { if (g.lat != null) withCoords++; if (g.text) withText++; }
+          if (withCoords) log(`Endpoint per-round position: ${withCoords} agent(s) carried coordinates in the round payload \u2014 historical positions are available.`, 'tep-log-ok');
+          else if (withText) log(`Endpoint per-round position: no coordinates, but ${withText} agent(s) carried a location STRING \u2014 geocodable; worth wiring.`, 'tep-log-info');
+          else log('Endpoint per-round position: the round payload carries no location at all, so markers stay at their registered position while looking back.', 'tep-log-info');
+        }
         let anyOk = await runRounds(useMachineFilter ? baseFilter.concat([{ key: 'machineId', values: scopeIds }]) : baseFilter);
         if (useMachineFilter && !anyOk) {   // endpoint rejected the machineId filter — fall back once
           tepEpWirelessFilterUnsupported = true;
@@ -19762,6 +20018,98 @@
    *  behind this subnet's public IP (tepDevtopoSubnetPubNum) when known — a client
    *  whose whois range does not cover it is a same-MAC collision at another site
    *  and is dropped. Clients with no whois range are kept (BSSID match stands). */
+  /* ── Wired endpoints → the device that serves their subnet ───────────────
+   *  Wireless clients already hang off their AP, matched by BSSID against the
+   *  device's own interface MACs (tepDeviceWirelessClients). This is the wired
+   *  equivalent, matched by SUBNET instead.
+   *
+   *  Note the direction: no agent, endpoint or enterprise, reports a gateway IP
+   *  anywhere in the data this panel fetches (see tepClusterNetworkGroups), so
+   *  asking an endpoint "who is your gateway" is a dead end. Inverting it works
+   *  — ask each DEVICE which subnets it holds an interface on, and the device
+   *  owning an interface on the endpoint's subnet IS its gateway. That is also
+   *  the sounder signal: it is observed topology rather than DHCP config.
+   *
+   *  COSTS NOTHING EXTRA. Both sides are already in memory: interfaces come
+   *  from tepFetchDeviceInterfaces, which tepOpenDeviceTopoView already calls
+   *  and which keeps TE's interface objects whole (f.ipAddress is already
+   *  trusted elsewhere for WAN/LAN inference), and an endpoint's localIp is
+   *  already read for the subnet columns. CONFIRMED via user request to do this
+   *  with minimal calls. */
+  function tepIpPrefixes(ip) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || '').trim());
+    if (!m) return null;
+    const o = [+m[1], +m[2], +m[3], +m[4]];
+    if (o.some((n) => n > 255)) return null;
+    if (o[0] === 0 || o[0] === 127) return null;   // unspecified / loopback
+    return { p24: o[0] + '.' + o[1] + '.' + o[2], p16: o[0] + '.' + o[1] };
+  }
+  /** endpoint agentId → serving device id, decided once for the whole view.
+   *
+   *  A /24 match always beats a /16 one. Among equally specific matches the
+   *  DEEPEST tier wins — the access switch an endpoint actually plugs into,
+   *  rather than the core router that also has a leg on the segment — falling
+   *  back to the identified gateway, then to the lowest device id so the
+   *  outcome is at least stable. CONFIRMED via user request. */
+  function tepEndpointServingDevice(model, colEntries) {
+    const out = new Map();
+    if (!model || !model.nodes || !tepDeviceIfCache || !tepDeviceIfCache.byDevice) return out;
+    // device → the prefixes it holds an interface on
+    const by24 = new Map(), by16 = new Map();
+    for (const n of model.nodes) {
+      if (n.ghost) continue;
+      const id = String(n.id);
+      const ifs = tepDeviceIfCache.byDevice.get(id) || [];
+      const seen24 = new Set(), seen16 = new Set();
+      for (const f of ifs) {
+        const pre = tepIpPrefixes(f && f.ipAddress);
+        if (!pre) continue;
+        seen24.add(pre.p24); seen16.add(pre.p16);
+      }
+      // A device's own management address counts too — a switch often has no
+      // per-interface IP at all, just one SVI/management address on the segment.
+      const mgmt = tepIpPrefixes(n.meta);   // nodes carry primaryIp as `meta`
+      if (mgmt) { seen24.add(mgmt.p24); seen16.add(mgmt.p16); }
+      for (const p of seen24) { if (!by24.has(p)) by24.set(p, []); by24.get(p).push(n); }
+      for (const p of seen16) { if (!by16.has(p)) by16.set(p, []); by16.get(p).push(n); }
+    }
+    if (!by24.size && !by16.size) return out;
+    const better = (a, b) => {
+      if (!b) return true;
+      const ta = a.tier != null ? a.tier : -1, tb = b.tier != null ? b.tier : -1;
+      if (ta !== tb) return ta > tb;                                    // deepest tier wins
+      const ga = model.gatewayId != null && String(a.id) === String(model.gatewayId);
+      const gb = model.gatewayId != null && String(b.id) === String(model.gatewayId);
+      if (ga !== gb) return ga;                                         // else the gateway
+      return String(a.id) < String(b.id);                               // else stable
+    };
+    for (const e of colEntries || []) {
+      const it = (e && e.it) || e;
+      if (!it || it.kind !== 'endpoint' || it.agentId == null) continue;
+      const pre = tepIpPrefixes(it.localIp);
+      if (!pre) continue;
+      const cands = by24.get(pre.p24) || by16.get(pre.p16);
+      if (!cands || !cands.length) continue;   // no monitored device serves it — leave unlinked
+      let best = null;
+      for (const c of cands) if (better(c, best)) best = c;
+      if (best) out.set(String(it.agentId), { deviceId: String(best.id), exact: !!by24.get(pre.p24), subnet: by24.get(pre.p24) ? pre.p24 + '.0/24' : pre.p16 + '.0.0/16' });
+    }
+    return out;
+  }
+  /** The wired endpoints this device serves, as { name, agentId, localIp, subnet }. */
+  function tepDeviceSubnetEndpoints(deviceId, serving, colEntries) {
+    if (!serving || !serving.size) return [];
+    const want = String(deviceId);
+    const out = [];
+    for (const e of colEntries || []) {
+      const it = (e && e.it) || e;
+      if (!it || it.kind !== 'endpoint' || it.agentId == null) continue;
+      const hit = serving.get(String(it.agentId));
+      if (!hit || hit.deviceId !== want) continue;
+      out.push({ name: it.name || String(it.agentId), agentId: it.agentId, localIp: it.localIp || '', subnet: hit.subnet, exact: hit.exact });
+    }
+    return out;
+  }
   function tepDeviceWirelessClients(deviceId) {
     const wl = tepEpWirelessCache;
     if (!wl || !wl.index || !wl.index.size) return [];
@@ -19785,6 +20133,28 @@
   /** Inline "AP card" wireless section folded into a device node: one row per
    *  radio BAND (channel(s) + client count + a signal bar) and a row of SSID
    *  pills — the mockup design, so an AP reads as a proper Wi-Fi card. */
+  /** Wired endpoints hanging off this device, listed like the AP's Wi-Fi client
+   *  section. Capped — a big access switch can serve dozens and the node box is
+   *  small. */
+  function tepDevtopoWiredSectionHtml(eps) {
+    if (!eps || !eps.length) return '';
+    const esc = tepEscapeHtmlText;
+    const CAP = 6;
+    const shown = eps.slice(0, CAP);
+    // Every endpoint here matched the same way, so one subnet label for the
+    // whole section rather than repeating it per row. "~" flags a /16 fallback —
+    // a looser match than an exact /24, worth being honest about.
+    const sub = eps[0].subnet ? (eps[0].exact ? eps[0].subnet : '~' + eps[0].subnet) : '';
+    const plugIcon = '<svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v6M15 3v6M7 9h10v4a5 5 0 0 1-10 0z"/><path d="M12 18v3"/></svg>';
+    const rows = shown.map((e) => '<div class="tep-devtopo-wired-row"><span class="wr-nm">' + esc(e.name) + '</span>'
+      + (e.localIp ? '<span class="wr-ip">' + esc(e.localIp) + '</span>' : '') + '</div>').join('');
+    return '<div class="tep-devtopo-wired"><div class="tep-devtopo-wired-hd">' + plugIcon
+      + '<span>' + eps.length + ' wired</span>'
+      + (sub ? '<span class="tep-devtopo-wired-sub">' + esc(sub) + '</span>' : '')
+      + '</div><div class="tep-devtopo-wired-list">' + rows + '</div>'
+      + (eps.length > CAP ? '<div class="tep-devtopo-wired-more">+' + (eps.length - CAP) + ' more</div>' : '')
+      + '</div>';
+  }
   function tepApWirelessSectionHtml(clients) {
     const esc = tepEscapeHtmlText;
     const bandMap = new Map();
@@ -19999,7 +20369,7 @@
       const main = '<span class="tt-cl-main">' + tepClientIcon(c.platform) + '<span class="tt-cl-name">' + esc(c.name) + '</span>'
         + (meta ? '<span class="tt-cl-meta">' + esc(meta) + '</span>' : '')
         + (interactive ? '<span class="tt-cl-go">↗</span>' : '') + '</span>';
-      const detailBits = [c.rssi != null ? 'RSSI ' + c.rssi + ' dBm' : '', c.snr != null ? 'SNR ' + c.snr + ' dB' : '',
+      const detailBits = [tepWifiDbm(c) != null ? 'RSSI ' + tepWifiDbm(c) + ' dBm' : '', tepWifiSnrDb(c) != null ? 'SNR ' + tepWifiSnrDb(c) + ' dB' : '',
         c.noise != null ? 'noise ' + c.noise + ' dBm' : '', c.txRate != null ? 'tx ' + tepFmtWifiRate(c.txRate) : ''].filter(Boolean).join(' · ');
       const detail = detailBits ? '<span class="tt-cl-detail">' + esc(detailBits) + '</span>' : '';
       const inner = main + detail;
@@ -20208,6 +20578,13 @@
     for (const e of model.edges) { edgedIds.add(String(e.a)); edgedIds.add(String(e.b)); }
     const groupNodes = [];
     let grpSeq = 0;
+    // Layout constants for a tier row. Declared here, in the painter's own
+    // scope, because they are read from THREE places below — the grouping pass,
+    // the stage sizing and the node placement — and a copy inside any one of
+    // them is invisible to the others.
+    const TEP_TOPO_NODE_SLOT = 312;    // 300px (the --wifi / faceplate cap) + a 12px gap
+    const TEP_TOPO_SLOT_TIGHT = 168;   // zigzagged: only i and i+2 share a line
+    const TEP_TOPO_STAGGER_Y = 120;    // a faceplate node measures ~110px tall
     const renderTiers = tiers.map((arr, ti) => {
       if (arr.length <= TIER_SOFT_CAP) return arr.slice();
       const loose = arr.filter((n) => !edgedIds.has(String(n.id)) && !n.ghost);
@@ -20222,7 +20599,11 @@
       // COUNT so the row still fits the canvas width (no horizontal scroll): the
       // stage reserves ~235px per node, so only so many fit next to the kept nodes.
       const TARGET = 4;
-      const maxFit = Math.max(4, Math.floor((canvas.clientWidth || 1200) / 235));
+      // Row spacing must clear the WIDEST node that can occur, or neighbours
+      // overlap. 235 sat below even a plain node's rendered width (250px cap
+      // plus padding and border) and well below a --wifi node's 300px cap.
+      // CONFIRMED via user screenshot + measurement.
+      const maxFit = Math.max(4, Math.floor((canvas.clientWidth || 1200) / TEP_TOPO_NODE_SLOT));
       let slots = Math.max(2, maxFit - keep.length);
       const groups = [];
       const kinds = [...byKind.entries()].sort((a, b) => b[1].length - a[1].length);
@@ -20246,8 +20627,29 @@
     });
     const maxRow = renderTiers.reduce((m, a) => Math.max(m, a.length), 1);
     // Size the stage so crowded tiers scroll rather than overlap.
-    const stageW = Math.max(canvas.clientWidth, maxRow * 235, 760);
-    const stageH = Math.max(canvas.clientHeight, nTiers * 142 + 150, 460) + (hasClients ? 150 : 0);
+    /* ── Row packing: straight, or staggered when a tier gets crowded ────────
+     *  A tier used to lay every node out on ONE line at a 235px pitch — below
+     *  even a plain node's width and far below a faceplate node's 300px, so a
+     *  row of switches simply overlapped each other. CONFIRMED via user
+     *  screenshot.
+     *
+     *  Widening the pitch to clear the widest node fixes the overlap but makes
+     *  a busy subnet enormously wide. So past the point where a straight row
+     *  would no longer fit, the row ZIGZAGS instead: every other node drops by
+     *  one node height and the one after returns to the original line. Nodes
+     *  that sit side by side are then on different lines and cannot collide, so
+     *  the horizontal pitch only has to separate a node from the one TWO along
+     *  — roughly half as much — which is what buys the tighter packing.
+     *  CONFIRMED via user request. */
+    // Decided once, from the row that needs the most room, so the stage size and
+    // the placement below can't disagree about which mode is in play.
+    const needStagger = maxRow > 1 && maxRow * TEP_TOPO_NODE_SLOT > Math.max(canvas.clientWidth, 760);
+    const rowSlot = needStagger ? TEP_TOPO_SLOT_TIGHT : TEP_TOPO_NODE_SLOT;
+    const stageW = Math.max(canvas.clientWidth, maxRow * rowSlot, 760);
+    // A staggered tier is a node taller, so each tier band has to grow by the
+    // same amount or the dropped nodes land on the tier below.
+    const tierBand = 142 + (needStagger ? TEP_TOPO_STAGGER_Y : 0);
+    const stageH = Math.max(canvas.clientHeight, nTiers * tierBand + 150, 460) + (hasClients ? 150 : 0);
     stage.style.minWidth = stageW + 'px'; stage.style.minHeight = stageH + 'px';
     // Hand the real content box to the pan/zoom layer so "fit" and the
     // double-click reset know how big the board actually is. A crowded subnet
@@ -20269,9 +20671,15 @@
     const pos = new Map();
     renderTiers.forEach((arr, ti) => {
       const marginX = Math.min(0.08 * w, 90);
+      // Zigzag only where it earns its keep: a tier of one or two never
+      // overlaps, so leave those on a straight line.
+      const zig = needStagger && arr.length > 2;
       arr.forEach((n, i) => {
         const x = arr.length === 1 ? w / 2 : marginX + (i + 0.5) * (w - 2 * marginX) / arr.length;
-        pos.set(n.id, { x, y: tierY(ti) });
+        // Odd nodes drop a full node height; even ones stay on the tier line,
+        // so the row still reads as one band rather than a staircase.
+        const dy = (zig && (i % 2)) ? TEP_TOPO_STAGGER_Y : 0;
+        pos.set(n.id, { x, y: tierY(ti) + dy });
       });
     });
     const gwPos = pos.get(gwId) || pos.get(String(model.rootId)) || (tiers[0][0] && pos.get(tiers[0][0].id)) || { x: w / 2, y: yTop };
@@ -20353,7 +20761,8 @@
       const fp = pm ? tepDeviceFaceplateHtml(pm) : '';
       const wifiClients = n.ghost ? [] : tepDeviceWirelessClients(n.id);
       const el = document.createElement('div');
-      el.className = 'tep-devtopo-node' + (n.ghost ? ' tep-devtopo-node--ghost' : '') + (fp ? ' tep-devtopo-node--faceplate' : '') + (wifiClients.length ? ' tep-devtopo-node--wifi' : '') + (!n.ghost && Number.isFinite(n.score) && n.score < 60 ? ' tep-devtopo-node--crit' : '');
+      const wiredEps = (model.wiredByDevice && model.wiredByDevice.get(String(n.id))) || [];
+      el.className = 'tep-devtopo-node' + (n.ghost ? ' tep-devtopo-node--ghost' : '') + (fp ? ' tep-devtopo-node--faceplate' : '') + (wifiClients.length ? ' tep-devtopo-node--wifi' : '') + (wiredEps.length ? ' tep-devtopo-node--wired' : '') + (!n.ghost && Number.isFinite(n.score) && n.score < 60 ? ' tep-devtopo-node--crit' : '');
       el.style.setProperty('--h', H.c);
       const tag = n.isGateway ? '<span class="tep-devtopo-node-tag">Edge → internet</span>'
         : n.ghost ? '<span class="tep-devtopo-node-tag">LLDP only</span>' : '';
@@ -20366,11 +20775,13 @@
       const nClients = wifiClients.length;
       const subParts = pm ? [n.meta, pm.ports.length + '-port'] : [n.meta, n.kindLabel];
       if (nClients) subParts.push(nClients + ' client' + (nClients === 1 ? '' : 's'));
+      if (wiredEps.length) subParts.push(wiredEps.length + ' wired');
       const sub = subParts.filter(Boolean).join(' · ');
       el.innerHTML = tag + '<div class="tep-devtopo-node-hd">'
         + '<span class="tep-devtopo-node-ic">' + tepDeviceKindIcon(n.kind) + '</span>'
         + '<span class="tep-devtopo-node-txt"><span class="tep-devtopo-node-name">' + esc(n.name) + '</span><span class="tep-devtopo-node-meta">' + esc(sub) + '</span></span>'
-        + metric + '</div>' + fp + (nClients ? tepApWirelessSectionHtml(wifiClients) : '');
+        + metric + '</div>' + fp + (nClients ? tepApWirelessSectionHtml(wifiClients) : '')
+          + tepDevtopoWiredSectionHtml(wiredEps);
       // hover → transient card; click → pinned card (+ deep link)
       el.addEventListener('mousemove', (ev) => { if (ev.target.closest('.tep-port')) return; tepDevtopoShowTip(tepDevtopoDeviceCardHtml(n, false), ev.clientX, ev.clientY, false); });
       el.addEventListener('mouseleave', () => tepDevtopoHideTip(false));
@@ -20769,7 +21180,8 @@
     const band = tepWirelessBand(c.channel);
     const sigC = c.quality != null ? tepWifiScoreColor(c.quality).fill : '';
     const rssiC = c.rssi != null ? (c.rssi >= -60 ? '#34d399' : c.rssi >= -72 ? '#fbbf24' : '#f87171') : '';
-    const snrC = c.snr != null ? (c.snr >= 30 ? '#34d399' : c.snr >= 20 ? '#fbbf24' : '#f87171') : '';
+    const snrPct = tepWifiStrengthPct(c);
+    const snrC = snrPct != null ? (snrPct >= 70 ? '#34d399' : snrPct >= 40 ? '#fbbf24' : '#f87171') : '';
     const chip = (txt, color) => '<span class="wm"' + (color ? ' style="color:' + color + ';border-color:' + color + '66"' : '') + '>' + txt + '</span>';
     const bits = ['<span class="tep-ap-band ' + bandCls(band) + '">' + esc(band || 'Wi-Fi') + '</span>'];
     if (c.channel != null) bits.push(chip('ch ' + c.channel, ''));
@@ -20777,7 +21189,7 @@
     if (c.rssi != null) bits.push(chip('RSSI ' + c.rssi, rssiC));
     // Signal quality sits right next to RSSI and is labelled so it's unambiguous.
     if (c.quality != null) bits.push(chip('Signal ' + c.quality + '%', sigC));
-    if (c.snr != null) bits.push(chip('SNR ' + c.snr, snrC));
+    { const st = tepWifiSignalText(c); if (st) bits.push(chip(st, snrC)); }
     if (c.txRate != null) bits.push('<span class="wm wm--tx">tx ' + esc(tepFmtWifiRate(c.txRate)) + '</span>');
     return bits.join('');
   }
@@ -20786,6 +21198,59 @@
    *  lookback window (avg SNR/quality/RSSI per AP). `roaming` is true when it hit
    *  more than one BSSID or more than one SSID — i.e. it was actively testing /
    *  moving between access points. */
+  /* ── Wi-Fi signal strength, normalised ────────────────────────────────────
+   *  Some radios report RSSI (dBm, negative) in the `snr` field rather than a
+   *  true SNR (a positive ratio in dB). That broke both wireless layouts,
+   *  because each fed the raw value straight into geometry:
+   *
+   *    agent-AP view:  str = Math.max(1, ap.snr)  →  -54 clamps to 1, so the
+   *                    weight (str²) became 1 against 36² = 1296 for its
+   *                    neighbours. The STRONGEST AP contributed 0.04% and the
+   *                    fix sat on the midpoint of the other two.
+   *    wireless board: snrNorm = clamp(snr / 40)  →  -54 clamps to 0, drawing
+   *                    the best-signal client at the FARTHEST distance.
+   *
+   *  CONFIRMED via user screenshot: an AP reading "SNR -54 · 92%" was ignored
+   *  next to two reading "SNR 36 · 76%". 92% is exactly 2 × (-54 + 100), the
+   *  standard RSSI→quality mapping, which is how we know -54 is dBm.
+   *
+   *  So everything geometric now goes through one normalised 0-100 strength,
+   *  in order of how trustworthy the source is. */
+  function tepWifiStrengthPct(x) {
+    if (!x) return null;
+    // 1. TE's own quality percentage — already normalised and comparable.
+    const q = Number(x.quality);
+    if (Number.isFinite(q)) return Math.max(0, Math.min(100, q));
+    // 2. A REAL snr (positive dB). ~40 dB is excellent, so scale to percent.
+    const snr = Number(x.snr);
+    if (Number.isFinite(snr) && snr > 0) return Math.max(0, Math.min(100, snr * 2.5));
+    // 3. A dBm reading — rssi, or an snr field that is really carrying rssi.
+    //    Same mapping TE's quality follows (see above).
+    const dbm = tepWifiDbm(x);
+    if (dbm != null) return Math.max(0, Math.min(100, 2 * (dbm + 100)));
+    return null;
+  }
+  /** The dBm reading, wherever it landed: rssi, or a negative `snr`. */
+  function tepWifiDbm(x) {
+    if (!x) return null;
+    const r = Number(x.rssi);
+    if (Number.isFinite(r) && r < 0) return r;
+    const snr = Number(x.snr);
+    if (Number.isFinite(snr) && snr < 0) return snr;
+    return null;
+  }
+  /** A genuine SNR in dB, or null when the field is really carrying dBm. */
+  function tepWifiSnrDb(x) {
+    const snr = x ? Number(x.snr) : NaN;
+    return (Number.isFinite(snr) && snr > 0) ? snr : null;
+  }
+  /** "SNR 36" / "-54 dBm" — never "SNR -54". */
+  function tepWifiSignalText(x) {
+    const snr = tepWifiSnrDb(x);
+    if (snr != null) return 'SNR ' + snr;
+    const dbm = tepWifiDbm(x);
+    return dbm != null ? dbm + ' dBm' : '';
+  }
   function tepClientRoamInfo(rec) {
     const roam = rec && rec.roam;
     if (!roam || !roam.size) return { roaming: false, aps: [], ssids: 0, bssids: 0 };
@@ -20931,7 +21396,7 @@
     // distance set by its SNR — stronger signal = closer to the AP — fanned across
     // an arc that opens away from the hub, so they read as a natural spread.
     const CLIENT_NEAR = 82, CLIENT_FAR = 236;   // px from the AP node (best → worst SNR)
-    const snrOf = (c) => c.snr != null ? c.snr : (c.quality != null ? c.quality * 0.4 : null);
+    const snrOf = (c) => tepWifiStrengthPct(c);   // 0-100 normalised — see tepWifiStrengthPct
     const hash16 = (s) => { let x = 0; s = String(s); for (let k = 0; k < s.length; k++) x = (x * 31 + s.charCodeAt(k)) & 0xffff; return x; };
     const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     const clusters = vis.map((v) => {
@@ -21092,7 +21557,7 @@
         // (strong = close), plus a little organic jitter.
         const pos = ap.clients.map((cl, j) => {
           const sv = snrOf(cl);
-          const snrNorm = sv != null ? Math.max(0, Math.min(1, sv / 40)) : 0.45;
+          const snrNorm = sv != null ? Math.max(0, Math.min(1, sv / 100)) : 0.45;   // sv is already a percent
           const jd = (hash16(cl.machineId) % 27) - 13;
           const ja = ((hash16(cl.machineId + 'a') % 100) / 100 - 0.5) * 0.14;
           const dist = Math.max(CLIENT_NEAR, CLIENT_NEAR + (1 - snrNorm) * (CLIENT_FAR - CLIENT_NEAR) + jd);
@@ -21492,6 +21957,10 @@
     // the strongest APs — and each AP draws a range circle whose radius is exactly
     // its distance to the agent, so all circles converge on the fix.
     const ANCHOR = Math.max(300, 220 + n * 30);
+    // Minimum on-screen gap between the fix and any AP node. An AP node is
+    // 72px wide (55px icon + an SSID label beneath) and the fix hub is 62px
+    // with two labels of its own, so below roughly this they interleave.
+    const TEP_AGENTAP_MIN_SEP = 132;
     const radius = ANCHOR + 190;
     const stageW = Math.max(canvas.clientWidth, radius * 2, 720);
     const stageH = Math.max(canvas.clientHeight, radius * 2, 560);
@@ -21509,13 +21978,49 @@
     // Anchor positions + signal strength per AP.
     const nodes = aps.map((ap, i) => {
       const th = -Math.PI / 2 + i * TWO_PI / Math.max(1, n);
-      const str = ap.snr != null ? Math.max(1, ap.snr) : (ap.quality != null ? Math.max(1, ap.quality * 0.4) : 12);
+      // Weight the trilateration by normalised strength, so the AP the client
+      // actually hears best pulls hardest regardless of which field its signal
+      // arrived in. Floor of 1 keeps a zero-strength AP from vanishing.
+      const sp = tepWifiStrengthPct(ap);
+      const str = Math.max(1, sp != null ? sp : 30);
       return { ap, i, th, x: CX + ANCHOR * Math.cos(th), y: CY + ANCHOR * Math.sin(th), str };
     });
     // Signal-weighted centroid (weight = strength², so strong APs pull harder).
     let sw = 0, sx = 0, sy = 0;
     for (const nd of nodes) { const wgt = nd.str * nd.str; sw += wgt; sx += nd.x * wgt; sy += nd.y * wgt; }
-    const GX = (n && sw) ? sx / sw : CX, GY = (n && sw) ? sy / sw : CY;
+    let GX = (n && sw) ? sx / sw : CX, GY = (n && sw) ? sy / sw : CY;
+    // A DOMINANT AP drags that centroid essentially on top of itself — SNR 35
+    // against SNR 2 is a weight ratio of 1225:4, putting the fix 99.7% of the
+    // way there — so the AP's icon and SSID label ended up stacked underneath
+    // the client's own name and its TRIANGULATED FIX tag, three labels deep.
+    // (With a single AP the centroid IS the AP, exactly.) CONFIRMED via user
+    // screenshot.
+    //
+    // Push the fix back out along the AP→fix direction until it clears every
+    // AP by TEP_AGENTAP_MIN_SEP. Relaxed over a few passes because moving away
+    // from one AP can move it toward another; it converges immediately for the
+    // realistic cases and is capped regardless. The range circles are measured
+    // AFTER this, so they still converge exactly on the fix as drawn.
+    {
+      for (let pass = 0; pass < 8; pass++) {
+        let moved = false;
+        for (const nd of nodes) {
+          let dx = GX - nd.x, dy = GY - nd.y;
+          let d = Math.hypot(dx, dy);
+          if (d >= TEP_AGENTAP_MIN_SEP) continue;
+          if (d < 0.01) {
+            // Exactly coincident (the single-AP case): no direction to push
+            // along, so head for the ring centre — always inside the board.
+            dx = CX - nd.x; dy = CY - nd.y; d = Math.hypot(dx, dy);
+            if (d < 0.01) { dx = 0; dy = 1; d = 1; }   // AP sits dead centre
+          }
+          const k = TEP_AGENTAP_MIN_SEP / d;
+          GX = nd.x + dx * k; GY = nd.y + dy * k;
+          moved = true;
+        }
+        if (!moved) break;
+      }
+    }
     // Faint polygon joining the APs — the triangulation geometry.
     if (n >= 3) { const poly = svgEl('polygon'); poly.setAttribute('points', nodes.map((nd) => nd.x.toFixed(1) + ',' + nd.y.toFixed(1)).join(' ')); poly.setAttribute('fill', 'var(--tdt-ac)'); poly.setAttribute('fill-opacity', '.04'); poly.setAttribute('stroke', 'var(--tdt-ac)'); poly.setAttribute('stroke-opacity', '.14'); poly.setAttribute('stroke-dasharray', '4 6'); svg.appendChild(poly); }
     nodes.forEach((nd) => {
@@ -21544,20 +22049,21 @@
       // Distance/strength label at the line midpoint.
       const lbl = document.createElement('div'); lbl.className = 'tep-agentap-dist';
       lbl.style.color = apq;
-      lbl.textContent = (ap.snr != null ? 'SNR ' + ap.snr : (ap.rssi != null ? ap.rssi + ' dBm' : '')) + (ap.quality != null ? ' · ' + ap.quality + '%' : '');
+      lbl.textContent = tepWifiSignalText(ap) + (ap.quality != null ? ' \u00b7 ' + ap.quality + '%' : '');
       place(lbl, (nd.x + GX) / 2, (nd.y + GY) / 2); stage.appendChild(lbl);
       // AP node at its anchor.
       const band = bandName(ap.channel);
       const apEl = document.createElement('div'); apEl.className = 'tep-wtopo-ap';
       apEl.title = 'Open Wireless Views filtered to this BSSID';
       apEl.innerHTML = '<span class="ap-ic" style="color:' + apq + ';box-shadow:0 0 0 3px color-mix(in srgb,' + apq + ' 22%,transparent)">' + tepApBoxIcon()
-        + (ap.snr != null ? '<span class="ap-n">' + ap.snr + '</span>' : '') + '</span>'
-        + '<span class="ap-lb">' + esc(ap.ssid) + '</span>';
+        + ((() => { const p = tepWifiStrengthPct(ap); return p != null ? '<span class="ap-n">' + Math.round(p) + '</span>' : ''; })()) + '</span>'
+        + '<span class="ap-lb">' + esc(ap.ssid) + '</span>'
+        + (ap.bssid ? '<span class="ap-mac">' + esc(macFmt(ap.bssid)) + '</span>' : '');
       const cardHtml = '<div class="tt-head"><span class="tt-name">' + esc(ap.ssid) + '</span>' + (band ? '<span class="tep-ap-band ' + bandCls(band) + '">' + esc(band) + '</span>' : '') + '</div>'
         + '<div class="tt-ip">' + macFmt(ap.bssid) + (ap.channel != null ? ' · ch ' + ap.channel : '') + (ap.phyMode ? ' · ' + esc(ap.phyMode) : '') + '</div>'
         + '<div class="tep-wtopo-cl-wifi">'
         + (ap.quality != null ? '<span class="wm" style="color:' + apq + ';border-color:' + apq + '66">Signal ' + ap.quality + '%</span>' : '')
-        + (ap.snr != null ? '<span class="wm">SNR ' + ap.snr + '</span>' : '')
+        + ((() => { const t = tepWifiSignalText(ap); return t ? '<span class="wm">' + t + '</span>' : ''; })())
         + (ap.rssi != null ? '<span class="wm">RSSI ' + ap.rssi + '</span>' : '')
         + '<span class="wm">' + ap.samples + ' sample' + (ap.samples === 1 ? '' : 's') + '</span></div>';
       apEl.addEventListener('mouseenter', (ev) => tepDevtopoShowStickyCard(cardHtml, ev.clientX, ev.clientY));
@@ -22001,7 +22507,7 @@
       if (agentId != null && agentId !== '') eparams.set('filters', tepEndpointFilterParam(String(agentId)));
       return origin + '/endpoint/views/?' + eparams.toString();
     }
-    const round = (roundId != null && roundId !== '' && Number.isFinite(Number(roundId))) ? Math.floor(Number(roundId)) : Math.floor(Date.now() / 1000);
+    const round = (roundId != null && roundId !== '' && Number.isFinite(Number(roundId))) ? Math.floor(Number(roundId)) : Math.floor(tepMetricsNowMs() / 1000);
     const params = new URLSearchParams({
       testId: String(testId),
       startTime: String(round),
@@ -23396,7 +23902,68 @@
       it.vpn = agent.vpn === true;
       return didFetch || before !== [it.connKind, it.wifiScore, it.cpu, it.ram, it.disk, it.battery, it.vpn].join('|');
     }
-    async function enrichEndpointAgentForTip(it, cluster, marker) {
+    // A newly revealed row waits this long before enriching, and the wait is
+  // cancelled if it scrolls back out. Without it, flicking through a hundred
+  // rows would fire a segment-visualisation call for every one of them on the
+  // way past — exactly the fleet-wide sweep the per-row design removed.
+  const TEP_TIP_ENRICH_DWELL_MS = 220;
+  /** Enrich the endpoint rows that are actually ON SCREEN inside an open hover
+   *  card, and any revealed by scrolling it.
+   *
+   *  Enrichment (CPU/RAM/Wi-Fi/VPN) used to need a hover over each individual
+   *  row, so a card showing three visible rows out of a hundred showed three
+   *  blank rows until you touched each one. CONFIRMED via user request: what
+   *  should drive it is visibility, not the pointer.
+   *
+   *  Watched through an IntersectionObserver ROOTED AT .tep-map-tip-body (the
+   *  card's own scroll container, max-height 275px), so "visible" means visible
+   *  within the card rather than within the page — a row scrolled out of the
+   *  card is genuinely off screen even though the card itself is not.
+   *
+   *  Re-armed after every render because each enrichment re-renders the card
+   *  (see enrichEndpointAgentForTip), which replaces every row this was
+   *  watching. That also makes the cascade self-limiting: one visible row
+   *  resolves, the card re-renders, the next visible row starts its dwell. */
+  function tepWireTipRowEnrichment(tip) {
+    if (!tip) return;
+    // The previous card's rows no longer exist — drop its observer and any
+    // dwell still pending on them.
+    if (tip._tepEnrichObs) { try { tip._tepEnrichObs.disconnect(); } catch (_) { /* */ } tip._tepEnrichObs = null; }
+    if (tip._tepEnrichTimers) { for (const t of tip._tepEnrichTimers.values()) clearTimeout(t); }
+    tip._tepEnrichTimers = new Map();
+    const cluster = tip._cluster;
+    if (!cluster || !Array.isArray(cluster.items)) return;
+    if (typeof IntersectionObserver !== 'function') return;   // hover path still covers it
+    const rows = tip.querySelectorAll('.tep-map-tip-agent[data-idx]');
+    if (!rows.length) return;
+    const body = tip.querySelector('.tep-map-tip-body');
+    const timers = tip._tepEnrichTimers;
+    const obs = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        const row = en.target, key = row.dataset.idx;
+        if (!en.isIntersecting) {
+          const t = timers.get(key);
+          if (t) { clearTimeout(t); timers.delete(key); }
+          continue;
+        }
+        if (timers.has(key)) continue;
+        timers.set(key, setTimeout(() => {
+          timers.delete(key);
+          // The card may have been closed, swapped to another marker, or
+          // re-rendered out from under this row while it was settling.
+          if (!row.isConnected || tip._cluster !== cluster || tip.style.display === 'none') return;
+          const it = cluster.items[parseInt(key, 10)];
+          if (!it || it.kind !== 'endpoint' || it.agentId == null) return;
+          const agent = allEndpointAgents.find((x) => String(x.id) === String(it.agentId));
+          if (!agent || agent._enriched || agent._enriching) return;
+          void enrichEndpointAgentForTip(it, cluster, null);
+        }, TEP_TIP_ENRICH_DWELL_MS));
+      }
+    }, { root: body || null, threshold: 0.35 });
+    for (const r of rows) obs.observe(r);
+    tip._tepEnrichObs = obs;
+  }
+  async function enrichEndpointAgentForTip(it, cluster, marker) {
       if (it.kind !== 'endpoint' || it.agentId == null) {
         log(`Map tip DIAG: skip enrich — kind=${it.kind} agentId=${it.agentId}`, 'tep-log-info');
         return;
@@ -23461,6 +24028,7 @@
         const bodyEl = tip.querySelector('.tep-map-tip-body');
         const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
         tip.innerHTML = tepDashTooltipHtml(cluster);
+        tepWireTipRowEnrichment(tip);   // rows just got replaced — re-arm the visibility watch
         if (scrollTop) {
           const newBodyEl = tip.querySelector('.tep-map-tip-body');
           if (newBodyEl) newBodyEl.scrollTop = scrollTop;
@@ -23519,6 +24087,7 @@
       if (isSwitch) tip.style.opacity = '0';
       tip._cluster = marker._cluster;
       tip.innerHTML = tepDashTooltipHtml(marker._cluster);
+      tepWireTipRowEnrichment(tip);   // rows just got replaced — re-arm the visibility watch
       tip.style.display = 'block';
       positionTip(marker);
       if (isSwitch) requestAnimationFrame(() => { tip.style.opacity = '1'; }); else tip.style.opacity = '1';
@@ -23569,6 +24138,7 @@
           const bodyEl = tip.querySelector('.tep-map-tip-body');
           const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
           tip.innerHTML = tepDashTooltipHtml(clusterRef);
+          tepWireTipRowEnrichment(tip);   // rows just got replaced — re-arm the visibility watch
           if (scrollTop) { const nb = tip.querySelector('.tep-map-tip-body'); if (nb) nb.scrollTop = scrollTop; }
           if (marker && marker.isConnected) positionTip(marker);
         }
@@ -23590,6 +24160,10 @@
     function hideTip() {
       cancelHide();
       clearPendingSwitch();
+      // Stop watching rows for visibility — the card is going away, and any
+      // dwell still counting down would fire against a hidden card.
+      if (tip._tepEnrichObs) { try { tip._tepEnrichObs.disconnect(); } catch (_) { /* */ } tip._tepEnrichObs = null; }
+      if (tip._tepEnrichTimers) { for (const t of tip._tepEnrichTimers.values()) clearTimeout(t); tip._tepEnrichTimers.clear(); }
       currentTipMarker = null;
       tip.style.display = 'none';
       tip._cluster = null;
@@ -24200,14 +24774,27 @@
         return (Number.isFinite(wAttr) && wAttr > 0) ? wAttr / 2 : DEFAULT_RADIUS;
       }
       const WATER_SEARCH_DEG = [0, 25, -25, 50, -50, 75, -75, 100, -100, 130, -130, 160, -160, 180];
+      // Shrinking radii, tried in turn. Searching only at the FULL separation
+      // meant that near a coast — where at 1x every direction at ~30px is open
+      // ocean — no angle qualified, landSafeSpot gave up, and the caller fell
+      // through to a plain bearing nudge straight into the water. A marker that
+      // still overlaps its neighbour slightly but sits on the right landmass is
+      // the better answer: the overlap resolves itself the moment you zoom in,
+      // an ocean placement never does. CONFIRMED via user request ("does not
+      // appear in ocean for any nodes … still needs to center on land").
+      // Full separation is always tried first; these are fallbacks.
+      const LAND_RADIUS_STEPS = [1, 0.78, 0.58, 0.4];
       function landSafeSpot(baseAngle, px, py, sep) {
-        for (const offDeg of WATER_SEARCH_DEG) {
-          const angle = baseAngle + offDeg * Math.PI / 180;
-          const cx = px + Math.cos(angle) * sep;
-          const cy = py + Math.sin(angle) * sep;
-          const fxC = (cx - epDashMapZoom.tx) / (w * epDashMapZoom.s);
-          const fyC = (cy - epDashMapZoom.ty) / (h * epDashMapZoom.s);
-          if (tepIsViewboxPtOnLand(svg, fxC * TEP_BASEMAP.vbw, fyC * TEP_BASEMAP.vbh)) return { x: cx, y: cy };
+        for (const frac of LAND_RADIUS_STEPS) {
+          const r = sep * frac;
+          for (const offDeg of WATER_SEARCH_DEG) {
+            const angle = baseAngle + offDeg * Math.PI / 180;
+            const cx = px + Math.cos(angle) * r;
+            const cy = py + Math.sin(angle) * r;
+            const fxC = (cx - epDashMapZoom.tx) / (w * epDashMapZoom.s);
+            const fyC = (cy - epDashMapZoom.ty) / (h * epDashMapZoom.s);
+            if (tepIsViewboxPtOnLand(svg, fxC * TEP_BASEMAP.vbw, fyC * TEP_BASEMAP.vbh)) return { x: cx, y: cy };
+          }
         }
         return null;
       }
@@ -24222,10 +24809,22 @@
       const gridAdd = (pt) => { const k = Math.floor(pt.x / GRID_CELL) + ',' + Math.floor(pt.y / GRID_CELL); let a = grid.get(k); if (!a) { a = []; grid.set(k, a); } a.push(pt); };
       const gridNear = (px, py) => { const cx = Math.floor(px / GRID_CELL), cy = Math.floor(py / GRID_CELL); const out = []; for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) { const a = grid.get(gx + ',' + gy); if (a) for (let i = 0; i < a.length; i++) out.push(a[i]); } return out; };
       for (const p of destPx) gridAdd(p);
-      // Zoomed out, a small nudge into open water is imperceptible, so skip the
-      // per-conflict basemap hit-tests (up to 14 isPointInFill each) and use a
-      // plain bearing nudge; keep the land-safe search only when zoomed in.
-      const skipLandTest = epDashMapZoom.s < 1.5;
+      // The land-safe search runs at EVERY zoom. It used to be skipped below
+      // 1.5x on the reasoning that "zoomed out, a small nudge into open water
+      // is imperceptible" — which has it backwards. The nudge is a fixed number
+      // of PIXELS, so the further out you are the more GROUND it covers: at 1x,
+      // separating two clusters by ~30px walks a marker several hundred miles,
+      // which is how a California cluster ended up sitting in the Pacific.
+      // Zoomed in, that same 30px is a few streets and genuinely wouldn't
+      // matter. CONFIRMED via user screenshot.
+      //
+      // The cost that justified the skip is mostly already paid:
+      // tepIsViewboxPtOnLand memoises on rounded VIEWBOX coordinates, which are
+      // basemap-space and therefore zoom- and pan-independent — so the cache is
+      // shared across every zoom level and fills once, after which each test is
+      // a Map lookup. The nudge pass is also skipped outright while a pan/zoom
+      // animation is running (see below), which is where the per-frame cost
+      // actually mattered.
       const markerPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
                                           // flow line starting from the same agent marker
       // While a pan/zoom animation is actively running (animateZoomTo's own
@@ -24271,9 +24870,7 @@
               const bx = trueX - p.x, by = trueY - p.y;
               const blen = Math.hypot(bx, by);
               const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
-              const spot = skipLandTest
-                ? { x: p.x + Math.cos(angle) * sep, y: p.y + Math.sin(angle) * sep }
-                : landSafeSpot(angle, p.x, p.y, sep);
+              const spot = landSafeSpot(angle, p.x, p.y, sep);
               if (spot) {
                 x = spot.x; y = spot.y;
               } else if (p.movable && p.el) {
@@ -24909,6 +25506,7 @@
             const bodyEl = tip.querySelector('.tep-map-tip-body');
             const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
             tip.innerHTML = tepDashTooltipHtml(tip._cluster);
+            tepWireTipRowEnrichment(tip);   // rows just got replaced — re-arm the visibility watch
             if (scrollTop) {
               const newBodyEl = tip.querySelector('.tep-map-tip-body');
               if (newBodyEl) newBodyEl.scrollTop = scrollTop;
@@ -25558,6 +26156,172 @@
     return `<div class="tep-isp-stack tep-trace-isp-stack" id="tep-dashmap-trace-isp-stack">`
       + `<div class="tep-trace-isp-head">Source ISPs → ${tepEscapeHtmlText(info.testName || 'test')}</div>${tiles}</div>`;
   }
+  /** Re-pull everything the Data Window governs. Lifted out of the dropdown's
+   *  own change handler so the as-of picker runs exactly the same path.
+   *
+   *  The by-agent SaaS/Network caches are cleared outright — they were fetched
+   *  under the OLD window/instant and must not be served stale on the next map
+   *  popover open or marker repaint. The raw fetches underneath them key on
+   *  tepMetricsCacheKey (window + instant), so those self-invalidate. */
+  // How far back the picker will let you go. TE's per-round retention for the
+  // snapshot systems (device-layer rounds, endpoint rounds) is shorter than its
+  // metric retention, so a date beyond this is likely to render an empty
+  // topology even when the health numbers resolve. 31 days matches the "past
+  // month" ask; the note in the panel says what to expect.
+  const TEP_ASOF_MAX_DAYS = 31;
+  let tepAsOfEl = null;
+  function tepCloseAsOfPicker() {
+    if (tepAsOfEl) { try { tepAsOfEl.remove(); } catch (_) { /* */ } }
+    tepAsOfEl = null;
+    if (tepAsOfKeyHandler) { document.removeEventListener('keydown', tepAsOfKeyHandler, true); tepAsOfKeyHandler = null; }
+  }
+  let tepAsOfKeyHandler = null;
+  /** Point-in-time picker: a month calendar plus a clock and a window length.
+   *  onApply runs after dashMetricsAtMs / dashMetricsWindowIdx are set;
+   *  onCancel runs when it is dismissed, so the caller can restore its own UI
+   *  (the Data Window select would otherwise be left reading "Custom…"). */
+  function tepOpenAsOfPicker(onApply, onCancel) {
+    tepCloseAsOfPicker();
+    const esc = tepEscapeHtmlText;
+    const now = new Date();
+    const minMs = Date.now() - TEP_ASOF_MAX_DAYS * 86400000;
+    // Seed from the current choice, else one hour ago — "now" itself is what
+    // the Live preset already does, so it makes a poor default here.
+    let sel = new Date(dashMetricsAtMs != null ? dashMetricsAtMs : Date.now() - 3600000);
+    let winIdx = dashMetricsWindowIdx;
+    let viewY = sel.getFullYear(), viewM = sel.getMonth();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tep-asof-overlay tep-fs-pop';
+    const panel = document.createElement('div');
+    panel.className = 'tep-asof-panel';
+    overlay.appendChild(panel);
+
+    const pad2 = (n) => (n < 10 ? '0' : '') + n;
+    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const chevron = (dir) => '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M' + (dir < 0 ? '15 6l-6 6 6 6' : '9 6l6 6-6 6') + '"/></svg>';
+
+    const render = () => {
+      const first = new Date(viewY, viewM, 1);
+      const lead = first.getDay();
+      const days = new Date(viewY, viewM + 1, 0).getDate();
+      // Only months that actually contain a selectable day are reachable.
+      const prevEnd = new Date(viewY, viewM, 0);
+      const canPrev = prevEnd.getTime() >= minMs;
+      const canNext = new Date(viewY, viewM + 1, 1).getTime() <= Date.now();
+      let cells = '';
+      for (const d of ['S', 'M', 'T', 'W', 'T', 'F', 'S']) cells += '<div class="tep-asof-dow">' + d + '</div>';
+      for (let i = 0; i < lead; i++) cells += '<div class="tep-asof-day tep-asof-day--blank"></div>';
+      for (let d = 1; d <= days; d++) {
+        const cellEnd = new Date(viewY, viewM, d, 23, 59, 59, 999).getTime();
+        const cellStart = new Date(viewY, viewM, d).getTime();
+        const off = cellEnd < minMs || cellStart > Date.now();
+        const cls = 'tep-asof-day'
+          + (off ? ' tep-asof-day--off' : '')
+          + (!off && sameDay(new Date(viewY, viewM, d), sel) ? ' tep-asof-day--sel' : '')
+          + (sameDay(new Date(viewY, viewM, d), now) ? ' tep-asof-day--today' : '');
+        cells += '<div class="' + cls + '"' + (off ? '' : ' data-day="' + d + '"') + '>' + d + '</div>';
+      }
+      const winBtns = DASH_METRICS_WINDOWS.map((w, i) =>
+        '<button type="button" class="tep-asof-win' + (i === winIdx ? ' tep-asof-win--on' : '') + '" data-win="' + i + '">'
+        + esc(w.label === 'Live' ? '5m' : w.label) + '</button>').join('');
+      panel.innerHTML =
+        '<div class="tep-asof-title">View the map as of…</div>'
+        + '<div class="tep-asof-sub">Everything on the map resolves to this moment — health metrics, agent colours, traces, device topology and wireless.</div>'
+        + '<div class="tep-asof-cal-head">'
+        + '<button type="button" class="tep-asof-nav" data-nav="-1"' + (canPrev ? '' : ' disabled') + ' aria-label="Previous month">' + chevron(-1) + '</button>'
+        + '<span class="tep-asof-cal-month">' + esc(first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })) + '</span>'
+        + '<button type="button" class="tep-asof-nav" data-nav="1"' + (canNext ? '' : ' disabled') + ' aria-label="Next month">' + chevron(1) + '</button>'
+        + '</div>'
+        + '<div class="tep-asof-grid">' + cells + '</div>'
+        + '<div class="tep-asof-row"><span class="tep-asof-lbl" style="margin:0">Time</span>'
+        + '<input type="time" class="tep-asof-time" id="tep-asof-time" value="' + pad2(sel.getHours()) + ':' + pad2(sel.getMinutes()) + '" step="60"></div>'
+        + '<div class="tep-asof-row" style="flex-direction:column;align-items:stretch;gap:6px">'
+        + '<span class="tep-asof-lbl" style="margin:0">Averaged over</span>'
+        + '<div class="tep-asof-wins">' + winBtns + '</div></div>'
+        + '<div class="tep-asof-note">Health metrics average the window ending at this moment. Traces, topology and wireless are snapshots of the nearest round \u2014 TE keeps those for less time than it keeps metrics, so far-back dates may come back empty.<br><br><b>Agent positions stay current.</b> TE reports an agent\u2019s location from its registration record, which has no history, so markers sit where agents are today. Their metrics, online state and \u201cseen\u201d ages all come from the chosen moment, and agents registered after it are hidden.</div>'
+        + '<div class="tep-asof-foot">'
+        + '<button type="button" class="tep-asof-btn tep-asof-btn--live" data-act="live">Back to live</button>'
+        + '<button type="button" class="tep-asof-btn" data-act="cancel">Cancel</button>'
+        + '<button type="button" class="tep-asof-btn tep-asof-btn--go" data-act="apply">View this moment</button>'
+        + '</div>';
+    };
+    render();
+
+    panel.addEventListener('click', (e) => {
+      const nav = e.target.closest('[data-nav]');
+      if (nav && !nav.disabled) {
+        const d = parseInt(nav.dataset.nav, 10);
+        viewM += d;
+        if (viewM < 0) { viewM = 11; viewY--; } else if (viewM > 11) { viewM = 0; viewY++; }
+        render(); return;
+      }
+      const day = e.target.closest('[data-day]');
+      if (day) {
+        sel = new Date(viewY, viewM, parseInt(day.dataset.day, 10), sel.getHours(), sel.getMinutes());
+        render(); return;
+      }
+      const win = e.target.closest('[data-win]');
+      if (win) { winIdx = parseInt(win.dataset.win, 10) || 0; render(); return; }
+      const act = e.target.closest('[data-act]');
+      if (!act) return;
+      const a = act.dataset.act;
+      if (a === 'cancel') { tepCloseAsOfPicker(); if (onCancel) onCancel(); return; }
+      if (a === 'live') {
+        dashMetricsAtMs = null;
+        tepCloseAsOfPicker();
+        log('Data Window: back to live', 'tep-log-ok');
+        if (onApply) onApply();
+        return;
+      }
+      if (a === 'apply') {
+        // Never let the chosen instant sit in the future or past the retention
+        // horizon — both would just return nothing and look like a bug.
+        let ms = sel.getTime();
+        ms = Math.min(ms, Date.now());
+        ms = Math.max(ms, minMs);
+        dashMetricsAtMs = ms;
+        dashMetricsWindowIdx = winIdx;
+        tepCloseAsOfPicker();
+        log(`Data Window: as of ${new Date(ms).toLocaleString()} over ${tepMetricsWindowLabel()} — if the numbers look live, TE clamped the requested instant`, 'tep-log-info');
+        if (onApply) onApply();
+      }
+    });
+    // Keep the clock in sync as it is typed, so Apply always uses what is shown.
+    panel.addEventListener('input', (e) => {
+      if (!e.target.closest('#tep-asof-time')) return;
+      const [hh, mm] = String(e.target.value || '').split(':').map((n) => parseInt(n, 10));
+      if (Number.isFinite(hh) && Number.isFinite(mm)) sel = new Date(sel.getFullYear(), sel.getMonth(), sel.getDate(), hh, mm);
+    });
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) { tepCloseAsOfPicker(); if (onCancel) onCancel(); } });
+    document.documentElement.appendChild(overlay);
+    tepAsOfEl = overlay;
+    requestAnimationFrame(() => { requestAnimationFrame(() => { overlay.classList.add('tep-asof-overlay--in'); }); });
+    tepAsOfKeyHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); tepCloseAsOfPicker(); if (onCancel) onCancel(); } };
+    document.addEventListener('keydown', tepAsOfKeyHandler, true);
+  }
+  // The instant the snapshot caches (SNMP topology, wireless) were built at, so
+  // a plain window change doesn't needlessly throw them away.
+  let tepSnapshotCachesAtMs = null;
+  function tepApplyDataWindowChange() {
+    tepHttpAvailByAgentCache = null;
+    tepNetHealthByAgentCache = null;
+    tepNetTestsByAgentCache = null;
+    // Snapshot systems derive their ROUND from tepMetricsNowMs, so they only go
+    // stale when the INSTANT moves — not when the window length changes.
+    // Clearing them unconditionally made switching "Past 1h" to "Past 24h"
+    // re-fetch the whole device inventory and 20 wireless rounds for nothing.
+    if (tepSnapshotCachesAtMs !== dashMetricsAtMs) {
+      tepSnapshotCachesAtMs = dashMetricsAtMs;
+      tepDeviceTopoCache = null;
+      tepEpWirelessCache = null;
+    }
+    void fillSaasHealthWidget();
+    void fillNetworkHealthWidget();
+    void refreshDashMapColorScores().then(() => {
+      renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+    });
+  }
   function renderDashWidgets(container) {
     if (!container) return;
     const s = tepAgentWidgetStats();
@@ -25624,9 +26388,18 @@
       // render time from dashMetricsWindowIdx, so no further JS is needed
       // to keep the visible selection in sync (a real <select> already
       // shows its own chosen option).
+      // The presets mean "live, averaged over the last N". "Custom…" opens the
+      // as-of picker, which sets BOTH an instant and a window length; while one
+      // is active the select shows it as a selected option of its own, so the
+      // control always states what you are actually looking at. Picking any
+      // preset again drops back to live.
       const hwindowOptionsHtml = DASH_METRICS_WINDOWS.map((w, i) =>
-        `<option value="${i}"${i === dashMetricsWindowIdx ? ' selected' : ''}>${tepEscapeHtmlText(tepMetricsWindowOptionText(w.label))}</option>`
-      ).join('');
+        `<option value="${i}"${(i === dashMetricsWindowIdx && !tepMetricsIsAsOf()) ? ' selected' : ''}>${tepEscapeHtmlText(tepMetricsWindowOptionText(w.label))}</option>`
+      ).join('')
+        + (tepMetricsIsAsOf()
+          ? `<option value="asof" selected>${tepEscapeHtmlText(tepMetricsAsOfLabel() + ' · ' + tepMetricsWindowLabel())}</option>`
+          : '')
+        + '<option value="custom">Custom\u2026</option>';
       const hwindowHtml = '<div class="tep-dashmap-hwindow" id="tep-dashmap-hwindow">'
         + '<div class="tep-dashmap-hwindow-inner">'
         + '<span class="tep-dashmap-hwindow-label">Data Window</span>'
@@ -25782,6 +26555,15 @@
       // there's nothing to sync here beyond reacting to a change.
       const hwSelect = container.querySelector('#tep-dashmap-hwindow-select');
       hwSelect.addEventListener('change', () => {
+        if (hwSelect.value === 'custom') {
+          // Reopening the picker must not leave "Custom…" selected if it is
+          // cancelled — restore whatever was showing before.
+          tepOpenAsOfPicker(() => { renderDashWidgets(container); tepApplyDataWindowChange(); },
+            () => { renderDashWidgets(container); });
+          return;
+        }
+        if (hwSelect.value === 'asof') return;   // already showing it
+        dashMetricsAtMs = null;                  // any preset means live again
         dashMetricsWindowIdx = parseInt(hwSelect.value, 10) || 0;
         tepPlayPaperClick(0.25);
         // The by-agent SaaS/Network caches were fetched under the OLD window
@@ -25791,14 +26573,7 @@
         // these — tepFetchHttpAvailabilityRaw/tepFetchNasMetricRaw — is keyed
         // on windowSec itself, so it self-invalidates without needing to be
         // cleared here too.)
-        tepHttpAvailByAgentCache = null;
-        tepNetHealthByAgentCache = null;
-        tepNetTestsByAgentCache = null;
-        void fillSaasHealthWidget();
-        void fillNetworkHealthWidget();
-        void refreshDashMapColorScores().then(() => {
-          renderDashboardAgentMap(document.getElementById('tep-dashmap-mapbody'), { full: true, preserveZoom: true });
-        });
+        tepApplyDataWindowChange();
       });
       // Manual refresh — same fetches the Data Window change above triggers,
       // just force-bypassing their caches (force=true) instead of waiting
@@ -25849,7 +26624,7 @@
     body.parentWidgetId = parent ? (parent.widgetId || parent.id || null) : null;
     body.shouldConvertAlertStoreToStore = true;
     body.storeMap = {};
-    body.timeSpanConfig = { now: Date.now(), last, useGlobalTimespan: false };
+    body.timeSpanConfig = { now: tepMetricsNowMs(), last, useGlobalTimespan: false };
     body.widgetId = node.widgetId || node.id;
     body.widgetType = node.type || 'numbers';
     body.metricId = metric;
@@ -25888,7 +26663,8 @@
     // silently stop responding to the dropdown until the cache happens to
     // expire on its own).
     const windowSec = tepMetricsWindowSec();
-    if (!force && tepHttpAvailRawCache && tepHttpAvailRawCache.windowSec === windowSec
+    const winKey = tepMetricsCacheKey();
+    if (!force && tepHttpAvailRawCache && tepHttpAvailRawCache.winKey === winKey
         && (Date.now() - tepHttpAvailRawCache.ts) < TEP_HTTP_AVAIL_RAW_CACHE_MS) {
       return tepHttpAvailRawCache;
     }
@@ -25925,7 +26701,7 @@
     }
     const testNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
     const agentNames = (json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
-    tepHttpAvailRawCache = { ts: Date.now(), windowSec, points, testNames, agentNames };
+    tepHttpAvailRawCache = { ts: Date.now(), windowSec, winKey, points, testNames, agentNames };
     return tepHttpAvailRawCache;
   }
 
@@ -26113,7 +26889,8 @@
    *  coloring, not for listing individual tests. */
   async function tepFetchAllEndpointAgentAppScores(force) {
     const windowSec = tepMetricsWindowSec();
-    if (!force && tepAllEpAppScoresCache && tepAllEpAppScoresCache.windowSec === windowSec
+    const winKey = tepMetricsCacheKey();
+    if (!force && tepAllEpAppScoresCache && tepAllEpAppScoresCache.winKey === winKey
         && (Date.now() - tepAllEpAppScoresCache.ts) < TEP_EP_APP_SCORE_CACHE_MS) {
       return tepAllEpAppScoresCache.byAgent;
     }
@@ -26132,7 +26909,7 @@
       parentWidgetId: null,
       shouldConvertAlertStoreToStore: true,
       storeMap: {},
-      timeSpanConfig: { now: Date.now(), last: windowSec, useGlobalTimespan: false },
+      timeSpanConfig: { now: tepMetricsNowMs(), last: windowSec, useGlobalTimespan: false },
       widgetId: 'tep-ep-http-score',
       widgetType: 'multi-metric-table',
     };
@@ -26159,7 +26936,7 @@
       const v = Number(row[valCol]);
       if (row[idCol] && Number.isFinite(v)) byAgent.set(row[idCol], v);
     }
-    tepAllEpAppScoresCache = { ts: Date.now(), windowSec, byAgent };
+    tepAllEpAppScoresCache = { ts: Date.now(), windowSec, winKey, byAgent };
     log(`Endpoint app score: ${byAgent.size} agent(s)`, 'tep-log-ok');
     return byAgent;
   }
@@ -26179,7 +26956,8 @@
    *  agent, not a per-test list. */
   async function tepFetchAllEndpointAgentNetScores(force) {
     const windowSec = tepMetricsWindowSec();
-    if (!force && tepAllEpNetScoresCache && tepAllEpNetScoresCache.windowSec === windowSec
+    const winKey = tepMetricsCacheKey();
+    if (!force && tepAllEpNetScoresCache && tepAllEpNetScoresCache.winKey === winKey
         && (Date.now() - tepAllEpNetScoresCache.ts) < TEP_EP_NET_SCORE_CACHE_MS) {
       return tepAllEpNetScoresCache.byAgent;
     }
@@ -26198,7 +26976,7 @@
       parentWidgetId: null,
       shouldConvertAlertStoreToStore: true,
       storeMap: {},
-      timeSpanConfig: { now: Date.now(), last: windowSec, useGlobalTimespan: false },
+      timeSpanConfig: { now: tepMetricsNowMs(), last: windowSec, useGlobalTimespan: false },
       widgetId: 'tep-ep-net-score',
       widgetType: 'multi-metric-table',
     };
@@ -26225,7 +27003,7 @@
       const v = Number(row[valCol]);
       if (row[idCol] && Number.isFinite(v)) byAgent.set(row[idCol], v);
     }
-    tepAllEpNetScoresCache = { ts: Date.now(), windowSec, byAgent };
+    tepAllEpNetScoresCache = { ts: Date.now(), windowSec, winKey, byAgent };
     log(`Endpoint network score: ${byAgent.size} agent(s)`, 'tep-log-ok');
     return byAgent;
   }
@@ -26289,6 +27067,7 @@
    *  the two-dimensional grouping — colorGrid is the one live-verified. */
   async function tepFetchEndpointTestBreakdownCore(metric) {
     const windowSec = tepMetricsWindowSec();
+    const winKey = tepMetricsCacheKey();
     const body = {
       isToAggregateOnTime: true, aggregationType: 'MEAN', metric,
       filters: {}, generalFilters: {},
@@ -26303,7 +27082,7 @@
       },
       parentWidgetId: null,
       shouldConvertAlertStoreToStore: true,
-      timeSpanConfig: { now: Date.now(), last: windowSec, useGlobalTimespan: false },
+      timeSpanConfig: { now: tepMetricsNowMs(), last: windowSec, useGlobalTimespan: false },
       widgetId: 'tep-ep-bytest', widgetType: 'colorGrid',
     };
     const url = `${TEP_DASH_DATA_STREAM_PATH}?widgetId=tep-ep-bytest&metricId=${metric}&__bg=1`;
@@ -26373,42 +27152,45 @@
       log(`Endpoint per-test (${metric}): ${stillUnnamed.length}/${byTest.size} test(s) still unnamed after config lookup (ids: ${stillUnnamed.join(',')})`, 'tep-log-info');
     }
     log(`Endpoint per-test (${metric}): ${byTest.size} test(s)`, 'tep-log-ok');
-    return { byTest, byAgent, round: Number.isFinite(endRound) ? endRound : Math.floor(Date.now() / 1000 / 60) * 60 };
+    return { byTest, byAgent, round: Number.isFinite(endRound) ? endRound : Math.floor(tepMetricsNowMs() / 1000 / 60) * 60 };
   }
   let tepEpHttpByTestCache = null; // { ts, windowSec, byTest, round }
   async function tepFetchEndpointHttpTestBreakdown(force) {
     const windowSec = tepMetricsWindowSec();
-    if (!force && tepEpHttpByTestCache && tepEpHttpByTestCache.windowSec === windowSec
+    const winKey = tepMetricsCacheKey();
+    if (!force && tepEpHttpByTestCache && tepEpHttpByTestCache.winKey === winKey
         && (Date.now() - tepEpHttpByTestCache.ts) < TEP_EP_BY_TEST_CACHE_MS) {
       return tepEpHttpByTestCache;
     }
     const result = await tepFetchEndpointTestBreakdownCore('EYEBROW_TEST_HTTP_AVAILABILITY');
     if (!result) return null;
-    tepEpHttpByTestCache = { ts: Date.now(), windowSec, ...result };
+    tepEpHttpByTestCache = { ts: Date.now(), windowSec, winKey, ...result };
     return tepEpHttpByTestCache;
   }
   let tepEpNetLatByTestCache = null;
   async function tepFetchEndpointNetLatencyByTest(force) {
     const windowSec = tepMetricsWindowSec();
-    if (!force && tepEpNetLatByTestCache && tepEpNetLatByTestCache.windowSec === windowSec
+    const winKey = tepMetricsCacheKey();
+    if (!force && tepEpNetLatByTestCache && tepEpNetLatByTestCache.winKey === winKey
         && (Date.now() - tepEpNetLatByTestCache.ts) < TEP_EP_BY_TEST_CACHE_MS) {
       return tepEpNetLatByTestCache;
     }
     const result = await tepFetchEndpointTestBreakdownCore('EYEBROW_TEST_NET_LATENCY');
     if (!result) return null;
-    tepEpNetLatByTestCache = { ts: Date.now(), windowSec, ...result };
+    tepEpNetLatByTestCache = { ts: Date.now(), windowSec, winKey, ...result };
     return tepEpNetLatByTestCache;
   }
   let tepEpNetLossByTestCache = null;
   async function tepFetchEndpointNetLossByTest(force) {
     const windowSec = tepMetricsWindowSec();
-    if (!force && tepEpNetLossByTestCache && tepEpNetLossByTestCache.windowSec === windowSec
+    const winKey = tepMetricsCacheKey();
+    if (!force && tepEpNetLossByTestCache && tepEpNetLossByTestCache.winKey === winKey
         && (Date.now() - tepEpNetLossByTestCache.ts) < TEP_EP_BY_TEST_CACHE_MS) {
       return tepEpNetLossByTestCache;
     }
     const result = await tepFetchEndpointTestBreakdownCore('EYEBROW_TEST_NET_LOSS');
     if (!result) return null;
-    tepEpNetLossByTestCache = { ts: Date.now(), windowSec, ...result };
+    tepEpNetLossByTestCache = { ts: Date.now(), windowSec, winKey, ...result };
     return tepEpNetLossByTestCache;
   }
 
@@ -26490,8 +27272,9 @@
     // within the cache's 2-minute lifetime keeps serving the PREVIOUS
     // window's numbers.
     const windowSec = tepMetricsWindowSec();
+    const winKey = tepMetricsCacheKey();
     const cached = tepNasMetricRawCache.get(metric);
-    if (!force && cached && cached.windowSec === windowSec && (Date.now() - cached.ts) < TEP_NAS_METRIC_RAW_CACHE_MS) {
+    if (!force && cached && cached.winKey === winKey && (Date.now() - cached.ts) < TEP_NAS_METRIC_RAW_CACHE_MS) {
       return cached;
     }
     const fakeNode = {
@@ -26523,7 +27306,7 @@
     const points = json && json.data && Array.isArray(json.data.points) ? json.data.points : [];
     const testNames = (json && json.data && json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-TEST']) || {};
     const agentNames = (json && json.data && json.data.names && json.data.names.aggregatesMap && json.data.names.aggregatesMap['NAS-AGENT']) || {};
-    const raw = { ts: Date.now(), windowSec, points, testNames, agentNames };
+    const raw = { ts: Date.now(), windowSec, winKey, points, testNames, agentNames };
     tepNasMetricRawCache.set(metric, raw);
     return raw;
   }
@@ -27209,7 +27992,7 @@
       const singleAgentId = (r.isEndpoint && r.agentIds && r.agentIds.size === 1) ? [...r.agentIds][0] : null;
       const url = r.isEndpoint
         ? (r.testId ? `${window.location.origin}/endpoint/views/?metric=availability&scenarioId=eyebrowHttp&roundId=${encodeURIComponent(r.round)}&testId=${encodeURIComponent(r.testId)}${singleAgentId != null ? `&filters=${encodeURIComponent(tepEndpointFilterParam(singleAgentId))}` : ''}` : null)
-        : (r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null);
+        : tepEnterpriseTestViewUrl(r.testId, 'map', 'httpAvailability');
       const hrefAttr = (url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '')
         + (r.testId ? ` data-test-id="${tepEscapeHtmlText(String(r.testId))}"` : '')
         + (r.isEndpoint ? ' data-endpoint="1"' : '');
@@ -27525,7 +28308,7 @@
       const singleAgentId = (r.isEndpoint && r.agentIds && r.agentIds.size === 1) ? [...r.agentIds][0] : null;
       const url = r.isEndpoint
         ? (r.testId ? `${window.location.origin}/endpoint/views/?metric=latency&scenarioId=eyebrowNetworkTest&roundId=${encodeURIComponent(r.round)}&testId=${encodeURIComponent(r.testId)}${singleAgentId != null ? `&filters=${encodeURIComponent(tepEndpointFilterParam(singleAgentId))}` : ''}` : null)
-        : (r.testId ? `${window.location.origin}/view/tests/?testId=${encodeURIComponent(r.testId)}` : null);
+        : tepEnterpriseTestViewUrl(r.testId, 'pathvis', 'netLatency,netLoss');
       const hrefAttr = (url ? ` href="${tepEscapeHtmlText(url)}" target="_blank" rel="noopener noreferrer"` : '')
         + (r.testId ? ` data-test-id="${tepEscapeHtmlText(String(r.testId))}"` : '')
         + (r.isEndpoint ? ' data-endpoint="1"' : '');
@@ -29702,7 +30485,7 @@
         }],
       },
       parentWidgetId: null, shouldConvertAlertStoreToStore: true, storeMap: {},
-      timeSpanConfig: { now: Date.now(), last: 86400, useGlobalTimespan: false },
+      timeSpanConfig: { now: tepMetricsNowMs(), last: 86400, useGlobalTimespan: false },
       widgetId, widgetType: 'multi-metric-table',
     };
     const url = `${TEP_EYEBROW_STREAM_PATH}?widgetId=${encodeURIComponent(widgetId)}&metricId=${encodeURIComponent(metricId)}&__bg=1`;
@@ -31769,6 +32552,9 @@
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const pageSize = Math.max(50, agentIds.length);
+    // Deliberately the WALL CLOCK, not tepMetricsNowMs: the LIVE TEST is a
+    // real-time probe by definition, so it stays live even while the rest of
+    // the map is showing a historical moment. It is the one exception.
     const curRound = Math.floor(Date.now() / 1000 / intervalSec) * intervalSec;
     const numRounds = Math.ceil(maxAgeSec / intervalSec) + 1;
     const rounds = [];
@@ -32352,7 +33138,7 @@
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const out = new Map();
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(tepMetricsNowMs() / 1000);
     // Recent rounds across the common endpoint intervals + the topology round we
     // actually used, newest first, deduped and capped so this stays bounded.
     const roundSet = new Set();
@@ -32424,7 +33210,7 @@
       // the LIVE TEST, try several CANDIDATE rounds: the given one plus fresh
       // rounds computed from NOW at the common endpoint intervals (60/120/300/
       // 600s) and one step back each — newest first, first-with-data wins.
-      const now = Math.floor(Date.now() / 1000);
+      const now = Math.floor(tepMetricsNowMs() / 1000);
       const candSet = new Set();
       if (endpointRound != null && endpointRound !== '' && Number.isFinite(Number(endpointRound))) candSet.add(Number(endpointRound));
       for (const iv of [60, 120, 300, 600]) { const r0 = Math.floor(now / iv) * iv; candSet.add(r0); candSet.add(r0 - iv); }
@@ -32478,7 +33264,7 @@
           const newestFromSeries = (last.startRoundId != null && Number.isFinite(binSize) && binSize > 0 && nVals > 0)
             ? last.startRoundId + (nVals - 1) * binSize : null;
           const newestFromNow = (Number.isFinite(binSize) && binSize > 0)
-            ? Math.floor(Date.now() / 1000 / binSize) * binSize : null;
+            ? Math.floor(tepMetricsNowMs() / 1000 / binSize) * binSize : null;
           if (newestFromSeries != null && newestFromNow != null) startBin = Math.min(newestFromSeries, newestFromNow);
           else startBin = newestFromSeries != null ? newestFromSeries : (newestFromNow != null ? newestFromNow : last.startRoundId);
         }
