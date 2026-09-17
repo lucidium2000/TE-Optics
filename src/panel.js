@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.10';
+  const TEP_VERSION = '4.11';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -6184,7 +6184,62 @@
   // off-screen state before the second frame removes the class, which some
   // browsers need to reliably fire the transition instead of coalescing
   // both style changes into one paint with no visible motion.
-  root.classList.add('tep-offscreen');
+  // The loader shim (panel.js) paints a panel-shaped skeleton and slides it in
+  // from the right while this build downloads. Without the handoff below, the
+  // panel would then run its OWN slide on top of that one and the sidebar
+  // visibly arrives twice — CONFIRMED via user report.
+  //
+  // So instead of animating from scratch, adopt the skeleton's CURRENT position
+  // and finish the motion it already started. The same arithmetic covers both
+  // ends of the range, which is why there's no "did the skeleton finish?" test:
+  //   - cold load: the skeleton slid fully in long ago, so its offset is 0, the
+  //     remaining distance is 0, and the panel simply appears in place.
+  //   - warm cache: this build runs while the skeleton is still mid-slide (or
+  //     has not started), so we pick the motion up in flight and run only what
+  //     is left — a cached load still animates instead of snapping into view.
+  //
+  // An older cached shim, or a non-bookmarklet load, leaves no #tep-boot at all;
+  // then this is skipped entirely and the original .tep-offscreen slide runs
+  // unchanged. The shim is cached for up to 7 days while this file ships in
+  // minutes, so the two halves must never need to agree — and here they don't.
+  const bootEl = document.getElementById('tep-boot');
+  let bootOffsetPx = null;
+  let bootMs = 0;
+  if (bootEl) {
+    const bootW = bootEl.getBoundingClientRect().width || panelWidth;
+    let tx = 0;
+    // Must be read BEFORE the element is detached — getComputedStyle on a
+    // removed node reports nothing useful.
+    try {
+      const t = getComputedStyle(bootEl).transform;
+      if (t && t !== 'none') tx = new DOMMatrixReadOnly(t).m41;
+    } catch (_) {
+      const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(bootEl).transform || '');
+      if (m) tx = parseFloat(m[1].split(',')[4]) || 0;
+    }
+    bootOffsetPx = Math.max(0, Math.min(tx, bootW));
+    bootMs = Math.round(TEP_TOGGLE_ANIM_MS * (bootOffsetPx / bootW));
+    // Dropped NOW rather than left to the shim's own observer-and-fade: the
+    // panel sits one z-index above the skeleton, so if the two ever disagree on
+    // width (the shim only clamps a minimum, while applyWidth also clamps to
+    // the viewport) the skeleton's edge would show out from under the panel for
+    // the whole fade. The shim's observer then no-ops on an already-detached
+    // node, which it handles.
+    bootEl.remove();
+    const bootCss = document.getElementById('tep-boot-css');
+    if (bootCss) bootCss.remove();
+  }
+  if (bootOffsetPx == null) {
+    root.classList.add('tep-offscreen');
+  } else if (bootMs > 0) {
+    // Inline, because .tep-offscreen is a fixed translateX(100%) and would jump
+    // the panel backwards to the far edge before sliding. The shortened duration
+    // keeps the apparent speed roughly continuous with the shim's own slide —
+    // the easing curves can't match exactly mid-flight, but over the sub-300ms
+    // remainder that difference isn't perceptible.
+    root.style.transform = `translateX(${bootOffsetPx}px)`;
+    root.style.transition = `transform ${bootMs}ms cubic-bezier(.22,.88,.36,1)`;
+  }
   document.documentElement.appendChild(root);
   // Re-append (moves, doesn't clone) resizeHandle to AFTER root — same
   // z-index as root (2147483647, the max valid value; CONFIRMED via user
@@ -6196,6 +6251,12 @@
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       root.classList.remove('tep-offscreen');
+      if (bootMs > 0) {
+        root.style.transform = '';
+        // Restore the stylesheet's own transition (which also covers width) once
+        // the handoff slide is done, so later applyWidth calls still animate.
+        setTimeout(() => { root.style.transition = ''; }, bootMs + 60);
+      }
       // The bookmarklet itself can never change once someone's dragged it —
       // only what it fetches (this file) can. So the one thing we CAN surface
       // here is "the code you just got is different from last time", via a
