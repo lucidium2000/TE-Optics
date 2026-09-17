@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.09';
+  const TEP_VERSION = '4.10';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2118,9 +2118,16 @@
     .tep-testdest-total-loss { color: #fecaca; margin-left: 5px; }
     /* Pin view: dim every marker that isn't part of the pinned test — its
        source agents (.tep-testdest-related) and its own nodes stay bright, so
-       the path stands out. Hover still works on dimmed markers. */
+       the path stands out.
+       Dimmed markers are also INERT. They used to stay hoverable, so sweeping
+       the pointer across the map while reading a trace popped hover cards for
+       agents that had nothing to do with it, right over the path being
+       examined. pointer-events:none means the delegated mouseover never
+       resolves to one of them — no card, no hover highlight. CONFIRMED via
+       user request. It makes them unclickable too, which is the intent while
+       a trace owns the view; unpinning restores everything. */
     .tep-testdest-active .tep-agent-map-marker:not(.tep-testdest-related):not(.tep-testdest-node):not(.tep-testdest-hop):not(.tep-testdest-total):not(.tep-cloud-agent-marker) {
-      opacity: .18; filter: grayscale(.65);
+      opacity: .18; filter: grayscale(.65); pointer-events: none;
     }
     /* ISP radio active: HIDE the non-matching fleet markers entirely (only that
        ISP's source agents remain), rather than just dimming them. */
