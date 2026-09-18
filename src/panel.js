@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.11';
+  const TEP_VERSION = '4.13';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -1974,6 +1974,80 @@
       box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 0 0 3px rgba(249,115,22,.35),
         0 0 16px rgba(249,115,22,.6);
     }
+    /* Attention ping on the full-screen-map button. New users were not noticing
+       it, so an orange ring pulses outward roughly every 2.4s - the same radar
+       idea as the panel's own boot scope, and slow/faint enough not to nag.
+       CONFIRMED via user request.
+       Idle state only: hover, keyboard focus, or the map actually being open all
+       stop it, since by then the button has done its job and a ring under the
+       cursor is just noise. */
+    .tep-map-toggle--shiny::before {
+      content: ''; position: absolute; inset: -1px; border-radius: inherit;
+      border: 1.5px solid var(--tep-orange-fg); pointer-events: none; opacity: 0;
+      box-shadow: 0 0 9px rgba(249,115,22,.6);
+      animation: tep-mapbtn-ping 2.6s cubic-bezier(.22,.61,.36,1) infinite;
+    }
+    .tep-map-toggle--shiny:hover::before,
+    .tep-map-toggle--shiny:focus-visible::before,
+    .tep-map-toggle--shiny.active::before { animation: none; opacity: 0; }
+    /* A sonar-style DOUBLE ping, then a clear rest. Two closely spaced rings
+       read as deliberate - and catch the eye far better than one - without
+       having to make any single ring brighter or faster, which is what would
+       have tipped it over into nagging. The pair of frames at 21/21.01% is the
+       instant reset that starts the second ring from scratch (one element, so
+       it cannot overlap itself). CONFIRMED via user request, twice: added, then
+       made more obvious. */
+    @keyframes tep-mapbtn-ping {
+      0%     { opacity: .95; transform: scale(1); }
+      21%    { opacity: 0;   transform: scale(1.5); }
+      21.01% { opacity: .95; transform: scale(1); }
+      42%    { opacity: 0;   transform: scale(1.5); }
+      100%   { opacity: 0;   transform: scale(1.5); }
+    }
+    /* Reduced motion still gets the emphasis, just as a static halo. */
+    @media (prefers-reduced-motion: reduce) {
+      .tep-map-toggle--shiny::before { animation: none; opacity: .55; transform: scale(1.12); }
+    }
+    /* Instant, readable tooltips for the header's mode-switch buttons. The native
+       title attribute can do neither: the browser holds it back about a second
+       before showing anything, and its size and colour belong to the OS. That
+       delay was working directly against the point of highlighting this button -
+       CONFIRMED via user request. The title attributes were REMOVED from these
+       three buttons, since leaving them would show BOTH tooltips. aria-label
+       stays, so screen readers are unaffected.
+       Right-aligned rather than centred: this group sits near the panel's right
+       edge, and #te-panel-root clips overflow, so a centred tooltip on the last
+       button would be cut off. */
+    .tep-map-toggle[data-tep-tip] { position: relative; }
+    /* Raised only while shown, to clear .tep-status / .tep-view-tabs - they follow
+       .tep-header in the DOM and would otherwise paint over a tooltip hanging
+       below it. Deliberately below the body's own popovers (z-index 30), which
+       should still win if one ever overlaps the header. */
+    .tep-map-toggle[data-tep-tip]:hover,
+    .tep-map-toggle[data-tep-tip]:focus-visible { z-index: 12; }
+    .tep-map-toggle[data-tep-tip]::after {
+      content: attr(data-tep-tip);
+      position: absolute; top: calc(100% + 9px); right: -4px;
+      padding: 7px 11px; border-radius: 8px;
+      font-size: 13px; font-weight: 600; line-height: 1.15; white-space: nowrap;
+      color: #f8fafc; background: #142338;
+      border: 1px solid var(--tep-slate-600);
+      box-shadow: 0 8px 20px rgba(0,0,0,.55);
+      opacity: 0; visibility: hidden; pointer-events: none;
+      /* No delay - the fade is short enough to read as instant, but avoids the
+         hard flicker of snapping in at full opacity. */
+      transition: opacity .08s linear, visibility 0s linear .08s;
+    }
+    .tep-map-toggle[data-tep-tip]:hover::after,
+    .tep-map-toggle[data-tep-tip]:focus-visible::after {
+      opacity: 1; visibility: visible;
+      transition: opacity .08s linear, visibility 0s linear 0s;
+    }
+    /* The map button's own tooltip picks up its orange, reinforcing the accent
+       that the ping above is drawing attention to. */
+    .tep-map-toggle--shiny[data-tep-tip]::after {
+      border-color: var(--tep-orange); color: #fff7ed;
+    }
     /* Header-only muted variant — Enterprise/Endpoint follow the panel's
        regular slate button scheme instead of the map toggle's orange accent,
        which stays reserved for the full-screen-map icon. */
@@ -2760,26 +2834,15 @@
        instead of the generic "…behind this average". */
     .tep-breakdown-focus { display: none; }
     .tep-breakdown-min.tep-breakdown-hasfocus .tep-breakdown-title { display: none; }
-    .tep-breakdown-min.tep-breakdown-hasfocus .tep-breakdown-focus { display: inline; }
+    .tep-breakdown-min.tep-breakdown-hasfocus .tep-breakdown-focus { display: block; }
+    /* Collapsed, the popover is the trace window, so let it be as wide as that
+       list needs instead of the 320px the expanded list is capped at. */
+    .tep-breakdown-min.tep-breakdown-hasfocus { max-width: 620px !important; }
+    .tep-breakdown-min.tep-breakdown-hasfocus .tep-saas-breakdown-head::after { display: block; margin-top: 6px; }
     .tep-breakdown-focus b { color: var(--tep-slate-100); font-weight: 800; }
+    /* Several chips share the bar now, so let it wrap rather than overflow. */
+    .tep-breakdown-min.tep-breakdown-hasfocus .tep-saas-breakdown-head { white-space: normal; max-width: 620px; }
     .tep-breakdown-focus-stat { font-weight: 700; font-size: 11px; margin-left: 8px; font-variant-numeric: tabular-nums; }
-    /* Hover-trace succeeded → the row's locate pin glows and invites a click. */
-    @keyframes tep-pin-glow { 0%,100% { filter: drop-shadow(0 0 1px var(--tep-blue-soft)); } 50% { filter: drop-shadow(0 0 5px var(--tep-blue)); } }
-    .tep-testdest-locate--glow { color: var(--tep-blue-soft); animation: tep-pin-glow 1.1s ease-in-out infinite; }
-    .tep-testdest-locate--glow::after {
-      content: 'Pin it'; margin-left: 4px; font-size: 9px; font-weight: 800; letter-spacing: .2px;
-      color: var(--tep-blue-soft); text-transform: uppercase; vertical-align: middle;
-      background: rgba(26,115,232,.16); border: 1px solid rgba(26,115,232,.4); border-radius: 4px; padding: 0 4px;
-    }
-    /* Hover-trace still resolving → the pin pulses amber and says "Tracing…"
-       until it succeeds (→ "Pin it") or is superseded/aborted. */
-    @keyframes tep-pin-trace { 0%,100% { opacity: .5; filter: drop-shadow(0 0 1px var(--tep-orange)); } 50% { opacity: 1; filter: drop-shadow(0 0 5px var(--tep-orange)); } }
-    .tep-testdest-locate--tracing { color: var(--tep-orange-fg); pointer-events: none; animation: tep-pin-trace 1s ease-in-out infinite; }
-    .tep-testdest-locate--tracing::after {
-      content: 'Tracing…'; margin-left: 4px; font-size: 9px; font-weight: 800; letter-spacing: .2px;
-      color: var(--tep-orange-fg); text-transform: uppercase; vertical-align: middle;
-      background: rgba(249,115,22,.16); border: 1px solid rgba(249,115,22,.4); border-radius: 4px; padding: 0 4px;
-    }
     /* Centered confirm modal (tepConfirmModal) — used in place of the
        browser's native confirm(), which anchors near the top of the
        viewport instead of the middle. Same dark palette as the popovers
@@ -2845,7 +2908,7 @@
     a.tep-saas-breakdown-row:hover { background: rgba(249,115,22,.14); }
     .tep-isp-agents-row { cursor: pointer; }
     .tep-isp-agents-row:hover { background: rgba(249,115,22,.14); }
-    .tep-saas-breakdown-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-saas-breakdown-title { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tep-agentkind-badge {
       display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
       border-radius: 999px; padding: 1px 6px 1px 5px; margin-left: 2px;
@@ -2856,15 +2919,155 @@
     .tep-agentkind-badge--endpoint { background: rgba(167,139,250,.18); color: #c4b5fd; }
     /* EXPERIMENTAL (test-destinations MVP): the per-row "locate destination"
        pin — subtle by default, orange on hover. */
-    .tep-testdest-locate {
-      display: inline-flex; align-items: center; vertical-align: middle; margin-left: 5px;
-      color: var(--tep-slate-500); cursor: pointer; transition: color .12s ease;
+    /* Foot of the list: collapse back to the trace view.
+       .tep-saas-breakdown-pop is max-height:320px with overflow-y:auto, so a
+       plain block here scrolled out of sight with any real number of rows and the
+       arrow was effectively invisible - CONFIRMED via user report. Sticky pins it
+       to the popover's bottom edge; the negative offset and matching background
+       cancel the popover's own 10px padding so rows slide under it cleanly. */
+    .tep-breakdown-foot {
+      position: sticky; bottom: -10px; z-index: 1;
+      display: flex; justify-content: center; padding: 6px 0 8px; margin-top: 2px;
+      background: var(--tep-slate-900); border-top: 1px solid rgba(148,163,184,.14);
     }
-    .tep-testdest-locate:hover { color: var(--tep-orange-fg); }
-    .tep-testdest-locate--loading { opacity: .4; pointer-events: none; }
+    .tep-breakdown-min .tep-breakdown-foot { display: none; }
+    .tep-breakdown-collapse {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 18px; padding: 0; border-radius: 999px; cursor: pointer;
+      color: var(--tep-slate-400); border: 1px solid rgba(148,163,184,.28);
+      background: rgba(148,163,184,.1); transition: color .12s ease, background .12s ease, border-color .12s ease;
+    }
+    .tep-breakdown-collapse:hover { color: #fff7ed; border-color: var(--tep-orange); background: rgba(249,115,22,.22); }
+    .tep-breakdown-collapse:focus-visible { outline: 2px solid var(--tep-orange); outline-offset: 2px; }
+    /* The list of what is currently traced. It lives in the COLLAPSED test list
+       rather than a floating window of its own - the two were saying the same
+       thing in two places, and the collapsed list is where the eye already is.
+       CONFIRMED via user request. No background or border here: the popover
+       around it is the window. */
+    .tep-trace-legend {
+      display: flex; flex-direction: column; gap: 5px;
+      font-size: 12px; color: var(--tep-slate-200);
+    }
+    .tep-trace-legend-head {
+      font-size: 9.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+      color: var(--tep-orange-fg);
+    }
+    .tep-trace-legend-row {
+      display: flex; align-items: center; gap: 7px; white-space: nowrap;
+      padding: 2px 4px; margin: 0 -4px; border-radius: 5px; cursor: default;
+      transition: background .12s ease;
+    }
+    /* Hovering a row isolates that trace on the map, so the row reads as the
+       live control it is. */
+    .tep-trace-legend-row:hover { background: rgba(249,115,22,.16); }
+    .tep-trace-legend--solo .tep-trace-legend-row:not(:hover) { opacity: .4; }
+    .tep-trace-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+    .tep-trace-legend-kind {
+      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 5px;
+    }
+    .tep-trace-legend-kind svg { display: block; }
+    .tep-trace-legend-kind--enterprise { background: rgba(34,197,94,.18); color: #86efac; }
+    .tep-trace-legend-kind--endpoint { background: rgba(167,139,250,.18); color: #c4b5fd; }
+    /* Shrinks before the row can overflow: the score, destination count and
+       remove button are all fixed-size, so the name is the only part that can
+       give. */
+    .tep-trace-legend-name {
+      flex: 0 1 auto; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis;
+      color: var(--tep-slate-100); text-decoration: none;
+    }
+    a.tep-trace-legend-name:hover { text-decoration: underline; }
+    .tep-trace-legend-stat { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .tep-trace-legend-count { flex: 0 0 auto; color: var(--tep-slate-400); font-size: 10.5px; font-weight: 600; }
+    .tep-trace-legend-x {
+      margin-left: auto; flex: 0 0 auto; width: 16px; height: 16px; border: 0; padding: 0;
+      border-radius: 4px; cursor: pointer; background: transparent; color: var(--tep-slate-400);
+      font-size: 14px; line-height: 14px; font-weight: 700;
+    }
+    .tep-trace-legend-x:hover { color: #fecaca; background: rgba(248,113,113,.18); }
+    /* One explicit way out to TE with everything checked, rather than relying on
+       people working out that each name is individually a link to the same place. */
+    .tep-trace-legend-open {
+      display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
+      margin-top: 3px; padding: 3px 9px; border-radius: 6px;
+      font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap;
+      color: var(--tep-orange-fg); border: 1px solid rgba(249,115,22,.5);
+      background: rgba(249,115,22,.12);
+      transition: color .12s ease, background .12s ease, border-color .12s ease;
+    }
+    .tep-trace-legend-open:hover { color: #fff7ed; border-color: var(--tep-orange); background: rgba(249,115,22,.28); }
+    /* Row checkbox - the source of truth for what the map draws. Sits at the
+       row's left edge and, once ticked, carries that trace's own colour so the
+       row and its lines on the map are obviously the same thing. */
+    .tep-trace-check {
+      flex: 0 0 auto; display: inline-block; width: 13px; height: 13px;
+      border-radius: 3px; border: 1.5px solid var(--tep-slate-500);
+      background: rgba(15,23,42,.5); cursor: pointer; vertical-align: middle;
+      position: relative; transition: border-color .12s ease, background .12s ease;
+    }
+    .tep-saas-breakdown-row:hover .tep-trace-check { border-color: var(--tep-orange); }
+    .tep-trace-check--on {
+      border-color: var(--tep-trace-color, var(--tep-orange));
+      background: var(--tep-trace-color, var(--tep-orange));
+    }
+    .tep-trace-check--on::after {
+      content: ''; position: absolute; left: 3.5px; top: .5px; width: 3.5px; height: 7.5px;
+      border: solid #0b1220; border-width: 0 2px 2px 0; transform: rotate(42deg);
+    }
+    .tep-trace-check:focus-visible { outline: 2px solid var(--tep-orange); outline-offset: 2px; }
+    /* The hover label ("Trace" / "Tracing" / "Remove") is a FLOATING element
+       mounted on <html>, not a pseudo-element on the box. The popover is
+       max-height + overflow-y:auto, which clips horizontally too, so nothing
+       inside it can hang past its edge - and the label has to, since it must
+       neither cover the test name nor push it around. CONFIRMED via user
+       request. Positioned per-row by tepTraceHint(). */
+    .tep-trace-hint {
+      position: fixed; z-index: 2147483647; transform: translateY(-50%);
+      padding: 1px 7px; border-radius: 999px; line-height: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 9.5px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase;
+      white-space: nowrap; pointer-events: none;
+      /* Filled vivid orange rather than a dark chip with orange text - it sits
+         over the map, and the muted version read as disabled. CONFIRMED via user
+         request. Opaque, so whatever it covers stays unreadable-through. */
+      color: #fff7ed; background: linear-gradient(180deg, #fb923c, #ea580c);
+      border: 1px solid #fdba74;
+      opacity: 0; transition: opacity .1s linear;
+    }
+    .tep-trace-hint--on { opacity: 1; animation: tep-trace-hint-pulse 1.25s ease-in-out infinite; }
+    /* "Pin it" - the trace is already drawn, so this is a different offer from
+       "Trace" and wears the panel's blue rather than its orange. */
+    .tep-trace-hint--pin {
+      background: linear-gradient(180deg, #60a5fa, #2563eb); border-color: #93c5fd;
+      animation-name: tep-trace-hint-pulse-pin;
+    }
+    @keyframes tep-trace-hint-pulse-pin {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(59,130,246,.22), 0 3px 12px rgba(0,0,0,.5); }
+      50%      { box-shadow: 0 0 0 5px rgba(59,130,246,.36), 0 3px 16px rgba(0,0,0,.55); }
+    }
+    @keyframes tep-trace-hint-pulse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(249,115,22,.2), 0 3px 12px rgba(0,0,0,.5); }
+      50%      { box-shadow: 0 0 0 5px rgba(249,115,22,.34), 0 3px 16px rgba(0,0,0,.55); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tep-trace-hint--on { animation: none; box-shadow: 0 0 0 3px rgba(249,115,22,.26), 0 3px 12px rgba(0,0,0,.5); }
+    }
+    /* Ticked the instant you click, then flashing until the destination resolves:
+       tracing takes a moment and a checkbox that does nothing reads as a click
+       that never registered. Solid = drawn. CONFIRMED via user request. */
+    @keyframes tep-trace-check-pend { 0%, 100% { opacity: 1; } 50% { opacity: .22; } }
+    .tep-trace-check--pending { animation: tep-trace-check-pend .62s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      .tep-trace-check--pending { animation: none; opacity: .55; }
+    }
+    /* Destination pin wears its trace's colour (set inline per pin). */
+    .tep-testdest-node { color: var(--tep-trace-color, var(--tep-orange-fg)); }
+    .tep-testdest-node .tep-livetest-g svg { fill: currentColor; }
+    /* Focus bar: one chip per checked test, each opening TE's nested view. */
+
     /* Couldn't resolve this test's destination → blink the pin red as the
        acknowledgement (see the locate-click handler). */
-    .tep-testdest-locate--fail { color: var(--tep-red) !important; animation: tep-testdest-fail-blink .5s ease-in-out 2; }
+    .tep-trace-check--fail { border-color: var(--tep-red) !important; animation: tep-testdest-fail-blink .5s ease-in-out 2; }
     @keyframes tep-testdest-fail-blink { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
     .tep-agentkind-badge svg { fill: none; transition: fill .15s ease; }
     .tep-agentkind-count { line-height: 1; }
@@ -5371,18 +5574,18 @@
       <button class="tep-dark-toggle" id="tep-dark-toggle" style="display:none;" aria-hidden="true" tabindex="-1"></button>
       <button class="tep-dark-reset" id="tep-dark-reset" title="Reset / turn off dark mode" style="display:none;">&#9728;</button>
       <div class="tep-mode-switch" role="group" aria-label="Switch sidebar mode">
-        <button type="button" class="tep-map-toggle tep-map-toggle--muted" id="tep-mode-enterprise" title="Enterprise: Manage Tests" aria-label="Enterprise: Manage Tests">
+        <button type="button" class="tep-map-toggle tep-map-toggle--muted" id="tep-mode-enterprise" data-tep-tip="Enterprise: Manage Tests" aria-label="Enterprise: Manage Tests">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
           </svg>
         </button>
-        <button type="button" class="tep-map-toggle tep-map-toggle--muted" id="tep-mode-endpoint" title="Open Endpoint views" aria-label="Open Endpoint views">
+        <button type="button" class="tep-map-toggle tep-map-toggle--muted" id="tep-mode-endpoint" data-tep-tip="Open Endpoint views" aria-label="Open Endpoint views">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 20.5a8 8 0 0 1 16 0Z"/>
             <circle cx="12" cy="7.5" r="4.2"/>
           </svg>
         </button>
-        <button type="button" class="tep-map-toggle tep-map-toggle--shiny" id="tep-dash-map-full" title="Full screen map" aria-label="Full screen map">
+        <button type="button" class="tep-map-toggle tep-map-toggle--shiny" id="tep-dash-map-full" data-tep-tip="Full screen map" aria-label="Full screen map">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="9"/>
             <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
@@ -17032,12 +17235,19 @@
    *  on the SAME span the row's number was averaged over, which is the right
    *  behaviour in live mode too — these builders previously pinned a hardcoded
    *  24h regardless of which window was selected. */
+  /** testId may be a single id or an ARRAY of them. TE's results view accepts a
+   *  comma-separated testId list and nests those tests in one view with its own
+   *  selector - CONFIRMED via a user-supplied example URL - which is what the
+   *  map's multi-trace selection opens so every checked test lands together. */
   function tepEnterpriseTestViewUrl(testId, detailId, metrics, agentId) {
-    if (testId == null || testId === '') return null;
+    const ids = (Array.isArray(testId) ? testId : [testId])
+      .filter((t) => t != null && t !== '')
+      .map((t) => String(t));
+    if (!ids.length) return null;
     const at = Math.floor(tepMetricsNowMs() / 1000);
     const span = Math.max(300, Math.floor(tepMetricsWindowSec()) || 3600);
     const params = new URLSearchParams({
-      testId: String(testId),
+      testId: ids.join(','),
       startTime: String(at),
       detailId: detailId || 'map',
       metrics: metrics || 'httpAvailability',
@@ -18290,14 +18500,23 @@
   // test (or left the list) never stomps the newer trace. tepAbortTraceLoad
   // advances it (and drops the "Tracing…" pin) to cancel whatever is loading.
   let tepTraceLoadSeq = 0;
-  // A CLICKED (committed) load is a deliberate pin — leaving the row must NOT
-  // cancel it, unlike an ephemeral hover load. A later hover on another row
-  // still supersedes it via tepShowTraceForTest's own seq bump.
-  let tepTraceLoadCommitted = false;
+  // The seq now governs HOVER PREVIEWS ONLY. A committed load (ticking a row's
+  // checkbox) is tracked per-test in tepTraceInFlight instead and is never
+  // superseded: with multi-select, several tests can be resolving at once and
+  // every one of their results is wanted, so a shared counter would have had the
+  // second tick silently cancel the first. CONFIRMED via user request.
+  const tepTraceInFlight = new Set();   // testId(string) currently resolving via a commit
   function tepAbortTraceLoad() {
-    if (tepTraceLoadCommitted) return;   // don't cancel a clicked/pinned load on mouseout
+    // Only ends hover previews. Committed loads ignore the seq entirely, so
+    // leaving a row can no longer cancel one - which is what the old
+    // tepTraceLoadCommitted flag existed to prevent, for a single trace.
     tepTraceLoadSeq++;
-    document.querySelectorAll('.tep-testdest-locate--tracing').forEach((el) => el.classList.remove('tep-testdest-locate--tracing'));
+    document.querySelectorAll('.tep-trace-check--pending').forEach((el) => {
+      // Leave the pending flash on rows whose OWN commit is still resolving.
+      const tid = el.getAttribute('data-trace-test');
+      if (tid && tepTraceInFlight.has(String(tid))) return;
+      el.classList.remove('tep-trace-check--pending');
+    });
   }
   /** Resolve + pin a test's destination trace on the map. Shared by the row
    *  hover (delayed) and the locate-pin click. `ds` is the locate icon's dataset
@@ -18305,19 +18524,24 @@
    *  list stays open. Returns a Promise<bool> (true if a trace was shown). */
   function tepShowTraceForTest(tid, ds, commit) {
     ds = ds || {};
-    const mySeq = ++tepTraceLoadSeq;   // this attempt supersedes any earlier in-flight one
-    tepTraceLoadCommitted = !!commit;  // a click passes true so mouseout won't cancel it
+    const key = String(tid);
+    // A hover preview stamps the seq and bails if it has moved on; a commit does
+    // not participate at all, so parallel commits cannot cancel each other.
+    const mySeq = commit ? -1 : ++tepTraceLoadSeq;
+    if (commit) tepTraceInFlight.add(key);
     const isA2A = ds.onewaynet === '1';
     const isEndpoint = ds.endpoint === '1';
     return tepResolveTestDestination(tid, isEndpoint, isA2A, ds.round).then((info) => {
       // Superseded — the user moved to a different test (or left the list) while
       // this was still resolving. Drop it so it can't stomp the newer trace.
-      if (mySeq !== tepTraceLoadSeq) return false;
+      if (commit) tepTraceInFlight.delete(key);
+      if (!commit && mySeq !== tepTraceLoadSeq) return false;
       if (!info) {
         const why = dashMapTestDestFail.get(String(tid)) || 'Could not resolve this test’s destination';
         tepMapToast('Can’t trace ' + (ds.testName || 'test') + ':\n' + why, 'err');
         return false;
       }
+      info.isEndpoint = isEndpoint;   // focus-bar chips link endpoint vs enterprise differently
       info.testName = ds.testName || info.testName || '';
       info.testScore = ds.testScore != null ? ds.testScore : info.testScore;
       info.testScoreLabel = ds.testScorelabel || info.testScoreLabel || 'Health';
@@ -18334,11 +18558,14 @@
         // show its real destination pins animating in while the anchor, still
         // flagged from a previous trace, silently appeared without them.
         for (const cd of tepContinentDestCache.values()) cd._popped = false;
-        if (info.roundId != null && Number.isFinite(Number(info.roundId))) {
-          tepMapToast('Trace: ' + (info.testName || 'test') + '\nFrom ' + new Date(Number(info.roundId) * 1000).toLocaleString() + ' · ' + (info.dests ? info.dests.length : 1) + ' destination(s)', 'ok');
-        }
+        // The "Trace: name / From <time> / N destinations" toast used to announce
+        // this. The trace legend is now the standing home for that information -
+        // CONFIRMED via user request - so firing a toast as well just stacked two
+        // windows saying the same thing. Nothing is lost: the legend carries the
+        // destination count inline and the round timestamp in each row's tooltip.
       }
-      dashMapSelectedTestDest = info;
+      if (commit) { tepTraceClearPreview(); tepTraceAdd(info); }
+      else tepTraceSetPreview(info);
       // In-place trace repaint (draws pins/flows/dim from dashMapSelectedTestDest
       // WITHOUT rebuilding markers or their hover listeners — a full re-render on
       // every hover was breaking cluster/agent hovers). The source-illumination
@@ -18387,6 +18614,129 @@
   let dashMapSelectedTestDest = null;    // resolved dest info { testId, location, lat, lng, asName, asn, ip } | null
   const dashMapTestDestCache = new Map(); // testId(string) -> resolved dest | null (null = tried, unresolvable)
   const dashMapTestDestFail = new Map();  // testId(string) -> human reason a pin couldn't be placed (for on-screen msg)
+
+  // --- Multi-trace registry --------------------------------------------------
+  // The map can now hold SEVERAL traces at once: each row in the test list has a
+  // checkbox, and the checked set is what is drawn. CONFIRMED via user request.
+  //
+  // dashMapTraces is the source of truth and is insertion-ordered, so colours and
+  // the focus bar stay stable as tests come and go. dashMapSelectedTestDest above
+  // keeps pointing at the MOST RECENTLY added trace, because the genuinely
+  // single-trace concepts - the ISP filter popover, the "switched test" toast,
+  // the trace hover highlight - still act on exactly one trace. Keeping the old
+  // name aimed at it means those call sites did not have to change, and a single
+  // checked test behaves precisely as it always did.
+  const TEP_MAX_TRACES = 5;    // CONFIRMED via user request
+  // Ten hues chosen to stay apart from each other on the dark basemap. Orange
+  // leads so that one trace on its own looks exactly like it always has.
+  const TEP_TRACE_COLORS = [
+    '#f97316', '#38bdf8', '#4ade80', '#c084fc', '#facc15',
+    '#fb7185', '#2dd4bf', '#a3e635', '#f472b6', '#93c5fd',
+  ];
+  const dashMapTraces = new Map();   // testId(string) -> resolved dest info, carrying _traceIdx/_traceColor
+  // A HOVER trace is a preview, held apart from the checked set. Without this it
+  // would land in dashMapTraces like a tick, so merely running the cursor down
+  // the list would fill the map (and the 10-trace budget) with tests nobody
+  // chose. It is replaced by the next hover and dropped on mouseout.
+  let dashMapTracePreview = null;
+  function tepTraceList() { return [...dashMapTraces.values()]; }
+  /** What the map DRAWS: every checked trace, plus the hover preview when it is
+   *  not already one of them. */
+  function tepTraceDrawList() {
+    const out = tepTraceList();
+    if (dashMapTracePreview && !dashMapTraces.has(String(dashMapTracePreview.testId))) out.push(dashMapTracePreview);
+    return out;
+  }
+  // Hovering a row in the trace legend isolates that one trace on the map, the
+  // same "show me just this, right now" gesture a marker hover already performs -
+  // CONFIRMED via user request. Held apart from the legend's OWN list, which must
+  // keep showing every trace or the thing you are hovering would vanish from
+  // under the cursor as you read it.
+  let dashMapTraceSolo = null;   // testId(string) | null
+  /** What the MAP draws: the full set, narrowed to one while a legend row is
+   *  hovered. */
+  function tepTraceMapList() {
+    const all = tepTraceDrawList();
+    if (dashMapTraceSolo == null) return all;
+    const only = all.filter((t) => String(t.testId) === String(dashMapTraceSolo));
+    return only.length ? only : all;
+  }
+  function tepTraceSetSolo(tid) {
+    const next = tid == null ? null : String(tid);
+    if (dashMapTraceSolo === next) return;
+    dashMapTraceSolo = next;
+    // Redraw the trace layers only - never rebuild the legend from here, or the
+    // mouseenter that triggered this would tear out the row under the cursor.
+    if (dashMapFullEl) {
+      if (typeof dashMapLivePaint === 'function') dashMapLivePaint();
+      else renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+    }
+  }
+  function tepTraceSetPreview(info) {
+    if (info && info._traceColor == null) {
+      info._traceIdx = -1;                                   // not a palette holder
+      info._traceColor = TEP_TRACE_COLORS[tepNextTraceColorIdx()];
+    }
+    dashMapTracePreview = info || null;
+    const checked = tepTraceList();
+    dashMapSelectedTestDest = info || (checked.length ? checked[checked.length - 1] : null);
+  }
+  /** Drop the preview. Returns true when something was actually showing, so the
+   *  caller only repaints if the map changed. */
+  function tepTraceClearPreview() {
+    if (!dashMapTracePreview) return false;
+    dashMapTracePreview = null;
+    const checked = tepTraceList();
+    dashMapSelectedTestDest = checked.length ? checked[checked.length - 1] : null;
+    return true;
+  }
+  function tepTraceIsOn(tid) { return dashMapTraces.has(String(tid)); }
+  function tepTraceCount() { return dashMapTraces.size; }
+  /** Lowest palette slot not currently in use, so removing a trace frees its hue
+   *  for the next one rather than drifting through the palette and eventually
+   *  repeating while earlier colours sit unused. */
+  function tepNextTraceColorIdx() {
+    const used = new Set(tepTraceList().map((t) => t._traceIdx));
+    for (let i = 0; i < TEP_TRACE_COLORS.length; i++) if (!used.has(i)) return i;
+    return 0;
+  }
+  /** Add (or refresh) a trace. Re-adding an existing test keeps its colour but
+   *  re-inserts it so it becomes the most recent - that is what the ISP filter
+   *  and hover highlight follow. */
+  function tepTraceAdd(info) {
+    if (!info || info.testId == null) return;
+    const key = String(info.testId);
+    const prev = dashMapTraces.get(key);
+    if (prev) {
+      info._traceIdx = prev._traceIdx;
+      info._traceColor = prev._traceColor;
+      dashMapTraces.delete(key);
+    } else {
+      info._traceIdx = tepNextTraceColorIdx();
+      info._traceColor = TEP_TRACE_COLORS[info._traceIdx];
+    }
+    dashMapTraces.set(key, info);
+    dashMapSelectedTestDest = info;
+  }
+  /** Drop one trace. The primary falls back to whatever is now last, so the map
+   *  never points at a trace that is no longer drawn. */
+  function tepTraceRemove(tid) {
+    const key = String(tid);
+    if (!dashMapTraces.delete(key)) return false;
+    if (dashMapTraceSolo === key) dashMapTraceSolo = null;   // never solo a trace that is gone
+    const rest = tepTraceList();
+    dashMapSelectedTestDest = rest.length ? rest[rest.length - 1] : null;
+    if (!dashMapSelectedTestDest) { dashMapTraceIspFilter = null; hideTraceIspPopover(); }
+    return true;
+  }
+  function tepTraceClearAll() {
+    dashMapTraces.clear();
+    dashMapTracePreview = null;
+    dashMapTraceSolo = null;
+    dashMapSelectedTestDest = null;
+    dashMapTraceIspFilter = null;
+    hideTraceIspPopover();
+  }
 
   /** Transient message shown OVER the fullscreen map (panel toasts sit behind
    *  it). Top-center, auto-dismiss. type: 'err' | 'ok' | undefined. */
@@ -23415,40 +23765,57 @@
       // whole map fades except this test's source agents + its own nodes, so the
       // path reads clearly. Runs every render/live-paint; a no-op (and undims)
       // when nothing is pinned.
+      // Every checked trace that actually resolved to a location.
+      const traces = tepTraceMapList().filter((t) => t && t.lat != null);
       if (full) {
-        const active = !!(dashMapSelectedTestDest && dashMapSelectedTestDest.lat != null);
+        const active = traces.length > 0;
         wrap.classList.toggle('tep-testdest-active', active);
-        const srcNames = active && dashMapSelectedTestDest.sourceNames instanceof Set ? dashMapSelectedTestDest.sourceNames : null;
-        const srcIds = active && dashMapSelectedTestDest.sourceAgentIds instanceof Set ? dashMapSelectedTestDest.sourceAgentIds : null;
-        // EVERY agent in the trace — not just the drawn-flow source set. Endpoint
-        // traces enrich pathNodesByAgent with the whole reporting roster (see the
-        // results-feed merge in tepResolveTestDestination), but those agents are
-        // deliberately NOT in sourceAgentIds (that would draw a flow line each).
-        // Illumination must key on trace membership, else a cluster holding a real
-        // trace agent stays dark — the "cluster MUST light up" case. pathNodesByAgent
-        // is keyed by agentId (= endpoint machineId), which is exactly it.agentId.
-        const traceIds = active && dashMapSelectedTestDest.pathNodesByAgent instanceof Map ? dashMapSelectedTestDest.pathNodesByAgent : null;
+        // "Related" is the UNION across every drawn trace: a marker stays lit if
+        // it takes part in ANY of them. Keying off one trace would have each new
+        // trace dim the previous one's agents, which is the whole point of being
+        // able to show several at once.
+        // The ISP filter and the hover highlight deliberately still follow the
+        // PRIMARY (most recent) trace only - they are single-trace tools.
         const ispFilter = active ? dashMapTraceIspFilter : null;
         const hoverIds = active && dashMapTraceHoverAgentIds instanceof Set ? dashMapTraceHoverAgentIds : null;
         // An ISP radio HIDES the other markers (only that ISP's sources show),
         // vs the plain pin view which just dims. Hovering an agent in the ISP
-        // list narrows "related" to that one agent — it stays lit, the rest dim.
+        // list narrows "related" to that one agent - it stays lit, the rest dim.
         wrap.classList.toggle('tep-testdest-ispfiltered', active && !!ispFilter);
         const idMatch = (it) => (it.agentId != null && hoverIds.has(String(it.agentId))) || (it.physicalId != null && hoverIds.has(String(it.physicalId)));
-        const inTrace = (it) => tepAgentMatchesSrcSet(it, srcIds, srcNames)
-          || (traceIds && it.agentId != null && traceIds.has(String(it.agentId)));
+        // EVERY agent in a trace - not just its drawn-flow source set. Endpoint
+        // traces enrich pathNodesByAgent with the whole reporting roster (see the
+        // results-feed merge in tepResolveTestDestination), but those agents are
+        // deliberately NOT in sourceAgentIds (that would draw a flow line each).
+        // Illumination must key on trace membership, else a cluster holding a real
+        // trace agent stays dark - the "cluster MUST light up" case.
+        const inAnyTrace = (it) => traces.some((t) => {
+          const srcNames = t.sourceNames instanceof Set ? t.sourceNames : null;
+          const srcIds = t.sourceAgentIds instanceof Set ? t.sourceAgentIds : null;
+          const traceIds = t.pathNodesByAgent instanceof Map ? t.pathNodesByAgent : null;
+          return tepAgentMatchesSrcSet(it, srcIds, srcNames)
+            || (!!traceIds && it.agentId != null && traceIds.has(String(it.agentId)));
+        });
         for (const m of markerEls) {
           let rel = false;
-          if ((srcNames || srcIds || traceIds) && m._cluster && Array.isArray(m._cluster.items)) {
-            rel = m._cluster.items.some((it) => inTrace(it)
-              && (!ispFilter || tepSourceAgentIsp(it, dashMapSelectedTestDest) === ispFilter)
+          if (active && m._cluster && Array.isArray(m._cluster.items)) {
+            rel = m._cluster.items.some((it) => inAnyTrace(it)
+              && (!ispFilter || tepSourceAgentIsp(it, traces) === ispFilter)
               && (!hoverIds || idMatch(it)));
           }
           m.classList.toggle('tep-testdest-related', rel);
         }
       }
-      if (!full || !dashMapSelectedTestDest || dashMapSelectedTestDest.lat == null) return;
-      const d = dashMapSelectedTestDest;
+      if (!full || !traces.length) return;
+      for (const t of traces) {
+        try { buildOneTestDest(t); } catch (e) { log('Trace pin render error: ' + (e && e.message), 'tep-log-err'); }
+      }
+    }
+    /** Destination pins for ONE trace. Split out of buildSelectedTestDest so
+     *  several traces can be pinned in a single pass; the body is unchanged
+     *  apart from taking its trace as an argument and tinting each pin with that
+     *  trace's colour. */
+    function buildOneTestDest(d) {
       // One pin PER unique destination (a test can fan out to several). Each
       // pops in once (per-dest _popped flag) so periodic re-renders don't re-pop.
       const dests = Array.isArray(d.dests) && d.dests.length ? d.dests : [d];
@@ -23477,6 +23844,8 @@
         dest._popped = true;
         const el = document.createElement('div');
         el.className = 'tep-agent-map-marker tep-livetest-dest tep-testdest-node' + (isNew ? ' tep-draw' : '');
+        // Ties the pin to its row's checkbox when several traces are up.
+        if (d._traceColor) el.style.setProperty('--tep-trace-color', d._traceColor);
         el.innerHTML = '<span class="tep-livetest-g"><svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6c0 4.2 6 12 6 12s6-7.8 6-12a6 6 0 0 0-6-6Zm0 8.2A2.2 2.2 0 1 1 12 5.8a2.2 2.2 0 0 1 0 4.4Z"/></svg></span>';
         el._gcard = tepTestDestCardHtml(dest, d, agentsByDest.get(dest.key) || []);
         el.setAttribute('aria-label', 'Test destination — ' + (dest.location || ''));
@@ -23521,8 +23890,7 @@
     // sourceNames) to the destination pin. Its own SVG layer + gradient id, so
     // it never collides with a live-test flow if both were ever up at once.
     function buildTestDestFlow() {
-      const old = wrap.querySelector('.tep-testdest-flowsvg');
-      if (old) { try { old.remove(); } catch (_) { /* */ } }
+      for (const old of wrap.querySelectorAll('.tep-testdest-flowsvg')) { try { old.remove(); } catch (_) { /* */ } }
       // Key-hop nodes live in the overlay (not the flow svg), so removing the
       // svg above doesn't take them — clear them explicitly before rebuild or
       // repeated live-paints would stack duplicates.
@@ -23533,8 +23901,19 @@
       }
       testDestFlowLines = [];
       tracePinFocus = null;   // flow objects just went stale — drop any pin
-      if (!full || !dashMapSelectedTestDest || dashMapSelectedTestDest.lat == null) return;
-      const d = dashMapSelectedTestDest;
+      if (!full) return;
+      // One SVG layer PER checked trace rather than one shared layer: each stays
+      // independently removable and can carry its own colour without reaching
+      // into another trace's elements. testDestFlowLines still accumulates across
+      // all of them, since layout positions every line the same way.
+      for (const t of tepTraceMapList()) {
+        if (!t || t.lat == null) continue;
+        try { buildOneTestDestFlow(t); } catch (e) { log('Trace flow render error: ' + (e && e.message), 'tep-log-err'); }
+      }
+    }
+    /** Flow lines for ONE trace - body unchanged from the single-trace version
+     *  apart from taking its trace as an argument. */
+    function buildOneTestDestFlow(d) {
       const trace = d.pathNodesByAgent instanceof Map ? d.pathNodesByAgent : null;
       if (!trace || !trace.size) return;
       const flowIspFilter = dashMapTraceIspFilter;   // ISP radio → only that ISP's traces
@@ -23666,6 +24045,15 @@
         // same hue, and a touch brighter than before so the glow actually reads.
         const glow = document.createElementNS(SVGNS, 'path');
         glow.setAttribute('class', 'tep-livetest-flow-glow' + drawCls);
+        // With several traces up, the GLOW carries the trace's identity colour
+        // while the line itself keeps its aggregate-health colour. Recolouring
+        // the line would have thrown away the loss/latency read, which is the
+        // more valuable signal; the glow was a flat blue wash doing no work.
+        if (tepTraceMapList().length > 1 && d._traceColor) {
+          glow.style.stroke = d._traceColor;
+          glow.style.opacity = '.4';
+          glow.style.filter = 'drop-shadow(0 0 6px ' + d._traceColor + ')';
+        }
         glow.style.stroke = healthColor;
         glow.style.strokeWidth = (strokeW + 4.5).toFixed(2) + 'px';
         glow.style.opacity = '0.32';
@@ -25349,7 +25737,8 @@
         if (hopHit._traceRoundId != null && Number.isFinite(Number(hopHit._traceRoundId))) {
           const rid = Number(hopHit._traceRoundId);
           const ts = new Date(rid * 1000);
-          tepMapToast('Trace from ' + ts.toLocaleString() + '\n(roundId ' + rid + ') — opening test view', 'ok');
+          // Same reasoning as the trace toast above: the legend already says what
+          // is being traced and from when, so this one is redundant noise.
         }
         try { window.open(hopHit._testViewUrl, '_blank', 'noopener,noreferrer'); } catch (_) { /* */ }
         return;
@@ -25404,13 +25793,25 @@
         tepMapToast('Trace unpinned', 'ok');
         return;
       }
-      // Clicking EMPTY map (no marker) clears an active pinned trace — the new
-      // way to dismiss it now that the dest pin opens the test instead.
+      // Clicking EMPTY map (no marker) is a two-stage dismissal once traces are
+      // checked. First click COLLAPSES an open test list down to the trace view,
+      // because that is almost always what you want after ticking a few tests:
+      // the list has done its job and is now covering the map you were building.
+      // Only a click with nothing left to collapse clears the traces, so the
+      // gesture can never throw away a selection you are still assembling.
+      // CONFIRMED via user request.
+      if (!marker && tepTraceCount()) {
+        const open = [...document.querySelectorAll('.tep-saas-breakdown-pop:not(.tep-breakdown-min)')]
+          .filter((el) => el.querySelector('.tep-breakdown-focus'));
+        if (open.length) {
+          for (const el of open) { tepBreakdownSetFocus(el); el.classList.add('tep-breakdown-min'); }
+          return;
+        }
+      }
       if (!marker && dashMapSelectedTestDest) {
         testDestFlowDrawn.clear();
-        dashMapSelectedTestDest = null;
-        dashMapTraceIspFilter = null;
-        hideTraceIspPopover();
+        tepTraceClearAll();   // clears every checked trace, not just the primary
+        tepSyncTraceChecks();
         if (dashMapFullEl) {
           renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
           const wEl = dashMapFullEl.querySelector('#tep-dashmap-widgets');
@@ -26140,29 +26541,39 @@
    *  destination + agent count — the trace-view parallel of the LIVE TEST ISP
    *  Health stack. Latency is per-agent from pathNodesByAgent; ISP from the
    *  resolver's ispByAgent (falling back to the agents list, then Unknown). */
-  function tepTraceIspAggregates(info) {
-    if (!info) return [];
-    const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
-    const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
+  function tepTraceIspAggregates(infos) {
+    // Takes EVERY drawn trace, not one. Each ISP card is the aggregate of all
+    // tests contributing data for that ISP, so the stack grows and its numbers
+    // firm up as more traces are run - CONFIRMED via user request.
+    const list = (Array.isArray(infos) ? infos : [infos]).filter(Boolean);
+    if (!list.length) return [];
     const agentIsp = new Map();   // agentId -> ISP fallback from the loaded agents list
     if (Array.isArray(agents)) for (const a of agents) { if (a && a.agentId != null && a.isp) agentIsp.set(String(a.agentId), a.isp); }
     const groups = new Map();
-    // Iterate the UNIQUE per-agent trace entries (keyed by the primary agentId)
-    // — NOT sourceAgentIds, which also holds physical/virtual alt ids and would
-    // double-count enterprise agents.
-    for (const [aid, t] of paths) {
-      const isp = ispBy.get(aid) || agentIsp.get(aid) || 'Unknown ISP';
-      const lat = t && t.totalMs != null ? t.totalMs : null;
-      const loss = t && t.lossPct != null ? t.lossPct : null;
-      let g = groups.get(isp);
-      if (!g) { g = { isp, count: 0, latSum: 0, latN: 0, lossSum: 0, lossN: 0 }; groups.set(isp, g); }
-      g.count++;
-      if (lat != null) { g.latSum += lat; g.latN++; }
-      if (loss != null) { g.lossSum += loss; g.lossN++; }
+    for (const info of list) {
+      const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
+      const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
+      // Iterate the UNIQUE per-agent trace entries (keyed by the primary agentId)
+      // — NOT sourceAgentIds, which also holds physical/virtual alt ids and would
+      // double-count enterprise agents.
+      for (const [aid, t] of paths) {
+        const isp = ispBy.get(aid) || agentIsp.get(aid) || 'Unknown ISP';
+        const lat = t && t.totalMs != null ? t.totalMs : null;
+        const loss = t && t.lossPct != null ? t.lossPct : null;
+        let g = groups.get(isp);
+        if (!g) { g = { isp, agents: new Set(), tests: new Set(), latSum: 0, latN: 0, lossSum: 0, lossN: 0 }; groups.set(isp, g); }
+        // An agent running three of the traced tests is still ONE agent on this
+        // ISP, but it contributes three latency samples - hence a set for the
+        // count and averages taken over every sample.
+        g.agents.add(String(aid));
+        if (info.testId != null) g.tests.add(String(info.testId));
+        if (lat != null) { g.latSum += lat; g.latN++; }
+        if (loss != null) { g.lossSum += loss; g.lossN++; }
+      }
     }
     const out = [];
     for (const g of groups.values()) out.push({
-      isp: g.isp, count: g.count,
+      isp: g.isp, count: g.agents.size, tests: g.tests.size,
       avgLat: g.latN ? Math.round(g.latSum / g.latN) : null,
       avgLoss: g.lossN ? Math.round((g.lossSum / g.lossN) * 10) / 10 : null,
     });
@@ -26174,17 +26585,26 @@
    *  way tepTraceIspAggregates groups (ispByAgent by id, then the agents list,
    *  then Unknown), so the tile radio filter matches the dimming exactly. */
   function tepSourceAgentIsp(it, info) {
-    const ispBy = info && info.ispByAgent instanceof Map ? info.ispByAgent : null;
+    // `info` may be one trace or several: with multiple traces drawn, an agent's
+    // ISP may be known to any one of them, so every map is consulted before the
+    // fallbacks below.
+    const infos = (Array.isArray(info) ? info : [info]).filter(Boolean);
     const ids = [it && it.agentId, it && it.physicalId].filter((v) => v != null).map(String);
-    if (ispBy) for (const id of ids) if (ispBy.has(id)) return ispBy.get(id);
+    for (const inf of infos) {
+      const ispBy = inf.ispByAgent instanceof Map ? inf.ispByAgent : null;
+      if (ispBy) for (const id of ids) if (ispBy.has(id)) return ispBy.get(id);
+    }
     if (it && it.isp) return it.isp;
     if (Array.isArray(agents)) for (const id of ids) { const a = agents.find((x) => x && String(x.agentId) === id); if (a && a.isp) return a.isp; }
     return 'Unknown ISP';
   }
   function tepTraceIspStackHtml() {
-    const info = dashMapSelectedTestDest;
-    if (!info) return '';
-    const aggs = tepTraceIspAggregates(info);
+    // Every drawn trace feeds the stack. Deliberately NOT the solo-filtered list:
+    // hovering a row in the trace list narrows the MAP, but rebuilding these
+    // cards on every hover would churn them under the cursor.
+    const traced = tepTraceDrawList();
+    if (!traced.length) return '';
+    const aggs = tepTraceIspAggregates(traced);
     if (!aggs.length) return '';
     // Score blends latency (lenient 0…350ms end-to-end scale — agent→dest reads
     // far higher than last-mile) with a hard, proportional LOSS penalty (2 pts
@@ -26213,7 +26633,8 @@
         radio
         + '<div class="tep-isp-health">'
         + `<div><div class="tep-dash-widget-main" style="color:${scoreCol}">${score}<small> health</small>${lossMain}</div>`
-        + `<div class="tep-dash-widget-sub">${g.count} agent${g.count === 1 ? '' : 's'}</div>`
+        + `<div class="tep-dash-widget-sub">${g.count} agent${g.count === 1 ? '' : 's'}`
+        + `${g.tests > 1 ? ` \u00b7 ${g.tests} tests` : ''}</div>`
         + `<div class="tep-dash-widget-sub">${latTxt}${lossTxt}</div></div>`
         + tepSeverityRingHtml(sev, '', undefined, false)
         + '</div>',
@@ -26222,7 +26643,9 @@
         ` data-traceisp="${tepEscapeHtmlText(g.isp)}" title="Click to see ${tepEscapeHtmlText(g.isp)}'s source agents"`);
     }).join('');
     return `<div class="tep-isp-stack tep-trace-isp-stack" id="tep-dashmap-trace-isp-stack">`
-      + `<div class="tep-trace-isp-head">Source ISPs → ${tepEscapeHtmlText(info.testName || 'test')}</div>${tiles}</div>`;
+      + `<div class="tep-trace-isp-head">Source ISPs → ${traced.length === 1
+        ? tepEscapeHtmlText(traced[0].testName || 'test')
+        : `${traced.length} tests`}</div>${tiles}</div>`;
   }
   /** Re-pull everything the Data Window governs. Lifted out of the dropdown's
    *  own change handler so the as-of picker runs exactly the same path.
@@ -27795,11 +28218,9 @@
       if (entCount > 0) badgeHtml += mk('enterprise', TEP_ENTERPRISE_ICON_SVG, entCount, `${entCount} Enterprise Agent${entCount === 1 ? '' : 's'} ran this test`);
       if (cloudCount > 0) badgeHtml += mk('cloud', TEP_CLOUD_ONLY_ICON_SVG, cloudCount, `${cloudCount} Cloud Agent${cloudCount === 1 ? '' : 's'} ran this test`);
       if (!badgeHtml) return;
-      // Insert the agent icon+count BEFORE the locate pin (which sits at the end
-      // of the title) so the order reads: name · agent badges · pin.
-      const locateEl = titleEl.querySelector('.tep-testdest-locate');
-      if (locateEl) locateEl.insertAdjacentHTML('beforebegin', badgeHtml);
-      else titleEl.insertAdjacentHTML('beforeend', badgeHtml);
+      // Appended after the name, so the order reads: name · agent badges. (The
+      // locate pin these used to sit before is gone; the row checkbox replaced it.)
+      titleEl.insertAdjacentHTML('beforeend', badgeHtml);
     });
   }
   /** Circular health ring whose arc length is the availability percent and
@@ -27893,6 +28314,7 @@
   let tepSaasBreakdownData = null;   // { rows: [{title, value, testId}] } | null
   let tepSaasPopoverEl = null;
   function hideSaasBreakdownPopover() {
+    tepTraceHint(null);
     if (tepSaasPopoverEl) { try { tepSaasPopoverEl.remove(); } catch (_) { /* */ } }
     tepSaasPopoverEl = null;
     document.removeEventListener('click', tepSaasPopoverOutsideClick, true);
@@ -27913,7 +28335,17 @@
     }
   }
   function tepSaasPopoverOutsideClick(e) {
-    if (tepSaasPopoverEl && !tepSaasPopoverEl.contains(e.target) && !e.target.closest('#tep-w-saas')) hideSaasBreakdownPopover();
+    if (!tepSaasPopoverEl || tepSaasPopoverEl.contains(e.target) || e.target.closest('#tep-w-saas')) return;
+    // Stand down entirely while any trace is checked. pointerup fires BEFORE
+    // click, so the map's own handler has already collapsed this popover to the
+    // trace view by the time we get here - and a guard that only skipped while
+    // the list was still EXPANDED therefore saw a minimized one and hid it
+    // anyway, which is why collapsing appeared to lose the list. CONFIRMED via
+    // user report (twice). The second map click clears the traces first, so this
+    // is free to close the popover on that pass. The header, the collapse arrow
+    // and the widget button all still close it meanwhile.
+    if (tepTraceCount()) return;
+    hideSaasBreakdownPopover();
   }
   function tepSaasPopoverEscHandler(e) { if (e.key === 'Escape') hideSaasBreakdownPopover(); }
   /** Fill a breakdown popover's collapsed header with the PINNED test's name +
@@ -27921,21 +28353,243 @@
    *  of the generic "…behind this average". Reads dashMapSelectedTestDest (set by
    *  tepShowTraceForTest). Clears back to the generic title when nothing's pinned.
    *  Shared by the SaaS and Network breakdown popovers. */
+  /** Reflect dashMapTraces onto every rendered row: the checkbox state, its
+   *  colour swatch, and the Trace pill's on/off look. Called after anything that
+   *  changes the trace set, including clearing it by clicking bare map. */
+  /** The row's trace checkbox - the source of truth for what the map draws.
+   *  Rendered inside the row's <a>, so its handler preventDefaults to keep a tick
+   *  from following the row's link. */
+  /** The row's trace checkbox. It is now the ONLY trace control - the separate
+   *  "Trace" pill is gone, and this carries the dataset the pill used to hold
+   *  (test name, score, endpoint flag, round) so every caller reads it from one
+   *  place. CONFIRMED via user request. `ds` is the extra data-* attribute
+   *  string each row builder assembles for its own test kind. */
+  function tepTraceCheckHtml(testId, ds) {
+    if (testId == null || testId === '') return '';
+    const on = tepTraceIsOn(testId);
+    const t = on ? dashMapTraces.get(String(testId)) : null;
+    return `<span class="tep-trace-check${on ? ' tep-trace-check--on' : ''}" role="checkbox"`
+      + ` aria-checked="${on ? 'true' : 'false'}" tabindex="0"`
+      + ` aria-label="Trace this test on the map"`
+      + `${t && t._traceColor ? ` style="--tep-trace-color:${tepEscapeHtmlText(t._traceColor)}"` : ''}`
+      + ` data-trace-test="${tepEscapeHtmlText(String(testId))}"`
+      + ` data-locate-test="${tepEscapeHtmlText(String(testId))}"${ds ? ' ' + ds : ''}></span>`;
+  }
+  function tepSyncTraceChecks() {
+    document.querySelectorAll('.tep-trace-check').forEach((chk) => {
+      const tid = chk.getAttribute('data-trace-test');
+      const on = tid ? tepTraceIsOn(tid) : false;
+      chk.classList.toggle('tep-trace-check--on', on);
+      chk.setAttribute('aria-checked', on ? 'true' : 'false');
+      const t = on ? dashMapTraces.get(String(tid)) : null;
+      if (t && t._traceColor) chk.style.setProperty('--tep-trace-color', t._traceColor);
+      else chk.style.removeProperty('--tep-trace-color');
+    });
+
+  }
+  /** Show the floating "Trace" / "Tracing" / "Remove" label beside a row's
+   *  checkbox, hanging just outside the popover's left edge. Passing null hides
+   *  it. It lives on <html> because the popover clips its own overflow, so this
+   *  is the only way the label can sit outside the window without either
+   *  covering the test name or shifting it. CONFIRMED via user request. */
+  let tepTraceHintEl = null;
+  function tepTraceHint(chk) {
+    if (!chk || !chk.isConnected) {
+      if (tepTraceHintEl) tepTraceHintEl.classList.remove('tep-trace-hint--on');
+      return;
+    }
+    const pending = chk.classList.contains('tep-trace-check--pending');
+    const tid = chk.getAttribute('data-trace-test');
+    // A hover trace that has finished drawing but is not yet kept: clicking the
+    // box is what keeps it, so the label says so - in blue, as it did before
+    // this became a checkbox. CONFIRMED via user request.
+    const previewed = !pending && dashMapTracePreview != null
+      && String(dashMapTracePreview.testId) === String(tid);
+    // Already kept. The tick mark states that plainly, so there is nothing
+    // useful to add - CONFIRMED via user request (no "Remove" label).
+    if (!pending && !previewed && chk.classList.contains('tep-trace-check--on')) {
+      if (tepTraceHintEl) tepTraceHintEl.classList.remove('tep-trace-hint--on');
+      return;
+    }
+    if (!tepTraceHintEl) {
+      tepTraceHintEl = document.createElement('div');
+      tepTraceHintEl.className = 'tep-trace-hint';
+    }
+    // Re-appended every time it is shown. The breakdown popover also sits at the
+    // maximum z-index, and equal z-index falls back to DOM tree order - so the
+    // popover painted over this unless it is the later sibling. CONFIRMED via
+    // user report. (Same reasoning as the resize handle vs #te-panel-root.)
+    document.documentElement.appendChild(tepTraceHintEl);
+    tepTraceHintEl.textContent = pending ? 'Tracing' : previewed ? 'Pin it' : 'Trace';
+    tepTraceHintEl.classList.toggle('tep-trace-hint--pin', previewed);
+    const r = chk.getBoundingClientRect();
+    tepTraceHintEl.classList.add('tep-trace-hint--on');
+    // Measured AFTER the text is set, or a longer word would be placed using the
+    // previous one's width.
+    const w = tepTraceHintEl.offsetWidth;
+    tepTraceHintEl.style.top = Math.round(r.top + r.height / 2) + 'px';
+    // Left of the box, clamped so it can never run off-screen for a popover that
+    // is itself near the viewport's left edge.
+    tepTraceHintEl.style.left = Math.max(4, Math.round(r.left - 8 - w)) + 'px';
+  }
+  /** Hide the hint unless it is still worth showing.
+   *
+   *  A STILL-RESOLVING label always survives - that trace is in flight and the
+   *  user did not ask for it, so it keeps announcing itself even once the cursor
+   *  has left. With `keepPreview`, a finished hover trace also survives: that is
+   *  the within-row case, where mousemove re-fires mouseover constantly and would
+   *  otherwise flicker the "Pin it" offer away the moment it appeared. Leaving
+   *  the row passes false, so the offer goes with the preview it belongs to. */
+  function tepTraceHintRelease(chk, keepPreview) {
+    if (chk && chk.isConnected) {
+      if (chk.classList.contains('tep-trace-check--pending')) { tepTraceHint(chk); return; }
+      const tid = chk.getAttribute('data-trace-test');
+      if (keepPreview && dashMapTracePreview != null
+        && String(dashMapTracePreview.testId) === String(tid)) { tepTraceHint(chk); return; }
+    }
+    tepTraceHint(null);
+  }
+
+  /** The ONE path that turns a test's trace on or off. The row checkbox is the
+   *  source of truth and the Trace pill simply drives it, so there is never a
+   *  question of what is actually drawn - CONFIRMED via user request (the
+   *  alternative, a transient preview button beside a separate pin, left two
+   *  competing states). Returns a promise resolving true when a trace was added. */
+  function tepTraceToggle(tid, ds, chk) {
+    const key = String(tid);
+    if (tepTraceIsOn(key)) {
+      tepTraceRemove(key);
+      tepSyncTraceChecks();
+      if (chk) tepTraceHint(chk);   // "Remove" -> "Trace"
+      tepRepaintTraces();
+      return Promise.resolve(false);
+    }
+    // Ticks resolve asynchronously, so counting only the RESOLVED traces let a
+    // fast run of clicks all pass this check before any of them landed - which is
+    // how 11 traces got on screen under a cap of 10. CONFIRMED via user report.
+    // In-flight commits count against the budget too.
+    if (tepTraceCount() + tepTraceInFlight.size >= TEP_MAX_TRACES) {
+      tepMapToast('Showing the most you can at once (' + TEP_MAX_TRACES + ' traces).\nUncheck one to add another.', 'err');
+      tepSyncTraceChecks();
+      return Promise.resolve(false);
+    }
+    tepCancelTraceHover();   // a commit supersedes any pending hover trace
+    // Tick it NOW and flash. Resolving a destination takes a moment, and an
+    // unresponsive checkbox reads as a click that never landed - CONFIRMED via
+    // user request. The flash says "heard you, working"; it goes solid on
+    // success and reverts on failure.
+    if (chk) {
+      chk.classList.add('tep-trace-check--on', 'tep-trace-check--pending');
+      chk.setAttribute('aria-checked', 'true');
+      tepTraceHint(chk);   // "Trace" -> "Tracing" under the cursor
+    }
+    return tepShowTraceForTest(tid, ds, true).then((ok) => {
+      if (chk) {
+        chk.classList.remove('tep-trace-check--pending');
+        tepTraceHint(chk.matches(':hover') ? chk : null);
+        if (!ok) {
+          chk.classList.remove('tep-trace-check--on');
+          chk.setAttribute('aria-checked', 'false');
+          chk.classList.add('tep-trace-check--fail');
+          setTimeout(() => chk.classList.remove('tep-trace-check--fail'), 1100);
+        }
+      }
+      tepSyncTraceChecks();
+      return !!ok;
+    });
+  }
+  /** Redraw the map's trace layers in place after the trace set changed. */
+  function tepRepaintTraces() {
+    if (!dashMapFullEl) return;
+    if (typeof dashMapLivePaint === 'function') dashMapLivePaint();
+    else renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+    document.querySelectorAll('.tep-saas-breakdown-pop.tep-breakdown-min').forEach((pop) => tepBreakdownSetFocus(pop));
+  }
   function tepBreakdownSetFocus(pop) {
     const focus = pop && pop.querySelector('.tep-breakdown-focus');
     if (!focus) return;
-    const info = dashMapSelectedTestDest;
-    if (!info || !info.testName) { pop.classList.remove('tep-breakdown-hasfocus'); focus.innerHTML = ''; return; }
+    const traces = tepTraceList().filter((t) => t && t.testName);
+    if (!traces.length) { pop.classList.remove('tep-breakdown-hasfocus'); focus.innerHTML = ''; return; }
     const esc = tepEscapeHtmlText;
-    let stat = '';
-    if (info.testScore != null && info.testScore !== '' && Number.isFinite(Number(info.testScore))) {
-      const c = tepColorFromScore(Number(info.testScore));
-      stat += `<span class="tep-breakdown-focus-stat" style="color:${c.fill}">${esc(String(info.testScore))}${esc(info.testScoreUnit || '')} ${esc(info.testScoreLabel || 'health')}</span>`;
-    }
-    if (info.testDetail) stat += `<span class="tep-breakdown-focus-stat" style="color:var(--tep-slate-400)">${esc(info.testDetail)}</span>`;
-    focus.innerHTML = `<b>${esc(info.testName)}</b>${stat}`;
+    // Clicking a name opens TE's own results view with EVERY checked enterprise
+    // test nested in the one URL (comma-separated testId), so they land together
+    // under TE's own selector - CONFIRMED via a user-supplied example URL.
+    // Endpoint tests use a different results page that takes no such list, so
+    // those names carry no link.
+    const nestedHref = tepEnterpriseTestViewUrl(
+      traces.filter((t) => !t.isEndpoint).map((t) => t.testId), 'map', 'httpAvailability');
+    const rows = traces.map((t) => {
+      let stat = '';
+      if (t.testScore != null && t.testScore !== '' && Number.isFinite(Number(t.testScore))) {
+        const c = tepColorFromScore(Number(t.testScore));
+        stat = `<span class="tep-trace-legend-stat" style="color:${c.fill}">${esc(String(t.testScore))}${esc(t.testScoreUnit || '')}</span>`;
+      }
+      // What the retired "Trace: ..." toast used to say: how many destinations
+      // resolved, and which round the trace came from.
+      const nDest = Array.isArray(t.dests) && t.dests.length ? t.dests.length : 1;
+      const count = `<span class="tep-trace-legend-count">${nDest} dest${nDest === 1 ? '' : 's'}</span>`;
+      const when = (t.roundId != null && Number.isFinite(Number(t.roundId)))
+        ? ' \u2014 from ' + new Date(Number(t.roundId) * 1000).toLocaleString() : '';
+      // Which kind of agent ran this test, carried over from the row's own badge
+      // so the collapsed list stays readable as the same set of tests.
+      const kind = t.isEndpoint
+        ? `<span class="tep-trace-legend-kind tep-trace-legend-kind--endpoint" title="Endpoint test">${TEP_ENDPOINT_ICON_SVG}</span>`
+        : `<span class="tep-trace-legend-kind tep-trace-legend-kind--enterprise" title="Enterprise test">${TEP_ENTERPRISE_ICON_SVG}</span>`;
+      const name = (!t.isEndpoint && nestedHref)
+        ? `<a class="tep-trace-legend-name" href="${esc(nestedHref)}" target="_blank" rel="noopener noreferrer">${esc(t.testName)}</a>`
+        : `<span class="tep-trace-legend-name">${esc(t.testName)}</span>`;
+      return `<div class="tep-trace-legend-row" data-trace-row="${esc(String(t.testId))}"`
+        + ` title="${esc(t.testName)}${esc(when)}\nHover to show only this trace">`
+        + `<i class="tep-trace-legend-dot" style="background:${esc(t._traceColor || 'var(--tep-orange)')}"></i>`
+        + `${kind}${name}${stat}${count}`
+        + `<button type="button" class="tep-trace-legend-x" data-untrace="${esc(String(t.testId))}"`
+        + ` title="Stop tracing this test" aria-label="Stop tracing ${esc(t.testName)}">&times;</button></div>`;
+    }).join('');
+    // Absent when nothing checked is an enterprise test, since the nested URL
+    // only exists for those.
+    const openAll = nestedHref
+      ? `<a class="tep-trace-legend-open" href="${esc(nestedHref)}" target="_blank" rel="noopener noreferrer">`
+        + `Open tests in nested view`
+        + `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></a>`
+      : '';
+    focus.innerHTML = `<div class="tep-trace-legend"><div class="tep-trace-legend-head">`
+      + `Tracing \u00b7 ${traces.length} test${traces.length === 1 ? '' : 's'}</div>${rows}${openAll}</div>`;
     pop.classList.add('tep-breakdown-hasfocus');
+    // Wired ONCE on the container, which survives every innerHTML rewrite above -
+    // so a rebuild can never strand a listener or lose one.
+    if (!focus._tepTraceWired) {
+      focus._tepTraceWired = true;
+      // Hovering a row isolates that trace on the map, the same "show me just
+      // this, right now" gesture a marker hover performs. The list itself keeps
+      // showing every trace; narrowing it too would pull the row out from under
+      // the cursor as you read it.
+      focus.addEventListener('mouseover', (e) => {
+        const row = e.target.closest('.tep-trace-legend-row');
+        tepTraceSetSolo(row ? row.getAttribute('data-trace-row') : null);
+        const box = focus.querySelector('.tep-trace-legend');
+        if (box) box.classList.toggle('tep-trace-legend--solo', !!row);
+      });
+      focus.addEventListener('mouseleave', () => {
+        tepTraceSetSolo(null);
+        const box = focus.querySelector('.tep-trace-legend');
+        if (box) box.classList.remove('tep-trace-legend--solo');
+      });
+      focus.addEventListener('click', (e) => {
+        const x = e.target.closest('.tep-trace-legend-x');
+        if (!x) return;
+        // Must not reach the head handler, which would expand the list.
+        e.preventDefault();
+        e.stopPropagation();
+        const tid = x.getAttribute('data-untrace');
+        if (!tid) return;
+        tepTraceRemove(tid);
+        tepSyncTraceChecks();
+        tepBreakdownSetFocus(pop);
+        tepRepaintTraces();
+      });
+    }
   }
+
   /** Wire the shared row behaviours onto anything that renders
    *  .tep-saas-breakdown-row rows - the SaaS/Network breakdown popovers and
    *  the search-driven inline lists inside their widget cards. Extracted so
@@ -27956,48 +28610,63 @@
     root._tepBreakdownWired = true;
     fetchAgentsByTest().then((m) => { root._tepAgentsByTest = m; tepMarkBreakdownRowAgentBadges(root, m); });
     root.addEventListener('click', (e) => {
-      const loc = e.target.closest('.tep-testdest-locate');
-      if (!loc) return;
+      // The checkbox and the Trace pill are the same action - the pill is just a
+      // bigger target with a progress state. Both run through tepTraceToggle so
+      // the checked set stays the single source of truth.
+      const chk = e.target.closest('.tep-trace-check');
+      if (!chk) return;
       e.preventDefault();
       e.stopPropagation();
-      const tid = loc.dataset.locateTest;
+      const tid = chk.getAttribute('data-trace-test');
       if (!tid) return;
-      tepCancelTraceHover();   // a click supersedes any pending hover trace
-      loc.classList.add('tep-testdest-locate--loading');
-      const popToMin = loc.closest('.tep-saas-breakdown-pop');
-      void tepShowTraceForTest(tid, Object.assign({}, loc.dataset), true).then((ok) => {
-        loc.classList.remove('tep-testdest-locate--loading', 'tep-testdest-locate--glow');
-        if (!ok) { loc.classList.add('tep-testdest-locate--fail'); setTimeout(() => loc.classList.remove('tep-testdest-locate--fail'), 1100); }
-        // Committing to a trace (pin click) MINIMIZES the list so the map is
-        // interactable — the collapsed header now shows THIS test's name + stats;
-        // click it to bring the list back.
-        else if (popToMin) { tepBreakdownSetFocus(popToMin); popToMin.classList.add('tep-breakdown-min'); }
-      });
+      // NOTE: committing no longer minimizes the list. With multi-select you need
+      // it open to check more than one; collapsing to the focus bar is now the
+      // deliberate click on the popover head that it always was.
+      void tepTraceToggle(tid, Object.assign({}, chk.dataset), chk);
     }, true);
     root.addEventListener('mouseover', (e) => {
       const row = e.target.closest('.tep-saas-breakdown-row');
+      // Only the checkbox summons the label - hovering anywhere in the row put a
+      // pill over the map for every row the cursor crossed. CONFIRMED via user
+      // request. A still-resolving label stays up on its own (see release).
+      const overChk = e.target.closest('.tep-trace-check');
+      if (overChk) tepTraceHint(overChk);
+      else tepTraceHintRelease(row ? row.querySelector('.tep-trace-check') : null, true);
       if (!row || !row.dataset.testId) return;
       // Hover-to-trace: after a short dwell, draw this test's destination trace
       // on the map (popover stays open) — for BOTH enterprise and endpoint rows,
       // so it runs BEFORE the endpoint highlight branch returns. Cancelled on
       // mouseout below.
-      const locEl = row.querySelector('.tep-testdest-locate');
+      const locEl = row.querySelector('.tep-trace-check');
       if (locEl && row.dataset.testId) {
         tepCancelTraceHover();
         const tid = row.dataset.testId;
         const ds = Object.assign({}, locEl.dataset);   // snapshot so it's stable
         tepTraceHoverTimer = setTimeout(() => {
           tepTraceHoverTimer = null;
-          // Pulse a "Tracing…" state on the pin while the destination resolves,
-          // then swap to the "Pin it" glow on success (or just drop it). The
+          // Pulse a "Tracing" state on the checkbox while the destination
+          // resolves, then swap to "Pin it" on success (or just drop it). The
           // load-sequence guard in tepShowTraceForTest means a resolve that lands
           // after the user moved on is ignored — see tepAbortTraceLoad.
-          if (locEl.isConnected) locEl.classList.add('tep-testdest-locate--tracing');
+          if (locEl.isConnected) {
+            locEl.classList.add('tep-trace-check--pending');
+            // The label is normally suppressed unless the checkbox itself is
+            // hovered, but a trace the DWELL started on its own is exactly the
+            // case that needs announcing: something is happening that the user
+            // did not click for. CONFIRMED via user request. Shown for the row,
+            // not just the box.
+            tepTraceHint(locEl);
+          }
           tepSetTraceHoverPriority(true);   // trace takes the map; close/suppress hover cards
           void tepShowTraceForTest(tid, ds).then((ok) => {
             if (!locEl.isConnected) return;
-            locEl.classList.remove('tep-testdest-locate--tracing');
-            if (ok) locEl.classList.add('tep-testdest-locate--glow');
+            locEl.classList.remove('tep-trace-check--pending');
+            // Resolved: while the cursor is still anywhere on the ROW, invite the
+            // click that keeps it. Same reasoning as showing "Tracing" above -
+            // this trace was started for them, so the follow-up offer should not
+            // require finding the checkbox first.
+            const rowEl = locEl.closest('.tep-saas-breakdown-row');
+            if (rowEl && rowEl.matches(':hover')) tepTraceHint(locEl); else tepTraceHint(null);
           });
         }, TEP_TRACE_HOVER_DELAY_MS);
       }
@@ -28023,10 +28692,17 @@
       if (!row) return;
       const to = e.relatedTarget;
       if (to && row.contains(to)) return; // moved within the same row
-      const glowEl = row.querySelector('.tep-testdest-locate--glow');
-      if (glowEl) glowEl.classList.remove('tep-testdest-locate--glow');   // stop the "Pin it" prompt when leaving the row
+      tepTraceHintRelease(row.querySelector('.tep-trace-check'), false);
+      // A hover preview that is still resolving stops flashing when we leave.
+      const pendEl = row.querySelector('.tep-trace-check--pending');
+      if (pendEl && !tepTraceInFlight.has(String(pendEl.getAttribute('data-trace-test')))) {
+        pendEl.classList.remove('tep-trace-check--pending');
+      }
       tepCancelTraceHover();   // drop a not-yet-fired hover trace for the row we're leaving
       tepAbortTraceLoad();     // and invalidate any in-flight resolve so a slow trace can't draw after we've moved on
+      // A preview belongs to the cursor: leaving the row takes it off the map,
+      // while anything ticked stays put.
+      if (tepTraceClearPreview()) tepRepaintTraces();
       tepSetTraceHoverPriority(false);   // left the row — the map is the user's again
       if (row.dataset.endpoint) {
         if (dashMapAgentsListHoverHighlight && !dashMapAgentsListHoverLocked) {
@@ -28071,10 +28747,8 @@
       // icon+count badge (the async agent badge inserts itself before this icon,
       // see tepMarkBreakdownRowAgentBadges). Enterprise HTTP tests resolve via
       // the same path-vis graph.
-      const locateIcon = r.testId
-        ? ` <span class="tep-testdest-locate" role="button" tabindex="0" title="Show this test's destination on the map" data-locate-test="${tepEscapeHtmlText(String(r.testId))}" data-test-name="${tepEscapeHtmlText(r.title || '')}" data-test-score="${p.toFixed(1)}" data-test-scorelabel="Availability" data-test-unit="%"${r.isEndpoint ? ` data-endpoint="1" data-round="${tepEscapeHtmlText(String(r.round != null ? r.round : ''))}"` : ''}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></span>`
-        : '';
-      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${epBadge}${locateIcon}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${url ? 'a' : 'div'}>`;
+      const traceDs = `data-test-name="${tepEscapeHtmlText(r.title || '')}" data-test-score="${p.toFixed(1)}" data-test-scorelabel="Availability" data-test-unit="%"${r.isEndpoint ? ` data-endpoint="1" data-round="${tepEscapeHtmlText(String(r.round != null ? r.round : ''))}"` : ''}`;
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}>${tepTraceCheckHtml(r.testId, traceDs)}<span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${epBadge}</span><b style="color:${c.fill}">${p.toFixed(1)}%</b></${url ? 'a' : 'div'}>`;
     }).join('');
   }
   /** Toggle the "what's behind this average" breakdown for the SaaS Health
@@ -28107,8 +28781,9 @@
     const rowsHtml = tepSaasBreakdownRowsHtml(rows);
     const headTitle = epCount ? 'Tests behind this average' : 'HTTP tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head"><span class="tep-breakdown-title">${headTitle}</span><span class="tep-breakdown-focus" aria-hidden="true"></span>`
-      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · pin to map its destination</span></div>'
-      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
+      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · tick to keep its trace on the map</span></div>'
+      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`
+      + '<div class="tep-breakdown-foot"><button type="button" class="tep-breakdown-collapse" title="Collapse this list" aria-label="Collapse this list"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button></div>';
     // Mounted on <html>, not <body> — same reason as the rest of this panel's
     // floating chrome (toggle button, fullscreen overlay, etc.): body is
     // inside dark mode's filtered/lower-stacking subtree, so a popover
@@ -28117,7 +28792,16 @@
     tepSaasPopoverEl = pop;
     // Click the header to toggle minimize/restore (the pin also minimizes).
     pop.addEventListener('click', (e) => {
-      if (e.target.closest('.tep-testdest-locate')) return;
+      if (e.target.closest('.tep-trace-check')) return;
+      if (e.target.closest('.tep-breakdown-focus')) return;   // the trace list runs its own handlers
+      // The foot arrow does exactly what clicking the head does - collapse to the
+      // focus bar - but sits where the eye ends up after reading the list, which
+      // matters more now that committing a trace no longer auto-collapses.
+      if (e.target.closest('.tep-breakdown-collapse')) {
+        e.preventDefault(); e.stopPropagation();
+        tepBreakdownSetFocus(pop); pop.classList.add('tep-breakdown-min');
+        return;
+      }
       if (e.target.closest('.tep-saas-breakdown-head')) { tepBreakdownSetFocus(pop); pop.classList.toggle('tep-breakdown-min'); }
     });
     tepWireBreakdownRows(pop, () => byTestAgentIds, tepFetchHttpAgentsByTest);
@@ -28337,6 +29021,7 @@
   let tepNetworkBreakdownData = null;   // { rows: [{title, sev, score, testId}] } | null
   let tepNetworkPopoverEl = null;
   function hideNetworkBreakdownPopover() {
+    tepTraceHint(null);
     if (tepNetworkPopoverEl) { try { tepNetworkPopoverEl.remove(); } catch (_) { /* */ } }
     tepNetworkPopoverEl = null;
     document.removeEventListener('click', tepNetworkPopoverOutsideClick, true);
@@ -28357,7 +29042,17 @@
     }
   }
   function tepNetworkPopoverOutsideClick(e) {
-    if (tepNetworkPopoverEl && !tepNetworkPopoverEl.contains(e.target) && !e.target.closest('#tep-w-network')) hideNetworkBreakdownPopover();
+    if (!tepNetworkPopoverEl || tepNetworkPopoverEl.contains(e.target) || e.target.closest('#tep-w-net')) return;
+    // Stand down entirely while any trace is checked. pointerup fires BEFORE
+    // click, so the map's own handler has already collapsed this popover to the
+    // trace view by the time we get here - and a guard that only skipped while
+    // the list was still EXPANDED therefore saw a minimized one and hid it
+    // anyway, which is why collapsing appeared to lose the list. CONFIRMED via
+    // user report (twice). The second map click clears the traces first, so this
+    // is free to close the popover on that pass. The header, the collapse arrow
+    // and the widget button all still close it meanwhile.
+    if (tepTraceCount()) return;
+    hideNetworkBreakdownPopover();
   }
   function tepNetworkPopoverEscHandler(e) { if (e.key === 'Escape') hideNetworkBreakdownPopover(); }
   /** One <a>/<div> row per Network-category test for the Network Health
@@ -28394,10 +29089,8 @@
       // Agent tests DO get a pin — they resolve via their own one-way-net
       // timing metric + path-vis layer (data-onewaynet flags them so the
       // handler hits the right endpoints).
-      const locateIcon = r.testId
-        ? ` <span class="tep-testdest-locate" role="button" tabindex="0" title="Show this test's destination on the map" data-locate-test="${tepEscapeHtmlText(String(r.testId))}" data-test-name="${tepEscapeHtmlText(r.title || '')}" data-test-score="${tepEscapeHtmlText(String(r.score))}" data-test-scorelabel="Health"${detail ? ` data-test-detail="${tepEscapeHtmlText(detail)}"` : ''}${r.isOneWayNet ? ' data-onewaynet="1"' : ''}${r.isEndpoint ? ` data-endpoint="1" data-round="${tepEscapeHtmlText(String(r.round != null ? r.round : ''))}"` : ''}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></span>`
-        : '';
-      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}><span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:var(--tep-slate-500);font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}${locateIcon}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
+      const traceDs = `data-test-name="${tepEscapeHtmlText(r.title || '')}" data-test-score="${tepEscapeHtmlText(String(r.score))}" data-test-scorelabel="Health"${detail ? ` data-test-detail="${tepEscapeHtmlText(detail)}"` : ''}${r.isOneWayNet ? ' data-onewaynet="1"' : ''}${r.isEndpoint ? ` data-endpoint="1" data-round="${tepEscapeHtmlText(String(r.round != null ? r.round : ''))}"` : ''}`;
+      return `<${url ? 'a' : 'div'} class="tep-saas-breakdown-row"${hrefAttr}>${tepTraceCheckHtml(r.testId, traceDs)}<span class="tep-saas-breakdown-title">${tepEscapeHtmlText(r.title)}${detail ? ` <span style="color:var(--tep-slate-500);font-weight:400;">(${tepEscapeHtmlText(detail)})</span>` : ''}${epBadge}</span><b style="color:${c.fill}">${r.score}</b></${url ? 'a' : 'div'}>`;
     }).join('');
   }
   /** Drop whatever map highlight a breakdown row's hover left behind. The
@@ -28503,13 +29196,23 @@
     const rowsHtml = tepNetworkBreakdownRowsHtml(rows);
     const headTitle = epCount ? 'Tests behind this average' : 'Network tests behind this average';
     pop.innerHTML = `<div class="tep-saas-breakdown-head"><span class="tep-breakdown-title">${headTitle}</span><span class="tep-breakdown-focus" aria-hidden="true"></span>`
-      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · pin to map its destination</span></div>'
-      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`;
+      + '<span class="tep-saas-breakdown-hint">hover to highlight agents · click a row to open the test · tick to keep its trace on the map</span></div>'
+      + `<div class="tep-saas-breakdown-list">${rowsHtml}</div>`
+      + '<div class="tep-breakdown-foot"><button type="button" class="tep-breakdown-collapse" title="Collapse this list" aria-label="Collapse this list"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button></div>';
     document.documentElement.appendChild(pop);
     tepNetworkPopoverEl = pop;
     // Click the header to toggle minimize/restore (the pin also minimizes).
     pop.addEventListener('click', (e) => {
-      if (e.target.closest('.tep-testdest-locate')) return;
+      if (e.target.closest('.tep-trace-check')) return;
+      if (e.target.closest('.tep-breakdown-focus')) return;   // the trace list runs its own handlers
+      // The foot arrow does exactly what clicking the head does - collapse to the
+      // focus bar - but sits where the eye ends up after reading the list, which
+      // matters more now that committing a trace no longer auto-collapses.
+      if (e.target.closest('.tep-breakdown-collapse')) {
+        e.preventDefault(); e.stopPropagation();
+        tepBreakdownSetFocus(pop); pop.classList.add('tep-breakdown-min');
+        return;
+      }
       if (e.target.closest('.tep-saas-breakdown-head')) { tepBreakdownSetFocus(pop); pop.classList.toggle('tep-breakdown-min'); }
     });
     tepWireBreakdownRows(pop, () => byTestAgentIds, tepFetchNetworkAgentsByTest);
@@ -29083,21 +29786,40 @@
   /** Source agents on one ISP under the pinned trace, with their end-to-end
    *  latency + loss, worst first. */
   function tepTraceIspAgentsFor(isp) {
-    const info = dashMapSelectedTestDest;
-    if (!info) return [];
-    const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
-    const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
+    // Spans every drawn trace, to match the aggregated card that opened it.
+    const list = tepTraceDrawList();
+    if (!list.length) return [];
     const agentIsp = new Map();
     if (Array.isArray(agents)) for (const a of agents) if (a && a.agentId != null && a.isp) agentIsp.set(String(a.agentId), a.isp);
     const out = [];
-    for (const [aid, t] of paths) {
-      const agIsp = ispBy.get(aid) || agentIsp.get(aid) || 'Unknown ISP';
-      if (agIsp !== isp) continue;
-      let name = null, kind = 'enterprise';
-      const a = Array.isArray(agents) ? agents.find((x) => x && String(x.agentId) === aid) : null;
-      if (a) { name = a.agentName; kind = a.agentType === 'Cloud' ? 'cloud' : 'enterprise'; }
-      else { const ep = Array.isArray(allEndpointAgents) ? allEndpointAgents.find((x) => x && String(x.id) === aid) : null; if (ep) { name = ep.name; kind = 'endpoint'; } }
-      out.push({ agentId: aid, name: name || ('Agent ' + aid), kind, latencyMs: t && t.totalMs != null ? t.totalMs : null, lossPct: t && t.lossPct != null ? t.lossPct : null });
+    const seen = new Map();   // agentId -> index in out, so an agent listed by two traces appears once
+    for (const info of list) {
+      const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
+      const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
+      for (const [aid, t] of paths) {
+        const agIsp = ispBy.get(aid) || agentIsp.get(aid) || 'Unknown ISP';
+        if (agIsp !== isp) continue;
+        const lat = t && t.totalMs != null ? t.totalMs : null;
+        const loss = t && t.lossPct != null ? t.lossPct : null;
+        // Same agent seen under a second trace: keep the WORSE reading rather
+        // than listing it twice, so the "worst first" order still means
+        // something and the row count matches the card's agent count.
+        const prevIdx = seen.get(aid);
+        if (prevIdx != null) {
+          const prev = out[prevIdx];
+          if ((loss || 0) > (prev.lossPct || 0)
+            || ((loss || 0) === (prev.lossPct || 0) && (lat || 0) > (prev.latencyMs || 0))) {
+            prev.latencyMs = lat; prev.lossPct = loss;
+          }
+          continue;
+        }
+        let name = null, kind = 'enterprise';
+        const a = Array.isArray(agents) ? agents.find((x) => x && String(x.agentId) === aid) : null;
+        if (a) { name = a.agentName; kind = a.agentType === 'Cloud' ? 'cloud' : 'enterprise'; }
+        else { const ep = Array.isArray(allEndpointAgents) ? allEndpointAgents.find((x) => x && String(x.id) === aid) : null; if (ep) { name = ep.name; kind = 'endpoint'; } }
+        seen.set(aid, out.length);
+        out.push({ agentId: aid, name: name || ('Agent ' + aid), kind, latencyMs: lat, lossPct: loss });
+      }
     }
     out.sort((a, b) => ((b.lossPct || 0) - (a.lossPct || 0)) || ((b.latencyMs || 0) - (a.latencyMs || 0)));
     return out;
