@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.13';
+  const TEP_VERSION = '4.14';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2086,6 +2086,38 @@
       vector-effect: non-scaling-stroke;
     }
     .tep-agent-map-overlay { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+    /* EXPERIMENTAL — globe view. The sphere replaces the flat plate in place, so
+       the overlay of markers above it keeps working unchanged. */
+    .tep-globe-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+    .tep-globe-svg { width: 100%; height: 100%; display: block; }
+    /* Stroked in its OWN fill colour, not a lighter one: neighbouring countries
+       are separate polygons, so any contrasting stroke draws every internal
+       border AND widens the hairline cracks between them. Same-colour stroke
+       closes the seams instead. */
+    .tep-globe-land { fill: #26405f; stroke: #26405f; stroke-width: 1.1; stroke-linejoin: round; }
+    .tep-globe-grat { fill: none; stroke: rgba(148,163,184,.16); stroke-width: .7; }
+    .tep-globe-limb { stroke: rgba(56,189,248,.45); stroke-width: 1.2; }
+    /* The flat basemap and every Mercator-space overlay step aside while the
+       globe is up: their geometry is plate-carree and would not survive the
+       projection. Markers DO follow the sphere (see layoutMarkers). */
+    .tep-globe-on .tep-agent-map-canvas,
+    .tep-globe-on .tep-agent-map-svg { display: none !important; }
+    .tep-globe-on { cursor: grab; }
+    .tep-globe-on:active { cursor: grabbing; }
+    /* Far side of the sphere. */
+    .tep-agent-map-marker--globehidden { display: none !important; }
+    #tep-globe-btn {
+      position: fixed; bottom: 74px; right: 134px; z-index: 2147483647;
+      padding: 0 14px; height: 34px; border-radius: 17px;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      background: #0b2b45; color: #bae6fd; border: 1px solid #38bdf8;
+      font-size: 12px; font-weight: 800; letter-spacing: .6px; cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0,0,0,.4); user-select: none;
+      transition: transform .15s, background .15s, color .15s;
+    }
+    #tep-globe-btn:hover { transform: scale(1.06); }
+    #tep-globe-btn.tep-globe-btn--on { background: #0ea5e9; color: #04202f; border-color: #7dd3fc; }
+    #tep-globe-btn svg { display: block; }
     .tep-agent-map-marker {
       position: absolute; transform: translate(-50%, -50%); line-height: 0;
       pointer-events: auto; cursor: pointer;
@@ -5385,6 +5417,38 @@
     'border-radius:17px;background:#dc2626;color:#fff;font-size:12px;font-weight:800;letter-spacing:.6px;' +
     'display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);' +
     'transition:transform .15s,background .15s;user-select:none;font-family:inherit;';
+  // EXPERIMENTAL — globe view toggle. Lives beside LIVE TEST and, like it, is
+  // re-parented into the fullscreen overlay on open (there is no globe outside
+  // the fullscreen map).
+  /** Name the button after where it takes you, not where you are - it is a
+   *  toggle, so in globe view it reads MAP. CONFIRMED via user request. */
+  function tepGlobeSyncBtn() {
+    const b = document.getElementById('tep-globe-btn');
+    if (!b) return;
+    const lab = b.querySelector('#tep-globe-btn-label');
+    if (lab) lab.textContent = tepGlobeOn ? 'MAP' : 'GLOBE';
+    b.title = tepGlobeOn
+      ? 'Back to the flat map view'
+      : 'Experimental: show the world as a rotating globe instead of a flat map. Drag to spin, scroll to zoom.';
+  }
+  const globeBtn = document.createElement('div');
+  globeBtn.id = 'tep-globe-btn';
+  globeBtn.title = 'Experimental: show the world as a rotating globe instead of a flat map. Drag to spin, scroll to zoom.';
+  globeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18Z"/></svg>'
+    + '<span id="tep-globe-btn-label">GLOBE</span>';
+  globeBtn.style.display = 'none';
+  document.documentElement.appendChild(globeBtn);
+  globeBtn.addEventListener('click', () => {
+    tepGlobeOn = !tepGlobeOn;
+    globeBtn.classList.toggle('tep-globe-btn--on', tepGlobeOn);
+    tepGlobeSyncBtn();
+    // The flat map's zoom/pan is left exactly as it was - the globe never reads
+    // or writes it - so switching back lands on the same framing you left.
+    if (dashMapGlobeHook) dashMapGlobeHook();
+    else if (dashMapFullEl) renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true });
+  });
   liveTestBtn.addEventListener('mouseenter', () => { liveTestBtn.style.transform = 'scale(1.06)'; });
   liveTestBtn.addEventListener('mouseleave', () => { liveTestBtn.style.transform = ''; });
   const liveTestBeginRun = () => {
@@ -17758,6 +17822,269 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // EXPERIMENTAL — Globe view
+  // Swaps the fullscreen map's flat Web-Mercator plate for an orthographic globe:
+  // one hemisphere at a time, dragged to spin. CONFIRMED via user request.
+  //
+  // The basemap ships PRE-PROJECTED to Mercator (TEP_BASEMAP.paths is already
+  // x/y in a 2000x1434 viewBox), which a sphere cannot use. Mercator is
+  // invertible though, so tepGlobeLand() runs those path points back through
+  // tepFracToLonLat to recover lon/lat and caches the result - no second copy of
+  // the world has to ship for this.
+  // ---------------------------------------------------------------------------
+  let tepGlobeOn = false;
+  const tepGlobeRot = { lon: -30, lat: 20 };   // degrees; the point facing the viewer
+  // The globe's zoom is deliberately its OWN, not epDashMapZoom's. The flat map
+  // auto-frames the agents at whatever scale fits, which is rarely 1 - borrowing
+  // it multiplied the sphere's radius by that, so the ocean filled the viewport,
+  // the coastlines fell outside it and the markers scattered. Read as "the globe
+  // is blank" - CONFIRMED via user report. Keeping them separate also means
+  // toggling the view never disturbs the map's framing.
+  let tepGlobeZoom = 1;
+  let dashMapGlobeHook = null;                 // set by the fullscreen render: () => redraw
+  const TEP_GLOBE_RAD = Math.PI / 180;
+  let tepGlobeLandCache = null;
+  /** Land outlines as [lon,lat] rings, recovered from the Mercator basemap once.
+   *  Decimated on the way: the sphere is redrawn on every drag frame, and the
+   *  110m outline carries far more points than a ~500px globe can show. */
+  function tepGlobeLand() {
+    if (tepGlobeLandCache) return tepGlobeLandCache;
+    const out = [];
+    const sub = /M([\d.\-]+) ([\d.\-]+)((?:L[\d.\-]+ [\d.\-]+)*)Z/g;
+    const lin = /L([\d.\-]+) ([\d.\-]+)/g;
+    let m;
+    while ((m = sub.exec(TEP_BASEMAP.paths)) !== null) {
+      const pts = [[parseFloat(m[1]), parseFloat(m[2])]];
+      lin.lastIndex = 0;
+      let q;
+      while ((q = lin.exec(m[3])) !== null) pts.push([parseFloat(q[1]), parseFloat(q[2])]);
+      if (pts.length < 4) continue;
+      // Decimate by SNAPPING to a shared grid, not by distance from the last
+      // kept point. This is a countries map: neighbours trace the same border
+      // from opposite directions, and any phase-dependent thinning keeps
+      // DIFFERENT points on each side, so the two edges drift apart and open
+      // cracks. CONFIRMED via user report ("strange gaps"). Quantising to a
+      // fixed grid is phase-independent - both polygons snap a shared border to
+      // exactly the same coordinates - and emitting the SNAPPED point (rather
+      // than the original nearest it) is what makes the two sides identical
+      // rather than merely close.
+      const GRID = 2.5;             // viewBox units (~0.45 degrees of longitude)
+      const ring = [];
+      let lastQx = null, lastQy = null;
+      for (let i = 0; i < pts.length; i++) {
+        const qx = Math.round(pts[i][0] / GRID), qy = Math.round(pts[i][1] / GRID);
+        if (qx === lastQx && qy === lastQy) continue;
+        lastQx = qx; lastQy = qy;
+        const g = tepFracToLonLat((qx * GRID) / TEP_BASEMAP.vbw, (qy * GRID) / TEP_BASEMAP.vbh);
+        ring.push([g.lon, g.lat]);
+      }
+      if (ring.length >= 3) out.push(ring);
+    }
+    tepGlobeLandCache = out;
+    log(`Globe: recovered ${out.length} land rings from the Mercator basemap`, 'tep-log-info');
+    return out;
+  }
+  /** Orthographic projection. `visible` is false for the far hemisphere - the
+   *  caller decides whether that means "skip the point" or "hide the marker". */
+  function tepGlobeProject(lon, lat, cx, cy, R) {
+    const l0 = tepGlobeRot.lon * TEP_GLOBE_RAD, p0 = tepGlobeRot.lat * TEP_GLOBE_RAD;
+    const l = lon * TEP_GLOBE_RAD, p = lat * TEP_GLOBE_RAD;
+    const sinP = Math.sin(p), cosP = Math.cos(p);
+    const dl = l - l0, cosDl = Math.cos(dl);
+    // cos of the angular distance from the centre of the visible disc.
+    const cosC = Math.sin(p0) * sinP + Math.cos(p0) * cosP * cosDl;
+    return {
+      x: cx + R * cosP * Math.sin(dl),
+      y: cy - R * (Math.cos(p0) * sinP - Math.sin(p0) * cosP * cosDl),
+      visible: cosC >= 0,
+    };
+  }
+  // Momentum. Letting go mid-drag keeps the globe turning and eases it down,
+  // the way Google Earth does - CONFIRMED via user request. Velocity is measured
+  // over the last few move events rather than the whole gesture, so a drag that
+  // slows to a stop before release coasts to a stop too instead of flinging.
+  const tepGlobeVel = { lon: 0, lat: 0, t: 0 };
+  let tepGlobeGlideFrame = null;
+  const TEP_GLOBE_FRICTION = 0.94;     // per frame at 60fps - about 0.7s to settle
+  const TEP_GLOBE_MIN_VEL = 0.02;      // deg/frame; below this the motion reads as stopped
+  function tepGlobeStopGlide() {
+    if (tepGlobeGlideFrame != null) { cancelAnimationFrame(tepGlobeGlideFrame); tepGlobeGlideFrame = null; }
+    tepGlobeVel.lon = 0; tepGlobeVel.lat = 0;
+  }
+  function tepGlobeStartGlide() {
+    if (tepGlobeGlideFrame != null) { cancelAnimationFrame(tepGlobeGlideFrame); tepGlobeGlideFrame = null; }
+    if (Math.abs(tepGlobeVel.lon) + Math.abs(tepGlobeVel.lat) < TEP_GLOBE_MIN_VEL) return;
+    const step = () => {
+      tepGlobeRot.lon += tepGlobeVel.lon;
+      // Latitude still stops at the poles; hitting the clamp kills that axis's
+      // momentum rather than grinding against it for the rest of the glide.
+      const nextLat = tepGlobeRot.lat + tepGlobeVel.lat;
+      const clamped = Math.max(-82, Math.min(82, nextLat));
+      if (clamped !== nextLat) tepGlobeVel.lat = 0;
+      tepGlobeRot.lat = clamped;
+      tepGlobeVel.lon *= TEP_GLOBE_FRICTION;
+      tepGlobeVel.lat *= TEP_GLOBE_FRICTION;
+      if (dashMapGlobeHook) dashMapGlobeHook();
+      if (Math.abs(tepGlobeVel.lon) + Math.abs(tepGlobeVel.lat) < TEP_GLOBE_MIN_VEL) {
+        tepGlobeGlideFrame = null;
+        return;
+      }
+      tepGlobeGlideFrame = requestAnimationFrame(step);
+    };
+    tepGlobeGlideFrame = requestAnimationFrame(step);
+  }
+  /** Where the great-circle segment from a VISIBLE point to a HIDDEN one crosses
+   *  the horizon, projected. Binary search rather than algebra: the visibility
+   *  test is already cheap, the segments are short after decimation, and 12
+   *  bisections put the crossing well inside a pixel. Returns null if the two
+   *  points are not actually on opposite sides. */
+  function tepGlobeHorizonPt(visLL, hidLL, cx, cy, R) {
+    let a = visLL, b = hidLL;
+    if (!tepGlobeProject(a[0], a[1], cx, cy, R).visible) {
+      if (!tepGlobeProject(b[0], b[1], cx, cy, R).visible) return null;
+      const t = a; a = b; b = t;
+    }
+    let lo = 0, hi = 1;
+    // Interpolating lon linearly is wrong across the antimeridian, so take the
+    // shortest way round, exactly as the spin does.
+    const dLon = ((b[0] - a[0] + 540) % 360) - 180;
+    for (let i = 0; i < 12; i++) {
+      const mid = (lo + hi) / 2;
+      const p = tepGlobeProject(a[0] + dLon * mid, a[1] + (b[1] - a[1]) * mid, cx, cy, R);
+      if (p.visible) lo = mid; else hi = mid;
+    }
+    return tepGlobeProject(a[0] + dLon * lo, a[1] + (b[1] - a[1]) * lo, cx, cy, R);
+  }
+  /** Spin the globe so a point faces the viewer, easing rotation and zoom
+   *  together - the sphere's answer to the flat map's fly-to-and-centre. */
+  let tepGlobeSpinFrame = null;
+  function tepGlobeSpinTo(lon, lat, zoom, onDone) {
+    if (lon == null || lat == null) { if (onDone) onDone(); return; }
+    if (tepGlobeSpinFrame != null) { cancelAnimationFrame(tepGlobeSpinFrame); tepGlobeSpinFrame = null; }
+    tepGlobeStopGlide();
+    const l0 = tepGlobeRot.lon, p0 = tepGlobeRot.lat, z0 = tepGlobeZoom;
+    // Shortest way round: +170 to -170 is a 20 degree turn, not 340.
+    const dl = ((lon - l0 + 540) % 360) - 180;
+    const dp = Math.max(-82, Math.min(82, lat)) - p0;
+    const dz = (zoom != null ? zoom : z0) - z0;
+    const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    const DUR = 620;
+    const step = (now) => {
+      const t = Math.min(1, ((now || Date.now()) - t0) / DUR);
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // easeInOutQuad
+      tepGlobeRot.lon = l0 + dl * e;
+      tepGlobeRot.lat = p0 + dp * e;
+      tepGlobeZoom = z0 + dz * e;
+      if (dashMapGlobeHook) dashMapGlobeHook();
+      if (t < 1) { tepGlobeSpinFrame = requestAnimationFrame(step); }
+      else { tepGlobeSpinFrame = null; if (onDone) onDone(); }
+    };
+    tepGlobeSpinFrame = requestAnimationFrame(step);
+  }
+  /** Globe geometry for a given viewport - shared by the painter and the marker
+   *  layout so they can never disagree about where the sphere is. */
+  function tepGlobeGeom(w, h) {
+    return { cx: w / 2, cy: h / 2, R: Math.min(w, h) * 0.42 * tepGlobeZoom };
+  }
+  /** The whole sphere as one SVG string: ocean, graticule, land, limb. */
+  function tepGlobeSvgHtml(w, h) {
+    const g = tepGlobeGeom(w, h);
+    const { cx, cy, R } = g;
+    const f = (v) => Math.round(v * 10) / 10;
+    let d = '';
+    for (const ring of tepGlobeLand()) {
+      const proj = ring.map((ll) => tepGlobeProject(ll[0], ll[1], cx, cy, R));
+      // Wholly on the far side: nothing to draw.
+      let firstHidden = -1, anyVisible = false;
+      for (let i = 0; i < proj.length; i++) {
+        if (proj[i].visible) anyVisible = true;
+        else if (firstHidden < 0) firstHidden = i;
+      }
+      if (!anyVisible) continue;
+      // Wholly visible: the simple case, no clipping needed.
+      if (firstHidden < 0) {
+        const parts = proj.map((pt, k) => (k ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y));
+        d += parts.join('') + 'Z';
+        continue;
+      }
+      // Straddles the horizon. Walk the ring STARTING FROM A HIDDEN POINT, so
+      // every visible run is bounded by a horizon crossing at both ends. Starting
+      // at an arbitrary index instead left a ring that began visible with a
+      // trailing wrap-around run that never merged with its first one - two
+      // overlapping polygons for the same ring, which the nonzero fill rule
+      // cancelled into a thin wedge-shaped hole. CONFIRMED via user report.
+      let run = null, runEntryAng = null;
+      const ang = (x, y) => Math.atan2(y - cy, x - cx);
+      const closeRun = (exitAng) => {
+        if (run && run.length > 2) {
+          if (runEntryAng != null && exitAng != null) {
+            // Back along the rim to where this run entered view, the short way
+            // round - the arc that bounds the visible land.
+            let da = runEntryAng - exitAng;
+            while (da > Math.PI) da -= 2 * Math.PI;
+            while (da < -Math.PI) da += 2 * Math.PI;
+            const steps = Math.max(1, Math.round(Math.abs(da) / 0.1));
+            for (let k = 1; k <= steps; k++) {
+              const aa = exitAng + da * (k / steps);
+              run.push('L' + f(cx + R * Math.cos(aa)) + ' ' + f(cy + R * Math.sin(aa)));
+            }
+          }
+          d += run.join('') + 'Z';
+        }
+        run = null; runEntryAng = null;
+      };
+      let prevLL = ring[firstHidden];
+      for (let k = 1; k <= ring.length; k++) {
+        const idx = (firstHidden + k) % ring.length;
+        const ll = ring[idx], pt = proj[idx];
+        if (pt.visible) {
+          if (!run) {
+            // Entering view: start AT the limb, not at the first sampled point
+            // inside it, which is what left ragged bites out of the edge.
+            const e = tepGlobeHorizonPt(prevLL, ll, cx, cy, R);
+            if (e) { run = ['M' + f(e.x) + ' ' + f(e.y)]; runEntryAng = ang(e.x, e.y); }
+            else { run = ['M' + f(pt.x) + ' ' + f(pt.y)]; runEntryAng = null; }
+          }
+          run.push('L' + f(pt.x) + ' ' + f(pt.y));
+        } else if (run) {
+          let exitAng = null;
+          const e = tepGlobeHorizonPt(ll, prevLL, cx, cy, R);
+          if (e) { run.push('L' + f(e.x) + ' ' + f(e.y)); exitAng = ang(e.x, e.y); }
+          closeRun(exitAng);
+        }
+        prevLL = ll;
+      }
+      closeRun(null);
+    }
+    let grat = '';
+    for (let lon = -180; lon < 180; lon += 30) {
+      let run = null;
+      for (let lat = -80; lat <= 80; lat += 4) {
+        const pt = tepGlobeProject(lon, lat, cx, cy, R);
+        if (!pt.visible) { run = null; continue; }
+        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+        run = 1;
+      }
+    }
+    for (let lat = -60; lat <= 60; lat += 30) {
+      let run = null;
+      for (let lon = -180; lon <= 180; lon += 4) {
+        const pt = tepGlobeProject(lon, lat, cx, cy, R);
+        if (!pt.visible) { run = null; continue; }
+        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+        run = 1;
+      }
+    }
+    return `<svg class="tep-globe-svg" viewBox="0 0 ${f(w)} ${f(h)}" aria-hidden="true">`
+      + `<defs><radialGradient id="tep-globe-sea" cx="35%" cy="30%" r="75%">`
+      + `<stop offset="0%" stop-color="#16304f"/><stop offset="70%" stop-color="#0e2038"/>`
+      + `<stop offset="100%" stop-color="#081526"/></radialGradient></defs>`
+      + `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="url(#tep-globe-sea)"/>`
+      + `<path class="tep-globe-grat" d="${grat}"/>`
+      + `<path class="tep-globe-land" d="${d}"/>`
+      + `<circle class="tep-globe-limb" cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="none"/></svg>`;
+  }
   /** Great-circle distance in km between two lat/lng points. */
   function tepHaversineKm(aLat, aLng, bLat, bLng) {
     const R = 6371, rad = Math.PI / 180;
@@ -23319,6 +23646,11 @@
       + TEP_BASEMAP.paths + '</svg>';
     const svg = canvas.querySelector('.tep-agent-map-svg');
     wrap.appendChild(canvas);
+    // EXPERIMENTAL — globe view. Its own layer between the flat basemap and the
+    // marker overlay, so toggling the sphere touches neither of them.
+    const globeLayer = document.createElement('div');
+    globeLayer.className = 'tep-globe-layer';
+    wrap.appendChild(globeLayer);
     const overlay = document.createElement('div');
     overlay.className = 'tep-agent-map-overlay';
     wrap.appendChild(overlay);
@@ -23536,6 +23868,10 @@
       const m = document.createElement('div');
       m._fx = pos.xPct / 100;
       m._fy = pos.yPct / 100;
+      // Kept alongside the Mercator fractions so globe view can re-project this
+      // marker on every spin without re-deriving it from a flattened position.
+      m._lng = cl.lng;
+      m._lat = cl.lat;
       m._cluster = cl;
       paintMarker(m);
       // Fade in the marker if it holds at least one agent that's never been
@@ -23711,7 +24047,9 @@
           packet.appendChild(motion);
           flowSvg.appendChild(packet);
           liveFlowLines.push({ pathEl: path, glowEl: glow, packetEl: packet,
-            srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
+            srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100,
+          // Globe view re-projects from these (see layoutMarkers).
+          srcLon: it.lng, srcLat: it.lat, destLon: cl.lng, destLat: cl.lat });
           if (!destAgents.has(key)) destAgents.set(key, []);
           destAgents.get(key).push({ name: it.name, ms: lat.ms, loss: lat.loss, estimated: !!dest.estimated });
           if (dest.estimated) {
@@ -23733,7 +24071,7 @@
           de._destInfo = anchorDest.info || { ip: '8.8.8.8', name: 'dns.google', location: anchorDest.location };
           de._destLoc = anchorDest.location;
           overlay.appendChild(de);
-          const dobj = { el: de, fx: dp.xPct / 100, fy: dp.yPct / 100 };
+          const dobj = { el: de, fx: dp.xPct / 100, fy: dp.yPct / 100, lon: cl.lng, lat: cl.lat };
           liveDestEls.push(dobj);
           destSeen.set(key, dobj);
         }
@@ -23854,7 +24192,7 @@
         // as the hop nodes — a plain click on an overlay child is eaten by the
         // pointer-capture pan flow).
         overlay.appendChild(el);
-        testDestEls.push({ el, fx: pos.xPct / 100, fy: pos.yPct / 100 });
+        testDestEls.push({ el, fx: pos.xPct / 100, fy: pos.yPct / 100, lon: dest.lng, lat: dest.lat });
       }
     }
     // Guard the trace-overlay builders: they run BEFORE the marker hover
@@ -23878,7 +24216,7 @@
         el.setAttribute('aria-label', 'Cloud agent — ' + (ca.name || ''));
         el._gcard = tepCloudAgentCardHtml(ca);   // rich hover card: info + SaaS/Net health
         overlay.appendChild(el);
-        cloudHoverEls.push({ el, fx: pos.xPct / 100, fy: pos.yPct / 100 });
+        cloudHoverEls.push({ el, fx: pos.xPct / 100, fy: pos.yPct / 100, lon: ca.lng, lat: ca.lat });
       }
     }
     try { buildCloudHover(); } catch (e) { log('Cloud hover render error: ' + (e && e.message), 'tep-log-err'); }
@@ -24241,7 +24579,10 @@
           overlay.appendChild(srcCloudEl);
         }
         testDestFlowLines.push({ pathEl: path, glowEl: glow, packetEl: packet, hopEls, srcLabelEl, srcCloudEl,
-          srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100 });
+          srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100,
+          // Globe view re-projects from these; the Mercator fractions above
+          // cannot be un-flattened once computed.
+          srcLon: g.lng, srcLat: g.lat, destLon: myDest.lng, destLat: myDest.lat });
         }   // end per-destination line
       }     // end per-cluster group
       // PERF: many overlapping animated traces are what tax the GPU (each is a
@@ -25161,22 +25502,32 @@
       // estimate IS the real answer to "where do we think the edge is"; nudging
       // it would visually contradict the label we just made always-visible.
       const destPx = [];
-      liveDestEls.forEach((de) => {
+      // Globe view projects the destination pins the same way as the agent
+      // markers, so a trace's two ends stay anchored to the same sphere -
+      // CONFIRMED via user report that tests and traces did not follow it.
+      const gg = tepGlobeOn ? tepGlobeGeom(w, h) : null;
+      const placeDest = (de, radius) => {
+        if (gg) {
+          if (de.lon == null || de.lat == null) { de.el.style.display = 'none'; return; }
+          const gp = tepGlobeProject(de.lon, de.lat, gg.cx, gg.cy, gg.R);
+          de.el.style.display = gp.visible ? '' : 'none';
+          if (!gp.visible) return;
+          de.el.style.left = gp.x + 'px';
+          de.el.style.top = gp.y + 'px';
+          destPx.push({ x: gp.x, y: gp.y, movable: false, radius });
+          return;
+        }
+        de.el.style.display = '';
         const x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
         const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
         de.el.style.left = x + 'px';
         de.el.style.top = y + 'px';
-        destPx.push({ x, y, movable: false, radius: 13 }); // ~26px G marker
-      });
+        destPx.push({ x, y, movable: false, radius });
+      };
+      liveDestEls.forEach((de) => placeDest(de, 13)); // ~26px G marker
       // EXPERIMENTAL (test-destinations MVP): the pinned test destination is
       // placed the same way — at its true position, never nudged.
-      testDestEls.forEach((de) => {
-        const x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
-        const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
-        de.el.style.left = x + 'px';
-        de.el.style.top = y + 'px';
-        destPx.push({ x, y, movable: false, radius: 11 });
-      });
+      testDestEls.forEach((de) => placeDest(de, 11));
       // Cloud-on-hover markers are placed further down — AFTER the agent nudge
       // loop below — so they can de-collide against the immovable targets/pins
       // and the settled agent markers (they were stacking right on top of a test
@@ -25302,6 +25653,17 @@
         // pinned) take no space — skip them so they neither get positioned nor
         // act as phantom obstacles that nudge the visible source markers.
         if (m.style.display === 'none') continue;
+        // Globe view: position from the marker's own lon/lat instead of the
+        // Mercator fraction, and drop anything on the far side of the sphere.
+        // Returns early - the overlap-nudging passes below are tuned for the
+        // flat plate and would fight the projection.
+        if (tepGlobeOn) {
+          const gg = tepGlobeGeom(w, h);
+          const gp = tepGlobeProject(m._lng, m._lat, gg.cx, gg.cy, gg.R);
+          m.classList.toggle('tep-agent-map-marker--globehidden', !gp.visible);
+          if (gp.visible) { m.style.left = gp.x + 'px'; m.style.top = gp.y + 'px'; }
+          continue;
+        }
         const trueX = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
         const trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
         const rM = markerRadiusPx(m);
@@ -25368,6 +25730,17 @@
       // themselves (they're transient decoration), never push a real marker.
       // Skipped mid-animation for the same perf reason the agent loop is.
       for (const ce of cloudHoverEls) {
+        // Globe view: project like every other marker and drop the far side.
+        // These were still being placed from their Mercator fraction, so they
+        // sat where the FLAT map would have put them - CONFIRMED via user report.
+        if (gg) {
+          if (ce.lon == null || ce.lat == null) { ce.el.style.display = 'none'; continue; }
+          const cp = tepGlobeProject(ce.lon, ce.lat, gg.cx, gg.cy, gg.R);
+          ce.el.style.display = cp.visible ? '' : 'none';
+          if (cp.visible) { ce.el.style.left = cp.x + 'px'; ce.el.style.top = cp.y + 'px'; }
+          continue;
+        }
+        ce.el.style.display = '';
         const trueX = epDashMapZoom.tx + ce.fx * w * epDashMapZoom.s;
         const trueY = epDashMapZoom.ty + ce.fy * h * epDashMapZoom.s;
         const rC = markerRadiusPx(ce.el);
@@ -25397,12 +25770,30 @@
       // LIVE TEST flow overlay: source follows the (possibly nudged) agent
       // marker; destination is always the G marker's TRUE, unmoved position.
       for (const fl of liveFlowLines) {
-        const sKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
-        const spx = markerPxByKey.get(sKey);
-        const x1 = spx ? spx.x : (epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s);
-        const y1 = spx ? spx.y : (epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s);
-        const x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
-        const y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
+        let x1, y1, x2, y2;
+        if (gg) {
+          // Same rule as the trace flows: both ends on the sphere, and a line
+          // with either end round the back is hidden rather than drawn across
+          // the limb as a path that does not exist.
+          const a = fl.srcLon != null ? tepGlobeProject(fl.srcLon, fl.srcLat, gg.cx, gg.cy, gg.R) : null;
+          const b = fl.destLon != null ? tepGlobeProject(fl.destLon, fl.destLat, gg.cx, gg.cy, gg.R) : null;
+          const shown = !!(a && b && a.visible && b.visible);
+          if (fl.pathEl) fl.pathEl.style.display = shown ? '' : 'none';
+          if (fl.glowEl) fl.glowEl.style.display = shown ? '' : 'none';
+          if (fl.packetEl) fl.packetEl.style.display = shown ? '' : 'none';
+          if (!shown) continue;
+          x1 = a.x; y1 = a.y; x2 = b.x; y2 = b.y;
+        } else {
+          if (fl.pathEl) fl.pathEl.style.display = '';
+          if (fl.glowEl) fl.glowEl.style.display = '';
+          if (fl.packetEl) fl.packetEl.style.display = '';
+          const sKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
+          const spx = markerPxByKey.get(sKey);
+          x1 = spx ? spx.x : (epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s);
+          y1 = spx ? spx.y : (epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s);
+          x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
+          y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
+        }
         const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
         const dx = x2 - x1, dy = y2 - y1;
         const len = Math.hypot(dx, dy) || 1;
@@ -25417,12 +25808,33 @@
       // follows the (possibly nudged) agent marker, destination is the pin's
       // true position.
       for (const fl of testDestFlowLines) {
-        const sKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
-        const spx = markerPxByKey.get(sKey);
-        const x1 = spx ? spx.x : (epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s);
-        const y1 = spx ? spx.y : (epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s);
-        const x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
-        const y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
+        let x1, y1, x2, y2;
+        if (gg) {
+          // Both ends re-projected onto the sphere. A line with either end on
+          // the far side is hidden outright rather than drawn across the limb,
+          // where it would read as a path that does not exist.
+          const a = fl.srcLon != null ? tepGlobeProject(fl.srcLon, fl.srcLat, gg.cx, gg.cy, gg.R) : null;
+          const b = fl.destLon != null ? tepGlobeProject(fl.destLon, fl.destLat, gg.cx, gg.cy, gg.R) : null;
+          const shown = !!(a && b && a.visible && b.visible);
+          if (fl.pathEl) fl.pathEl.style.display = shown ? '' : 'none';
+          if (fl.glowEl) fl.glowEl.style.display = shown ? '' : 'none';
+          if (fl.packetEl) fl.packetEl.style.display = shown ? '' : 'none';
+          for (const hp of (fl.hopEls || [])) if (hp.el) hp.el.style.display = shown ? '' : 'none';
+          if (fl.srcLabelEl) fl.srcLabelEl.style.display = shown ? '' : 'none';
+          if (fl.srcCloudEl) fl.srcCloudEl.style.display = shown ? '' : 'none';
+          if (!shown) continue;
+          x1 = a.x; y1 = a.y; x2 = b.x; y2 = b.y;
+        } else {
+          if (fl.pathEl) fl.pathEl.style.display = '';
+          if (fl.glowEl) fl.glowEl.style.display = '';
+          if (fl.packetEl) fl.packetEl.style.display = '';
+          const sKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
+          const spx = markerPxByKey.get(sKey);
+          x1 = spx ? spx.x : (epDashMapZoom.tx + fl.srcFx * w * epDashMapZoom.s);
+          y1 = spx ? spx.y : (epDashMapZoom.ty + fl.srcFy * h * epDashMapZoom.s);
+          x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
+          y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
+        }
         const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
         const dx = x2 - x1, dy = y2 - y1;
         const len = Math.hypot(dx, dy) || 1;
@@ -25585,6 +25997,17 @@
       animateZoomTo({ s: ns, tx: rect.width / 2 - wx * ns, ty: rect.height / 2 - wy * ns });
     }
     function zoomAt(factor, clientX, clientY) {
+      // Globe view scales the sphere, not the plate. Handled HERE rather than at
+      // each call site because everything funnels through zoomAt - the on-screen
+      // +/- buttons, the keyboard shortcuts and pinch as well as the wheel. Only
+      // the wheel had its own branch, which is why the buttons did nothing in
+      // globe view. CONFIRMED via user report.
+      if (tepGlobeOn) {
+        tepGlobeStopGlide();   // an explicit zoom ends any coasting spin
+        tepGlobeZoom = Math.max(0.6, Math.min(6, tepGlobeZoom * factor));
+        if (dashMapGlobeHook) dashMapGlobeHook();
+        return;
+      }
       cancelZoomAnim();
       const rect = wrap.getBoundingClientRect();
       const px = clientX - rect.left, py = clientY - rect.top;
@@ -25595,6 +26018,42 @@
       epDashMapZoom.tx = px - wx * ns;
       epDashMapZoom.ty = py - wy * ns;
       apply();
+    }
+    /** Redraw the sphere and re-place the markers on it. Cheap enough for every
+     *  drag frame: one SVG string plus a loop over the markers. */
+    function drawGlobe() {
+      if (!full) return;
+      wrap.classList.toggle('tep-globe-on', tepGlobeOn);
+      if (!tepGlobeOn) {
+        globeLayer.innerHTML = '';
+        // Back on the flat map - clear any far-side hiding the sphere applied.
+        for (const m of markerEls) m.classList.remove('tep-agent-map-marker--globehidden');
+        return;
+      }
+      const gw = wrap.clientWidth, gh = wrap.clientHeight;
+      // The render builds this tree before attaching it, and live repaints go
+      // through the same path - so drawGlobe can land while the wrap still
+      // measures 0x0, which produced a viewBox of "0 0 0 0" and a globe that
+      // silently vanished. CONFIRMED via user report ("disappears at times").
+      // Retry on the next frame, by which point layout has happened.
+      if (gw < 2 || gh < 2) { requestAnimationFrame(() => { if (tepGlobeOn) drawGlobe(); }); return; }
+      globeLayer.innerHTML = tepGlobeSvgHtml(gw, gh);
+      // Logged once per entry into globe view. A blank sphere has several
+      // possible causes - zero-size wrap, no land rings recovered, a radius that
+      // throws the limb off-screen - and these numbers separate them.
+      if (!globeLayer._tepLogged) {
+        globeLayer._tepLogged = true;
+        const gg = tepGlobeGeom(gw, gh);
+        const landEl = globeLayer.querySelector('.tep-globe-land');
+        const dLen = landEl ? (landEl.getAttribute('d') || '').length : 0;
+        log(`Globe: viewport ${gw}x${gh}, radius ${Math.round(gg.R)}px, `
+          + `${tepGlobeLand().length} rings, ${dLen} path chars`, 'tep-log-info');
+      }
+    }
+    if (full) {
+      dashMapGlobeHook = () => { drawGlobe(); layoutMarkers(); };
+      // Restore the sphere if the map re-rendered while globe view was on.
+      if (tepGlobeOn) drawGlobe();
     }
     wrap.addEventListener('wheel', (e) => {
       if (e.target.closest('.tep-agent-map-tip')) return; // let the hover card scroll
@@ -25649,6 +26108,8 @@
       if (e.target.closest('.tep-agent-map-zoom') || e.target.closest('.tep-agent-map-tip')) return;
       cancelZoomAnim();
       hideTip();
+      // Grabbing the globe again catches it mid-glide.
+      if (tepGlobeOn) { tepGlobeStopGlide(); tepGlobeVel.t = 0; }
       mapPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (mapPts.size >= 2) {
         // Second finger: hand the gesture to pinch. Drop the pan anchor so the
@@ -25664,7 +26125,8 @@
       // pointerup's own e.target is useless for figuring out what was clicked.
       // pointerType is recorded at DOWN (the authoritative start of the
       // gesture) and read at up, to tell a finger tap from a mouse click.
-      down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: e.target, ptype: e.pointerType };
+      down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: e.target, ptype: e.pointerType,
+        glon: tepGlobeRot.lon, glat: tepGlobeRot.lat };
       moved = false;
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     });
@@ -25686,6 +26148,26 @@
       if (!down) return;
       const dx = e.clientX - down.x, dy = e.clientY - down.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+      // Globe view: the same drag spins the sphere instead of panning the plate.
+      // Degrees-per-pixel scales with zoom so a magnified globe does not whip.
+      if (tepGlobeOn) {
+        const perPx = 0.32 / Math.max(1, tepGlobeZoom);
+        const prevLon = tepGlobeRot.lon, prevLat = tepGlobeRot.lat;
+        tepGlobeRot.lon = down.glon - dx * perPx;
+        // Clamped short of the poles: at +/-90 the projection's "up" is
+        // undefined and the world turns inside out.
+        tepGlobeRot.lat = Math.max(-82, Math.min(82, down.glat + dy * perPx));
+        // Per-frame velocity for the release glide, smoothed so one jittery
+        // event cannot define the throw.
+        const now = (window.performance && performance.now) ? performance.now() : Date.now();
+        const dt = tepGlobeVel.t ? Math.max(8, Math.min(64, now - tepGlobeVel.t)) : 16;
+        const k = 0.6;   // weight on the newest sample
+        tepGlobeVel.lon = tepGlobeVel.lon * (1 - k) + ((tepGlobeRot.lon - prevLon) * (16 / dt)) * k;
+        tepGlobeVel.lat = tepGlobeVel.lat * (1 - k) + ((tepGlobeRot.lat - prevLat) * (16 / dt)) * k;
+        tepGlobeVel.t = now;
+        if (dashMapGlobeHook) dashMapGlobeHook();
+        return;
+      }
       // Always drive the pan; clampPan bounds it (allows vertical drag even at
       // zoom 1 in fullscreen, where the wrap is cropped top/bottom).
       epDashMapZoom.tx = down.tx + dx;
@@ -25718,6 +26200,9 @@
       // not over. Bail before the release logic below, which unconditionally
       // clears `down` and would throw away the pan anchor just re-established.
       if (mapPts.size >= 1) return;
+      // Released mid-spin: let the globe carry on and ease down. `moved` gates
+      // it so a plain click never sets the world drifting.
+      if (tepGlobeOn && moved) tepGlobeStartGlide();
       if (!down) return;
       // Use the element recorded at pointerdown — pointer capture retargets
       // this event's own e.target to `wrap`, so it can't identify what was
@@ -25851,6 +26336,9 @@
         frameTestDest: () => {
           const d = dashMapSelectedTestDest;
           if (!d || d.lat == null) return;
+          // On the globe, "frame it" means turn it to face the viewer - the
+          // pan/zoom fitting below has no meaning on a sphere.
+          if (tepGlobeOn) { tepGlobeSpinTo(d.lng, d.lat, Math.max(tepGlobeZoom, 1.6)); return; }
           // Frame ALL destinations (a test can fan out to several) plus every
           // source agent, so the whole pin view fits. Points are collected in
           // map-FRACTION space (0..1). CLOUD agents that source this trace live
@@ -26081,11 +26569,19 @@
             // cluster's list), so no separate focus-key bookkeeping is
             // needed here — the existing search-highlight machinery already
             // covers it once the card is open.
-            animateZoomTo(
-              { s, tx: w / 2 - first._fx * w * s, ty: h / 2 - first._fy * h * s + topShift },
-              500,
-              () => showTip(first)
-            );
+            if (tepGlobeOn) {
+              // The globe's equivalent of centring: spin the hit round to face
+              // the viewer and zoom in, then open its card once it has settled -
+              // same sequencing reason as the flat path, showTip reads the
+              // marker's live rect.
+              tepGlobeSpinTo(first._lng, first._lat, Math.max(tepGlobeZoom, 2.2), () => showTip(first));
+            } else {
+              animateZoomTo(
+                { s, tx: w / 2 - first._fx * w * s, ty: h / 2 - first._fy * h * s + topShift },
+                500,
+                () => showTip(first)
+              );
+            }
           } else {
             showTip(first);
           }
@@ -30832,6 +31328,8 @@
     const ltBadge = document.getElementById('tep-livetest-badge');
     const ltClear = document.getElementById('tep-livetest-clear');
     if (ltBtn) { ov.appendChild(ltBtn); ltBtn.style.display = 'flex'; }
+    const gBtn = document.getElementById('tep-globe-btn');
+    if (gBtn) { ov.appendChild(gBtn); gBtn.style.display = 'flex'; }
     if (ltBadge) { ov.appendChild(ltBadge); }
     if (ltClear) { ov.appendChild(ltClear); }
     liveTestUpdateClearVisibility();
@@ -30856,6 +31354,16 @@
     const ltBadge = document.getElementById('tep-livetest-badge');
     const ltClear = document.getElementById('tep-livetest-clear');
     if (ltBtn) { document.documentElement.appendChild(ltBtn); ltBtn.style.display = 'none'; }
+    const gBtn = document.getElementById('tep-globe-btn');
+    if (gBtn) { document.documentElement.appendChild(gBtn); gBtn.style.display = 'none'; }
+    // The globe only exists inside the fullscreen map, so closing it drops the
+    // mode too - otherwise re-opening would come up as a sphere with the flat
+    // map's zoom state, which is not what the button was last seen doing.
+    tepGlobeOn = false;
+    if (gBtn) gBtn.classList.remove('tep-globe-btn--on');
+    tepGlobeSyncBtn();
+    if (tepGlobeSpinFrame != null) { cancelAnimationFrame(tepGlobeSpinFrame); tepGlobeSpinFrame = null; }
+    dashMapGlobeHook = null;
     if (ltBadge) { document.documentElement.appendChild(ltBadge); ltBadge.style.display = 'none'; }
     if (ltClear) { document.documentElement.appendChild(ltClear); ltClear.style.display = 'none'; }
     const ov = dashMapFullEl;
