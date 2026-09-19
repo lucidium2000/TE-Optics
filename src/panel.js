@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.14';
+  const TEP_VERSION = '4.15';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2090,19 +2090,42 @@
        the overlay of markers above it keeps working unchanged. */
     .tep-globe-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
     .tep-globe-svg { width: 100%; height: 100%; display: block; }
-    /* Stroked in its OWN fill colour, not a lighter one: neighbouring countries
-       are separate polygons, so any contrasting stroke draws every internal
-       border AND widens the hairline cracks between them. Same-colour stroke
-       closes the seams instead. */
-    .tep-globe-land { fill: #26405f; stroke: #26405f; stroke-width: 1.1; stroke-linejoin: round; }
+    /* Same land/border colours as the flat basemap, so switching views does not
+       change what the world looks like. A contrasting border stroke is safe now
+       that rings snap to a shared grid - neighbours abut exactly, so this draws
+       borders rather than widening cracks. */
+    .tep-globe-land { fill: #24344b; stroke: #486084; stroke-width: .7; stroke-linejoin: round; }
     .tep-globe-grat { fill: none; stroke: rgba(148,163,184,.16); stroke-width: .7; }
+    /* Night side. Two overlapping fills (terminator, then full night) so the
+       edge reads as dusk rather than a hard line. Non-interactive and above the
+       land, but below the markers, which live in the overlay. */
+    /* PURE BLACK, deliberately. A near-black blue (#01040c) still contributes
+       its own colour: at full shadow it shifted the land +3.7 degrees of hue and
+       +0.07 saturation, which read as the night side having a cast rather than
+       simply being darker - CONFIRMED via user report. Black multiplies the
+       existing colour toward zero and leaves hue untouched. */
+    .tep-globe-night { fill: #000; pointer-events: none; }
     .tep-globe-limb { stroke: rgba(56,189,248,.45); stroke-width: 1.2; }
     /* The flat basemap and every Mercator-space overlay step aside while the
        globe is up: their geometry is plate-carree and would not survive the
        projection. Markers DO follow the sphere (see layoutMarkers). */
     .tep-globe-on .tep-agent-map-canvas,
     .tep-globe-on .tep-agent-map-svg { display: none !important; }
+    /* NOTE: no background change here. The wrap's background-color IS the flat
+       map's ocean, so repainting it black turned the map dark the instant the
+       toggle was clicked, before the globe had faded in at all - CONFIRMED via
+       user report. Space is drawn INSIDE the globe layer instead, so it arrives
+       with the sphere. */
     .tep-globe-on { cursor: grab; }
+    .tep-globe-stars { pointer-events: none; }
+    .tep-globe-moon, .tep-globe-sun { pointer-events: none; }
+    /* Same grid as the Earth and Moon, in a warm tone dark enough to read on a
+       lit disc. */
+    .tep-globe-sun-grat { fill: none; stroke: rgba(124,45,18,.28); stroke-width: .7; }
+    .tep-globe-sun-rim { stroke: rgba(255,237,213,.5); stroke-width: .7; }
+    /* The night side keeps a trace of earthshine rather than going to nothing,
+       so a crescent still reads as a sphere. */
+    .tep-globe-moon-shadow { fill: #0b0e16; fill-opacity: .93; }
     .tep-globe-on:active { cursor: grabbing; }
     /* Far side of the sphere. */
     .tep-agent-map-marker--globehidden { display: none !important; }
@@ -2871,10 +2894,9 @@
        list needs instead of the 320px the expanded list is capped at. */
     .tep-breakdown-min.tep-breakdown-hasfocus { max-width: 620px !important; }
     .tep-breakdown-min.tep-breakdown-hasfocus .tep-saas-breakdown-head::after { display: block; margin-top: 6px; }
-    .tep-breakdown-focus b { color: var(--tep-slate-100); font-weight: 800; }
-    /* Several chips share the bar now, so let it wrap rather than overflow. */
+    /* The collapsed head holds the trace list, so let it wrap rather than
+       overflow its one-line default. */
     .tep-breakdown-min.tep-breakdown-hasfocus .tep-saas-breakdown-head { white-space: normal; max-width: 620px; }
-    .tep-breakdown-focus-stat { font-weight: 700; font-size: 11px; margin-left: 8px; font-variant-numeric: tabular-nums; }
     /* Centered confirm modal (tepConfirmModal) — used in place of the
        browser's native confirm(), which anchors near the top of the
        viewport instead of the middle. Same dark palette as the popovers
@@ -5441,13 +5463,31 @@
   globeBtn.style.display = 'none';
   document.documentElement.appendChild(globeBtn);
   globeBtn.addEventListener('click', () => {
-    tepGlobeOn = !tepGlobeOn;
+    const goingGlobe = !tepGlobeOn;
+    tepGlobeStopGlide();
+    // Hand the point of focus across so the two views show the SAME place -
+    // CONFIRMED via user request. Done BEFORE the crossfade starts, so markers
+    // glide to their final positions during the fade rather than after it.
+    if (dashMapGlobeHook) {
+      if (goingGlobe) {
+        const c = dashMapGlobeHook.mapCentreLonLat && dashMapGlobeHook.mapCentreLonLat();
+        if (c) {
+          tepGlobeRot.lon = c.lon;
+          tepGlobeRot.lat = Math.max(-82, Math.min(82, c.lat));
+        }
+        tepGlobeZoom = Math.max(0.6, Math.min(6, epDashMapZoom.s));
+      } else if (dashMapGlobeHook.centreMapOn) {
+        dashMapGlobeHook.centreMapOn(tepGlobeRot.lon, tepGlobeRot.lat, tepGlobeZoom);
+      }
+    }
+    tepGlobeOn = goingGlobe;
     globeBtn.classList.toggle('tep-globe-btn--on', tepGlobeOn);
     tepGlobeSyncBtn();
-    // The flat map's zoom/pan is left exactly as it was - the globe never reads
-    // or writes it - so switching back lands on the same framing you left.
-    if (dashMapGlobeHook) dashMapGlobeHook();
-    else if (dashMapFullEl) renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true });
+    if (dashMapGlobeHook) tepGlobeMorphTo(goingGlobe ? 1 : 0);
+    else if (dashMapFullEl) {
+      tepGlobeMorph = tepGlobeMorphTarget = goingGlobe ? 1 : 0;
+      renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true });
+    }
   });
   liveTestBtn.addEventListener('mouseenter', () => { liveTestBtn.style.transform = 'scale(1.06)'; });
   liveTestBtn.addEventListener('mouseleave', () => { liveTestBtn.style.transform = ''; });
@@ -17842,6 +17882,54 @@
   // is blank" - CONFIRMED via user report. Keeping them separate also means
   // toggling the view never disturbs the map's framing.
   let tepGlobeZoom = 1;
+  // Which view you are in is the BUTTON's answer, never the zoom's. A
+  // zoom-driven auto switch was tried and removed: because the sphere and the
+  // flat plate grow at different rates about the same centre, tying the morph
+  // to the zoom meant every agent drifted off its location the moment you
+  // zoomed, and no amount of anchoring made the two views agree mid-fade.
+  // CONFIRMED via user request ("revert the auto transition, it's not working
+  // well. Go back to toggle"). The morph now only ever moves during a toggle,
+  // which is what made this rock solid in the first place.
+  // 0 = flat map, 1 = globe, in between = crossfading. Everything positional
+  // reads this rather than tepGlobeOn, so markers, pins and flows glide between
+  // the two projections instead of jumping. CONFIRMED via user request.
+  let tepGlobeMorph = 0;
+  let tepGlobeMorphFrame = null;
+  // Where the morph is heading. Zoom arrives in discrete steps - a button press
+  // is x1.4 - so snapping the morph straight to the zoom made the fade lurch.
+  // Easing toward a target instead keeps it continuous however coarse the input.
+  let tepGlobeMorphTarget = 0;
+  function tepGlobeEaseMorph() {
+    if (tepGlobeMorphFrame != null) return;
+    const step = () => {
+      const d = tepGlobeMorphTarget - tepGlobeMorph;
+      if (Math.abs(d) < 0.004) {
+        tepGlobeMorph = tepGlobeMorphTarget;
+        tepGlobeMorphFrame = null;
+        if (dashMapGlobeHook) dashMapGlobeHook();
+        return;
+      }
+      tepGlobeMorph += d * 0.18;   // exponential ease; ~15 frames to settle
+      if (dashMapGlobeHook) dashMapGlobeHook();
+      tepGlobeMorphFrame = requestAnimationFrame(step);
+    };
+    tepGlobeMorphFrame = requestAnimationFrame(step);
+  }
+  /** Ease the morph to a target, redrawing as it goes. */
+  /** Ease to an explicit morph target - used by the manual toggle. Shares the
+   *  one easing loop with the zoom-driven path, so a button press and a zoom can
+   *  never drive the morph in opposite directions at the same time. */
+  function tepGlobeMorphTo(target, onDone) {
+    tepGlobeMorphTarget = target;
+    tepGlobeEaseMorph();
+    if (onDone) {
+      const wait = () => {
+        if (tepGlobeMorphFrame == null && tepGlobeMorph === tepGlobeMorphTarget) { onDone(); return; }
+        requestAnimationFrame(wait);
+      };
+      requestAnimationFrame(wait);
+    }
+  }
   let dashMapGlobeHook = null;                 // set by the fullscreen render: () => redraw
   const TEP_GLOBE_RAD = Math.PI / 180;
   let tepGlobeLandCache = null;
@@ -17888,7 +17976,12 @@
   /** Orthographic projection. `visible` is false for the far hemisphere - the
    *  caller decides whether that means "skip the point" or "hide the marker". */
   function tepGlobeProject(lon, lat, cx, cy, R) {
-    const l0 = tepGlobeRot.lon * TEP_GLOBE_RAD, p0 = tepGlobeRot.lat * TEP_GLOBE_RAD;
+    return tepOrthoProject(lon, lat, tepGlobeRot.lon, tepGlobeRot.lat, cx, cy, R);
+  }
+  /** The projection itself, with the view centre passed in - so a second, small
+   *  sphere (the Moon) can be drawn with its own orientation. */
+  function tepOrthoProject(lon, lat, rotLon, rotLat, cx, cy, R) {
+    const l0 = rotLon * TEP_GLOBE_RAD, p0 = rotLat * TEP_GLOBE_RAD;
     const l = lon * TEP_GLOBE_RAD, p = lat * TEP_GLOBE_RAD;
     const sinP = Math.sin(p), cosP = Math.cos(p);
     const dl = l - l0, cosDl = Math.cos(dl);
@@ -17987,76 +18080,495 @@
   function tepGlobeGeom(w, h) {
     return { cx: w / 2, cy: h / 2, R: Math.min(w, h) * 0.42 * tepGlobeZoom };
   }
-  /** The whole sphere as one SVG string: ocean, graticule, land, limb. */
+  /** Keep the globe's own scale in step with the single shared zoom, clamped to
+   *  the range a sphere reads well at. */
+  function tepGlobeSyncZoom() {
+    tepGlobeZoom = Math.max(0.6, Math.min(6, epDashMapZoom.s));
+  }
+  /** Sub-solar point (the spot where the sun is straight overhead) for a given
+   *  instant, as { lon, lat }. Standard low-precision almanac formulae - good to
+   *  a fraction of a degree, which is far finer than a globe this size can show.
+   *  Driven by tepMetricsNowMs(), NOT Date.now(): with a point-in-time Data
+   *  Window the map is showing a past moment, and the shadow has to be the
+   *  shadow that was actually falling then. CONFIRMED via user request. */
+  function tepSubsolarPoint(ms) {
+    const RAD = Math.PI / 180;
+    // Days since J2000.0.
+    const n = ms / 86400000 + 2440587.5 - 2451545.0;
+    const L = (280.460 + 0.9856474 * n) % 360;                 // mean longitude
+    const g = ((357.528 + 0.9856003 * n) % 360) * RAD;         // mean anomaly
+    const lam = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * RAD;  // ecliptic longitude
+    const eps = (23.439 - 0.0000004 * n) * RAD;                // obliquity
+    const dec = Math.asin(Math.sin(eps) * Math.sin(lam)) / RAD;
+    const ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam)) / RAD;
+    // Greenwich mean sidereal time, degrees.
+    const gmst = (280.46061837 + 360.98564736629 * n) % 360;
+    let lon = ((ra - gmst + 540) % 360) - 180;
+    return { lon, lat: dec };
+  }
+  /** Sub-lunar point (the spot the Moon is directly over) for a given instant.
+   *  Low-precision lunar theory - the leading terms only, good to roughly a
+   *  third of a degree, which at this scale is a fraction of the Moon's own
+   *  width. Returns { lon, lat } in the same Earth-fixed frame as the sub-solar
+   *  point, so both drop straight into the view basis below. */
+  function tepSublunarPoint(ms) {
+    const RAD = Math.PI / 180;
+    const n = ms / 86400000 + 2440587.5 - 2451545.0;   // days since J2000.0
+    const L = (218.316 + 13.176396 * n) * RAD;         // mean longitude
+    const M = (134.963 + 13.064993 * n) * RAD;         // mean anomaly
+    const F = (93.272 + 13.229350 * n) * RAD;          // argument of latitude
+    const lam = L + 6.289 * RAD * Math.sin(M);         // ecliptic longitude
+    const bet = 5.128 * RAD * Math.sin(F);             // ecliptic latitude
+    const eps = (23.439 - 0.0000004 * n) * RAD;
+    const dec = Math.asin(Math.sin(bet) * Math.cos(eps)
+      + Math.cos(bet) * Math.sin(eps) * Math.sin(lam));
+    const ra = Math.atan2(Math.sin(lam) * Math.cos(eps) - Math.tan(bet) * Math.sin(eps), Math.cos(lam)) / RAD;
+    const gmst = (280.46061837 + 360.98564736629 * n) % 360;
+    return { lon: (((ra - gmst + 540) % 360) - 180), lat: dec / RAD };
+  }
+  /** A lon/lat direction expressed in the globe's VIEW basis: right, up, and
+   *  toward-the-viewer components. The same basis the projection uses, so a
+   *  direction in the sky can be placed against the sphere consistently. */
+  function tepGlobeViewBasis(lon, lat) {
+    const RAD = Math.PI / 180;
+    const p = lat * RAD, l = lon * RAD;
+    const p0 = tepGlobeRot.lat * RAD, l0 = tepGlobeRot.lon * RAD;
+    const dl = l - l0;
+    return {
+      right: Math.cos(p) * Math.sin(dl),
+      up: Math.cos(p0) * Math.sin(p) - Math.sin(p0) * Math.cos(p) * Math.cos(dl),
+      toward: Math.sin(p0) * Math.sin(p) + Math.cos(p0) * Math.cos(p) * Math.cos(dl),
+    };
+  }
+  // The Moon sits at a FIXED distance from the Earth, in Earth radii, and is a
+  // fixed fraction of the Earth's size - so both scale with zoom exactly as the
+  // globe does and the whole arrangement behaves like one rigid scene.
+  // CONFIRMED via user request.
+  //
+  // True distance is 60.3 radii, which is off any screen. 1.15 is as far as it
+  // can go and still be visible all the way round at zoom 1, since the globe
+  // already occupies 0.42 of the smaller viewport dimension. Zooming in pushes
+  // it out of view, which is what being at a fixed distance actually means.
+  const TEP_MOON_DIST_R = 1.15;
+  // Size as a fraction of the Earth's radius. Both bodies share it, because
+  // their real angular diameters are nearly identical (~0.53 degrees) and under
+  // this projection a body side-on draws at exactly this size whatever its
+  // distance - so equal size here IS the real relationship.
+  //
+  // Proportion is the hard part. The true distance/radius ratio is ~220 for BOTH
+  // bodies. A body has to sit within about 1.19 R to stay on screen when it is
+  // side-on, which at ratio 220 would make it 0.005 R - under two pixels, with
+  // no room for the grid. So the distances are compressed, and the size is set
+  // as small as still reads as a sphere. That lands the ratio near 50 instead of
+  // the ~15 it was, which is what made the Sun look like a close-up balloon -
+  // CONFIRMED via user report. The distance stays where a body is still on
+  // screen when side-on; pushing it out instead simply took both bodies out of
+  // view, so the correction had to come from the size.
+  const TEP_MOON_R_FRAC = 0.024;
+  // Where the viewer is, in Earth radii from the centre. The Earth itself stays
+  // orthographic (it barely changes under mild perspective), but the sky bodies
+  // are placed with a real pinhole projection, because that is the only thing
+  // that makes them behave:
+  //
+  //   offset = R * Dc * d * perp / (Dc - d * toward)
+  //
+  // A parallel projection put the offset at d * perp, so a body swinging TOWARD
+  // the viewer slid to the MIDDLE of the screen and transited the Earth - it
+  // could never pass you, which is exactly why it looked unnatural.
+  // CONFIRMED via user question. With the denominator above, a body approaching
+  // the viewer sweeps outward, off the edge of the frame, and is gone once it is
+  // past the camera - then reappears over the opposite limb.
+  const TEP_GLOBE_CAM_D = 1.0;
+  /** Perspective placement for a body in the sky. null when it is behind the
+   *  camera or hidden by the Earth. */
+  function tepGlobeSkyPos(v, dist, bodyR, cx, cy, R) {
+    const denom = TEP_GLOBE_CAM_D - dist * v.toward;
+    if (denom <= 0.02) return null;   // at or past the camera plane: behind you
+    const k = R * TEP_GLOBE_CAM_D / denom;
+    const x = cx + k * dist * v.right;
+    const y = cy - k * dist * v.up;
+    if (v.toward < 0 && Math.hypot(x - cx, y - cy) < R) return null;   // behind the Earth
+    return { x, y, r: k * bodyR, inFront: v.toward >= 0 };
+  }
+  /** The Moon as SVG, or null when the Earth is hiding it. Also reports whether
+   *  it is in front of the globe, so the caller can paint it in the right order. */
+  function tepGlobeMoonHtml(cx, cy, R) {
+    const ms = tepMetricsNowMs();
+    const m = tepSublunarPoint(ms), sunPt = tepSubsolarPoint(ms);
+    const mv = tepGlobeViewBasis(m.lon, m.lat);
+    // The Moon sits in a SKY that does not zoom with the Earth. Scaling its
+    // distance off the zoomed globe radius pushed it inside the disc as soon as
+    // the globe filled the viewport, so it vanished unless you were zoomed most
+    // of the way out - CONFIRMED via user report. Anchoring to the globe's
+    // unzoomed size keeps it in the same corner of the sky at every zoom.
+    // Fixed distance and size in Earth radii, both tied to the globe's current
+    // radius, so the scene stays rigid at every zoom.
+    const pos = tepGlobeSkyPos(mv, TEP_MOON_DIST_R, TEP_MOON_R_FRAC, cx, cy, R);
+    if (!pos) return null;
+    const x = pos.x, y = pos.y, rm = pos.r;
+    // Illuminated fraction from the Sun-Earth-Moon elongation.
+    const sv = tepGlobeViewBasis(sunPt.lon, sunPt.lat);
+    const dot = Math.max(-1, Math.min(1, mv.right * sv.right + mv.up * sv.up + mv.toward * sv.toward));
+    const k = (1 - dot) / 2;   // 0 at new moon, 1 at full
+    // The bright limb faces the Sun: take its direction on screen. Falls back to
+    // the Sun's raw view-space direction when the Sun is itself past the camera
+    // and so has no screen position of its own.
+    const sp = tepGlobeSkyPos(sv, TEP_SUN_DIST_R, TEP_MOON_R_FRAC, cx, cy, R);
+    const ang = sp
+      ? Math.atan2(sp.y - y, sp.x - x) * 180 / Math.PI
+      : Math.atan2(-sv.up, sv.right) * 180 / Math.PI;
+    // The UNLIT cap is drawn as an overlay, which is the same construction as
+    // the lit one with the fraction inverted and turned around. Overlaying is
+    // what lets the surface underneath (maria, limb darkening) show through the
+    // lit side instead of being flattened into one solid fill.
+    const ku = 1 - k;
+    const rxu = Math.abs(1 - 2 * ku) * rm;
+    const sweepU = ku > 0.5 ? 1 : 0;
+    const unlit = `M0 ${-rm}A${rm} ${rm} 0 0 1 0 ${rm}A${rxu.toFixed(2)} ${rm} 0 0 ${sweepU} 0 ${-rm}Z`;
+    const f = (v) => Math.round(v * 10) / 10;
+    // Same design as the Earth: the sphere's own sea gradient plus a graticule,
+    // and nothing else. No surface texture - CONFIRMED via user request. Its own
+    // orientation is fixed and centred, which keeps the grid symmetrical and
+    // reads as a small globe rather than a rotating body.
+    let grat = '';
+    for (let lo = -180; lo < 180; lo += 30) {
+      let run = 0;
+      for (let la = -90; la <= 90; la += 6) {
+        const pt = tepOrthoProject(lo, la, 0, 0, 0, 0, rm);
+        if (!pt.visible) { run = 0; continue; }
+        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+        run = 1;
+      }
+    }
+    for (let la = -60; la <= 60; la += 30) {
+      let run = 0;
+      for (let lo = -180; lo <= 180; lo += 6) {
+        const pt = tepOrthoProject(lo, la, 0, 0, 0, 0, rm);
+        if (!pt.visible) { run = 0; continue; }
+        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+        run = 1;
+      }
+    }
+    return {
+      inFront: pos.inFront,
+      html: `<g class="tep-globe-moon" transform="translate(${f(x)} ${f(y)})">`
+        + `<defs><clipPath id="tep-moon-clip"><circle r="${f(rm)}"/></clipPath>`
+        // Softens the terminator - a hard vector edge on a body this small reads
+        // as a cut-out rather than a shadow.
+        + `<filter id="tep-moon-soft" x="-30%" y="-30%" width="160%" height="160%">`
+        + `<feGaussianBlur stdDeviation="${f(blur)}"/></filter></defs>`
+        // The Earth's own sea gradient. It is defined in objectBoundingBox units,
+        // so it scales to this smaller circle and the shading matches.
+        + `<circle r="${f(rm)}" fill="url(#tep-globe-sea)"/>`
+        + `<path class="tep-globe-grat" d="${grat}"/>`
+        + (k < 0.995
+          ? `<g transform="rotate(${f(ang)})" clip-path="url(#tep-moon-clip)">`
+            + `<path d="${unlit}" class="tep-globe-moon-shadow" filter="url(#tep-moon-soft)"/></g>`
+          : '')
+        + `<circle r="${f(rm)}" class="tep-globe-limb" fill="none"/>`
+        + `</g>`,
+    };
+  }
+  // The Sun, on the same footing as the Moon.
+  //
+  // Real numbers, for the record: 1 AU is about 23,500 Earth radii and the Sun
+  // is about 109 Earth radii across. Neither survives being drawn to scale - at
+  // the Moon's compression it would still sit ~450 radii out. What IS worth
+  // preserving is the relationship anyone can check: the Sun and Moon subtend
+  // almost exactly the same angle from Earth (~0.53 degrees, which is why
+  // eclipses work at all). So the Sun is drawn the SAME apparent size as the
+  // Moon and placed further out - big and far, rather than near and small.
+  // 2.1 Earth radii - as far out as the map's aspect allows. Side-on that puts
+  // it ~684px from centre against a ~763px half-width, so it stays on screen
+  // east or west, which is where it almost always is: the sub-solar point never
+  // leaves +/-23.4 degrees of latitude. Further than this and it falls off the
+  // side entirely. It reads as distant now rather than parked next to the Earth
+  // - CONFIRMED via user report - and the distance/size ratio rises to ~88,
+  // against the Moon's 48 and a true value of ~220 for both.
+  const TEP_SUN_DIST_R = 2.1;
+  /** The Sun as SVG, or null when the Earth is in the way. Same construction as
+   *  the Moon - a grid sphere, no surface - just lit rather than shaded. */
+  function tepGlobeSunHtml(cx, cy, R) {
+    const sunPt = tepSubsolarPoint(tepMetricsNowMs());
+    const sv = tepGlobeViewBasis(sunPt.lon, sunPt.lat);
+    // Same apparent size as the Moon - their real angular diameters match - and
+    // the same perspective placement, so the Sun now genuinely sweeps past and
+    // behind the viewer instead of needing to be special-cased out of the way.
+    const pos = tepGlobeSkyPos(sv, TEP_SUN_DIST_R, TEP_MOON_R_FRAC, cx, cy, R);
+    if (!pos) return null;
+    const x = pos.x, y = pos.y, rs = pos.r;
+    const f = (v) => Math.round(v * 10) / 10;
+    let grat = '';
+    for (let lo = -180; lo < 180; lo += 30) {
+      let run = 0;
+      for (let la = -90; la <= 90; la += 6) {
+        const pt = tepOrthoProject(lo, la, 0, 0, 0, 0, rs);
+        if (!pt.visible) { run = 0; continue; }
+        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+        run = 1;
+      }
+    }
+    for (let la = -60; la <= 60; la += 30) {
+      let run = 0;
+      for (let lo = -180; lo <= 180; lo += 6) {
+        const pt = tepOrthoProject(lo, la, 0, 0, 0, 0, rs);
+        if (!pt.visible) { run = 0; continue; }
+        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+        run = 1;
+      }
+    }
+    return {
+      inFront: pos.inFront,
+      html: `<g class="tep-globe-sun" transform="translate(${f(x)} ${f(y)})">`
+        + `<defs><radialGradient id="tep-sun-face" cx="38%" cy="34%" r="74%">`
+        + `<stop offset="0%" stop-color="#fffaf0"/><stop offset="58%" stop-color="#fdd9a0"/>`
+        + `<stop offset="100%" stop-color="#f59e42"/></radialGradient>`
+        + `<radialGradient id="tep-sun-glow" cx="50%" cy="50%" r="50%">`
+        + `<stop offset="0%" stop-color="#fdba74" stop-opacity=".45"/>`
+        + `<stop offset="55%" stop-color="#f97316" stop-opacity=".14"/>`
+        + `<stop offset="100%" stop-color="#f97316" stop-opacity="0"/></radialGradient></defs>`
+        // Corona first, so the disc sits inside it.
+        + `<circle r="${f(rs * 3.1)}" fill="url(#tep-sun-glow)"/>`
+        + `<circle r="${f(rs)}" fill="url(#tep-sun-face)"/>`
+        + `<path class="tep-globe-sun-grat" d="${grat}"/>`
+        + `<circle r="${f(rs)}" class="tep-globe-sun-rim" fill="none"/>`
+        + `</g>`,
+    };
+  }
+  /** A ring of lon/lat points at a fixed angular distance from a centre - the
+   *  boundary of a spherical cap. At 90 degrees from the ANTI-solar point this
+   *  is the terminator; a little beyond it bounds full night, which is what
+   *  gives the shadow a twilight edge instead of a hard line. */
+  function tepGlobeCapRing(lonC, latC, radDeg, steps) {
+    const RAD = Math.PI / 180;
+    const p1 = latC * RAD, l1 = lonC * RAD, dd = radDeg * RAD;
+    const sinP1 = Math.sin(p1), cosP1 = Math.cos(p1), sinD = Math.sin(dd), cosD = Math.cos(dd);
+    const ring = [];
+    for (let i = 0; i < steps; i++) {
+      const th = (i / steps) * 2 * Math.PI;
+      const p2 = Math.asin(sinP1 * cosD + cosP1 * sinD * Math.cos(th));
+      const l2 = l1 + Math.atan2(Math.sin(th) * sinD * cosP1, cosD - sinP1 * Math.sin(p2));
+      ring.push([(((l2 / RAD) + 540) % 360) - 180, p2 / RAD]);
+    }
+    return ring;
+  }
+  /** The night side, as SVG path data clipped to the visible hemisphere. Two
+   *  bands: the cap beyond the terminator, and a slightly smaller one for full
+   *  night, so the two overlapping fills read as dusk deepening into dark. */
+  // Angular radii of the night bands, terminator (90) inward. The span is real
+  // twilight: the sun goes from the horizon to 18 degrees below it, which is
+  // exactly 90 to 72 degrees from the anti-solar point. It used to run to 57,
+  // making the terminator far softer than it looks from orbit - CONFIRMED via
+  // user request to match reality. Everything within 72 degrees is full night. More bands give a
+  // smoother gradient at the cost of one clipped ring each - cheap next to the
+  // ~9000 coastline points already projected per frame.
+  // Measured against a 16.7ms frame at the WORST case for this - looking
+  // straight at the anti-solar point, where every band is fully on screen:
+  // 16 bands 1.8ms, 32 bands 2.6ms, against 1.2ms for no bands at all. About
+  // 0.02-0.05ms each, so a fine ramp is affordable. Most views are cheaper
+  // still, because the inner bands fall entirely on the far side and exit
+  // immediately. CONFIRMED via user request for a smoother gradient, twice.
+  // Darkness at full night, as a plain multiply toward black.
+  const TEP_GLOBE_NIGHT_MAX = 0.574;
+  const TEP_GLOBE_NIGHT_BANDS = [
+    90, 89.714, 89.429, 89.143, 88.857, 88.571, 88.286, 88,
+    87.714, 87.429, 87.143, 86.857, 86.571, 86.286, 86, 85.714,
+    85.429, 85.143, 84.857, 84.571, 84.286, 84, 83.714, 83.429,
+    83.143, 82.857, 82.571, 82.286, 82, 81.714, 81.429, 81.143,
+    80.857, 80.571, 80.286, 80, 79.714, 79.429, 79.143, 78.857,
+    78.571, 78.286, 78, 77.714, 77.429, 77.143, 76.857, 76.571,
+    76.286, 76, 75.714, 75.429, 75.143, 74.857, 74.571, 74.286,
+    74, 73.714, 73.429, 73.143, 72.857, 72.571, 72.286, 72,
+  ];
+  function tepGlobeNightPaths(cx, cy, R) {
+    const sun = tepSubsolarPoint(tepMetricsNowMs());
+    // Centre of night is the point opposite the sun.
+    const antiLon = ((sun.lon + 180 + 540) % 360) - 180;
+    const antiLat = -sun.lat;
+    const B = TEP_GLOBE_NIGHT_BANDS;
+    const out = [];
+    // Each band is the ZONE BETWEEN two cap radii, drawn once at its own
+    // absolute opacity - NOT a stack of nested translucent caps.
+    //
+    // Stacking was the bug. Compositing is 8-bit, so a layer only darkens a
+    // channel when value * alpha >= 0.5; below that it rounds back to itself and
+    // the channel FREEZES. At 64 layers of 0.013 the red channel of the land
+    // (36) never moved at all while green and blue crawled down to 37, so the
+    // three channels locked at different values and the hue collapsed toward
+    // grey. That is the colour shift, and it got worse every time the gradient
+    // was made finer. CONFIRMED via an isolated test: 64 stacked layers produced
+    // 36,37,37 where the arithmetic says 15,22,32.
+    //
+    // Non-overlapping zones mean every pixel is composited exactly ONCE, at full
+    // precision, so the result is a pure multiply toward black and the hue is
+    // untouched however many bands there are.
+    for (let i = 0; i < B.length; i++) {
+      const inside = (lo, la) => tepGlobeAngularDist(lo, la, antiLon, antiLat) <= B[i];
+      let d = tepGlobeRingPath(tepGlobeCapRing(antiLon, antiLat, B[i], 180), cx, cy, R, inside);
+      if (i + 1 < B.length) {
+        // Second ring punches the hole; even-odd turns the pair into the annulus.
+        const inner = (lo, la) => tepGlobeAngularDist(lo, la, antiLon, antiLat) <= B[i + 1];
+        d += tepGlobeRingPath(tepGlobeCapRing(antiLon, antiLat, B[i + 1], 180), cx, cy, R, inner);
+      }
+      if (!d) {
+        // The whole zone is out of view: either the visible face is entirely
+        // inside it, or entirely outside. One interior test settles it, since a
+        // cap is a circle on the sphere.
+        const dist = tepGlobeAngularDist(tepGlobeRot.lon, tepGlobeRot.lat, antiLon, antiLat);
+        const within = dist <= B[i] && (i + 1 >= B.length || dist > B[i + 1]);
+        if (within) d = `M${cx - R} ${cy}a${R} ${R} 0 1 0 ${2 * R} 0a${R} ${R} 0 1 0 ${-2 * R} 0`;
+      }
+      // Linear ramp of ABSOLUTE opacity, terminator to full night.
+      out.push({ d, o: TEP_GLOBE_NIGHT_MAX * (i + 1) / B.length });
+    }
+    return out;
+  }
+
+  /** Angular distance between two lon/lat points, in degrees. */
+  function tepGlobeAngularDist(lonA, latA, lonB, latB) {
+    const RAD = Math.PI / 180;
+    const p1 = latA * RAD, p2 = latB * RAD, dl = (lonB - lonA) * RAD;
+    const c = Math.sin(p1) * Math.sin(p2) + Math.cos(p1) * Math.cos(p2) * Math.cos(dl);
+    return Math.acos(Math.max(-1, Math.min(1, c))) / RAD;
+  }
+  /** The lon/lat of the point on the LIMB at a given screen angle - the rim is
+   *  exactly 90 degrees from the centre of the view, so this is a destination
+   *  point at that distance along the matching bearing. Lets a caller ask "is
+   *  this stretch of rim inside my region?" when closing a clipped ring. */
+  function tepGlobeLimbLonLat(screenAng) {
+    const RAD = Math.PI / 180;
+    const lat0 = tepGlobeRot.lat * RAD, lon0 = tepGlobeRot.lon * RAD;
+    // Screen y grows downward and north is up, so a screen direction (dx, dy)
+    // is the compass bearing atan2(dx, -dy).
+    const th = Math.atan2(Math.cos(screenAng), -Math.sin(screenAng));
+    const lat2 = Math.asin(Math.cos(lat0) * Math.cos(th));
+    const lon2 = lon0 + Math.atan2(Math.sin(th) * Math.cos(lat0), -Math.sin(lat0) * Math.sin(lat2));
+    return [(((lon2 / RAD) + 540) % 360) - 180, lat2 / RAD];
+  }
+  /** One lon/lat ring, projected and clipped to the visible hemisphere, as SVG
+   *  path data. Extracted so the coastlines and the day/night terminator share
+   *  exactly the same horizon handling. '' when the ring is wholly on the far
+   *  side. */
+  function tepGlobeRingPath(ring, cx, cy, R, inside) {
+    const f = (v) => Math.round(v * 10) / 10;
+    let d = '';
+    const proj = ring.map((ll) => tepGlobeProject(ll[0], ll[1], cx, cy, R));
+    // Wholly on the far side: nothing to draw.
+    let firstHidden = -1, anyVisible = false;
+    for (let i = 0; i < proj.length; i++) {
+      if (proj[i].visible) anyVisible = true;
+      else if (firstHidden < 0) firstHidden = i;
+    }
+    if (!anyVisible) return d;
+    // Wholly visible: the simple case, no clipping needed.
+    if (firstHidden < 0) {
+      const parts = proj.map((pt, k) => (k ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y));
+      d += parts.join('') + 'Z';
+      return d;
+    }
+    // Straddles the horizon. Walk the ring STARTING FROM A HIDDEN POINT, so
+    // every visible run is bounded by a horizon crossing at both ends. Starting
+    // at an arbitrary index instead left a ring that began visible with a
+    // trailing wrap-around run that never merged with its first one - two
+    // overlapping polygons for the same ring, which the nonzero fill rule
+    // cancelled into a thin wedge-shaped hole. CONFIRMED via user report.
+    let run = null, runEntryAng = null;
+    const ang = (x, y) => Math.atan2(y - cy, x - cx);
+    const closeRun = (exitAng) => {
+      if (run && run.length > 2) {
+        if (runEntryAng != null && exitAng != null) {
+          // Back along the rim to where this run entered view. For coastlines
+          // the short way round is the arc that bounds the land. For a region
+          // like the night side that is NOT true - its centre can sit off-view
+          // entirely, and the short arc then encloses the LIT lune instead of
+          // the shadow, which is why the shadow drew as a thin strip.
+          // CONFIRMED via user report. When the caller can say what counts as
+          // inside, the arc whose midpoint passes that test is the right one.
+          let da = runEntryAng - exitAng;
+          while (da > Math.PI) da -= 2 * Math.PI;
+          while (da < -Math.PI) da += 2 * Math.PI;
+          if (inside) {
+            const ll = tepGlobeLimbLonLat(exitAng + da / 2);
+            if (ll && !inside(ll[0], ll[1])) da += (da < 0 ? 2 * Math.PI : -2 * Math.PI);
+          }
+          const steps = Math.max(1, Math.round(Math.abs(da) / 0.1));
+          for (let k = 1; k <= steps; k++) {
+            const aa = exitAng + da * (k / steps);
+            run.push('L' + f(cx + R * Math.cos(aa)) + ' ' + f(cy + R * Math.sin(aa)));
+          }
+        }
+        d += run.join('') + 'Z';
+      }
+      run = null; runEntryAng = null;
+    };
+    let prevLL = ring[firstHidden];
+    for (let k = 1; k <= ring.length; k++) {
+      const idx = (firstHidden + k) % ring.length;
+      const ll = ring[idx], pt = proj[idx];
+      if (pt.visible) {
+        if (!run) {
+          // Entering view: start AT the limb, not at the first sampled point
+          // inside it, which is what left ragged bites out of the edge.
+          const e = tepGlobeHorizonPt(prevLL, ll, cx, cy, R);
+          if (e) { run = ['M' + f(e.x) + ' ' + f(e.y)]; runEntryAng = ang(e.x, e.y); }
+          else { run = ['M' + f(pt.x) + ' ' + f(pt.y)]; runEntryAng = null; }
+        }
+        run.push('L' + f(pt.x) + ' ' + f(pt.y));
+      } else if (run) {
+        let exitAng = null;
+        const e = tepGlobeHorizonPt(ll, prevLL, cx, cy, R);
+        if (e) { run.push('L' + f(e.x) + ' ' + f(e.y)); exitAng = ang(e.x, e.y); }
+        closeRun(exitAng);
+      }
+      prevLL = ll;
+    }
+    closeRun(null);
+    return d;
+  }
+  /** A fixed field of faint stars for a given viewport, as SVG. Deterministic
+   *  (a small seeded generator, not Math.random) and cached per size, so the sky
+   *  does not re-scatter on every drag frame. */
+  let tepGlobeStarCache = null;
+  function tepGlobeStarsHtml(w, h) {
+    const key = Math.round(w) + 'x' + Math.round(h);
+    if (tepGlobeStarCache && tepGlobeStarCache.key === key) return tepGlobeStarCache.html;
+    // Mulberry32 - tiny, deterministic, and good enough for scattering dots.
+    let seed = 0x9e3779b9;
+    const rnd = () => {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const n = Math.max(60, Math.min(420, Math.round((w * h) / 4200)));
+    let out = '';
+    for (let i = 0; i < n; i++) {
+      const x = Math.round(rnd() * w * 10) / 10;
+      const y = Math.round(rnd() * h * 10) / 10;
+      const r = Math.round((0.4 + rnd() * 0.85) * 10) / 10;
+      // Mostly very faint, a few brighter - an even opacity reads as noise.
+      const o = Math.round((0.12 + Math.pow(rnd(), 2.2) * 0.55) * 100) / 100;
+      out += `<circle cx="${x}" cy="${y}" r="${r}" fill="#dbeafe" fill-opacity="${o}"/>`;
+    }
+    const html = `<g class="tep-globe-stars">${out}</g>`;
+    tepGlobeStarCache = { key, html };
+    return html;
+  }
+  /** The whole sphere as one SVG string: stars, ocean, graticule, land, limb. */
   function tepGlobeSvgHtml(w, h) {
     const g = tepGlobeGeom(w, h);
     const { cx, cy, R } = g;
     const f = (v) => Math.round(v * 10) / 10;
     let d = '';
-    for (const ring of tepGlobeLand()) {
-      const proj = ring.map((ll) => tepGlobeProject(ll[0], ll[1], cx, cy, R));
-      // Wholly on the far side: nothing to draw.
-      let firstHidden = -1, anyVisible = false;
-      for (let i = 0; i < proj.length; i++) {
-        if (proj[i].visible) anyVisible = true;
-        else if (firstHidden < 0) firstHidden = i;
-      }
-      if (!anyVisible) continue;
-      // Wholly visible: the simple case, no clipping needed.
-      if (firstHidden < 0) {
-        const parts = proj.map((pt, k) => (k ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y));
-        d += parts.join('') + 'Z';
-        continue;
-      }
-      // Straddles the horizon. Walk the ring STARTING FROM A HIDDEN POINT, so
-      // every visible run is bounded by a horizon crossing at both ends. Starting
-      // at an arbitrary index instead left a ring that began visible with a
-      // trailing wrap-around run that never merged with its first one - two
-      // overlapping polygons for the same ring, which the nonzero fill rule
-      // cancelled into a thin wedge-shaped hole. CONFIRMED via user report.
-      let run = null, runEntryAng = null;
-      const ang = (x, y) => Math.atan2(y - cy, x - cx);
-      const closeRun = (exitAng) => {
-        if (run && run.length > 2) {
-          if (runEntryAng != null && exitAng != null) {
-            // Back along the rim to where this run entered view, the short way
-            // round - the arc that bounds the visible land.
-            let da = runEntryAng - exitAng;
-            while (da > Math.PI) da -= 2 * Math.PI;
-            while (da < -Math.PI) da += 2 * Math.PI;
-            const steps = Math.max(1, Math.round(Math.abs(da) / 0.1));
-            for (let k = 1; k <= steps; k++) {
-              const aa = exitAng + da * (k / steps);
-              run.push('L' + f(cx + R * Math.cos(aa)) + ' ' + f(cy + R * Math.sin(aa)));
-            }
-          }
-          d += run.join('') + 'Z';
-        }
-        run = null; runEntryAng = null;
-      };
-      let prevLL = ring[firstHidden];
-      for (let k = 1; k <= ring.length; k++) {
-        const idx = (firstHidden + k) % ring.length;
-        const ll = ring[idx], pt = proj[idx];
-        if (pt.visible) {
-          if (!run) {
-            // Entering view: start AT the limb, not at the first sampled point
-            // inside it, which is what left ragged bites out of the edge.
-            const e = tepGlobeHorizonPt(prevLL, ll, cx, cy, R);
-            if (e) { run = ['M' + f(e.x) + ' ' + f(e.y)]; runEntryAng = ang(e.x, e.y); }
-            else { run = ['M' + f(pt.x) + ' ' + f(pt.y)]; runEntryAng = null; }
-          }
-          run.push('L' + f(pt.x) + ' ' + f(pt.y));
-        } else if (run) {
-          let exitAng = null;
-          const e = tepGlobeHorizonPt(ll, prevLL, cx, cy, R);
-          if (e) { run.push('L' + f(e.x) + ' ' + f(e.y)); exitAng = ang(e.x, e.y); }
-          closeRun(exitAng);
-        }
-        prevLL = ll;
-      }
-      closeRun(null);
-    }
+    for (const ring of tepGlobeLand()) d += tepGlobeRingPath(ring, cx, cy, R);
+    // The Moon, drawn behind or in front of the globe as its real position
+    // demands. Decorative, so a failure must never take the sphere with it.
+    let moon = null, sun = null;
+    try { moon = tepGlobeMoonHtml(cx, cy, R); } catch (e) { /* */ }
+    try { sun = tepGlobeSunHtml(cx, cy, R); } catch (e) { /* */ }
+    // Day/night shadow for the moment the map is showing.
+    let night = [];
+    try { night = tepGlobeNightPaths(cx, cy, R); } catch (e) { /* shadow is decorative - never break the globe over it */ }
     let grat = '';
     for (let lon = -180; lon < 180; lon += 30) {
       let run = null;
@@ -18077,13 +18589,27 @@
       }
     }
     return `<svg class="tep-globe-svg" viewBox="0 0 ${f(w)} ${f(h)}" aria-hidden="true">`
-      + `<defs><radialGradient id="tep-globe-sea" cx="35%" cy="30%" r="75%">`
-      + `<stop offset="0%" stop-color="#16304f"/><stop offset="70%" stop-color="#0e2038"/>`
-      + `<stop offset="100%" stop-color="#081526"/></radialGradient></defs>`
+      // Ocean is the flat map's own background (--tep-slate-900 / #0f172a) with
+      // just enough radial shading to read as a sphere rather than a disc.
+      + `<defs><radialGradient id="tep-globe-sea" cx="34%" cy="28%" r="78%">`
+      + `<stop offset="0%" stop-color="#1b2942"/><stop offset="62%" stop-color="#0f172a"/>`
+      + `<stop offset="100%" stop-color="#080d18"/></radialGradient></defs>`
+      // Opaque space backdrop, first so everything else sits on it. This is what
+      // lets the layer cross-fade over the map: the whole night sky arrives with
+      // the sphere instead of the map being blacked out underneath it.
+      + `<rect x="0" y="0" width="${f(w)}" height="${f(h)}" fill="#05070d"/>`
+      + tepGlobeStarsHtml(w, h)
+      + (sun && !sun.inFront ? sun.html : '')
+      + (moon && !moon.inFront ? moon.html : '')
       + `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="url(#tep-globe-sea)"/>`
       + `<path class="tep-globe-grat" d="${grat}"/>`
       + `<path class="tep-globe-land" d="${d}"/>`
-      + `<circle class="tep-globe-limb" cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="none"/></svg>`;
+      + night.map((b) => (b.d
+        ? `<path class="tep-globe-night" fill-rule="evenodd" style="fill-opacity:${b.o.toFixed(4)}" d="${b.d}"/>`
+        : '')).join('')
+      + `<circle class="tep-globe-limb" cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="none"/>`
+      + (sun && sun.inFront ? sun.html : '')
+      + (moon && moon.inFront ? moon.html : '') + '</svg>';
   }
   /** Great-circle distance in km between two lat/lng points. */
   function tepHaversineKm(aLat, aLng, bLat, bLng) {
@@ -25502,27 +26028,29 @@
       // estimate IS the real answer to "where do we think the edge is"; nudging
       // it would visually contradict the label we just made always-visible.
       const destPx = [];
-      // Globe view projects the destination pins the same way as the agent
-      // markers, so a trace's two ends stay anchored to the same sphere -
-      // CONFIRMED via user report that tests and traces did not follow it.
-      const gg = tepGlobeOn ? tepGlobeGeom(w, h) : null;
+      // Everything geographic is placed through morphPt: flat position and globe
+      // position blended by tepGlobeMorph, so a toggle glides rather than jumps.
+      // The morph only moves while a toggle is animating - never with the zoom -
+      // so once either view has settled this is exactly that view's own
+      // projection, and an agent sits on its location and stays there.
+      const gg = tepGlobeMorph > 0 ? tepGlobeGeom(w, h) : null;
+      const morphPt = (fx, fy, lon, lat) => {
+        const px = epDashMapZoom.tx + fx * w * epDashMapZoom.s;
+        const py = epDashMapZoom.ty + fy * h * epDashMapZoom.s;
+        if (!gg || lon == null || lat == null) return { x: px, y: py, visible: true };
+        const gp = tepGlobeProject(lon, lat, gg.cx, gg.cy, gg.R);
+        const t = tepGlobeMorph;
+        // Far-side markers only wink out once the globe is mostly formed -
+        // hiding them at the first frame of the fade would read as a glitch.
+        return { x: px + (gp.x - px) * t, y: py + (gp.y - py) * t, visible: gp.visible || t < 0.55 };
+      };
       const placeDest = (de, radius) => {
-        if (gg) {
-          if (de.lon == null || de.lat == null) { de.el.style.display = 'none'; return; }
-          const gp = tepGlobeProject(de.lon, de.lat, gg.cx, gg.cy, gg.R);
-          de.el.style.display = gp.visible ? '' : 'none';
-          if (!gp.visible) return;
-          de.el.style.left = gp.x + 'px';
-          de.el.style.top = gp.y + 'px';
-          destPx.push({ x: gp.x, y: gp.y, movable: false, radius });
-          return;
-        }
-        de.el.style.display = '';
-        const x = epDashMapZoom.tx + de.fx * w * epDashMapZoom.s;
-        const y = epDashMapZoom.ty + de.fy * h * epDashMapZoom.s;
-        de.el.style.left = x + 'px';
-        de.el.style.top = y + 'px';
-        destPx.push({ x, y, movable: false, radius });
+        const pt = morphPt(de.fx, de.fy, de.lon, de.lat);
+        de.el.style.display = pt.visible ? '' : 'none';
+        if (!pt.visible) return;
+        de.el.style.left = pt.x + 'px';
+        de.el.style.top = pt.y + 'px';
+        destPx.push({ x: pt.x, y: pt.y, movable: false, radius });
       };
       liveDestEls.forEach((de) => placeDest(de, 13)); // ~26px G marker
       // EXPERIMENTAL (test-destinations MVP): the pinned test destination is
@@ -25592,6 +26120,11 @@
       // Full separation is always tried first; these are fallbacks.
       const LAND_RADIUS_STEPS = [1, 0.78, 0.58, 0.4];
       function landSafeSpot(baseAngle, px, py, sep) {
+        // Globe view has no Mercator fraction to test against - this maps pixels
+        // back through epDashMapZoom into the basemap's viewBox, which means
+        // nothing on a sphere. Returning null makes every caller fall back to
+        // plain radial separation, which is projection-independent.
+        if (gg) return null;
         for (const frac of LAND_RADIUS_STEPS) {
           const r = sep * frac;
           for (const offDeg of WATER_SEARCH_DEG) {
@@ -25653,19 +26186,21 @@
         // pinned) take no space — skip them so they neither get positioned nor
         // act as phantom obstacles that nudge the visible source markers.
         if (m.style.display === 'none') continue;
-        // Globe view: position from the marker's own lon/lat instead of the
-        // Mercator fraction, and drop anything on the far side of the sphere.
-        // Returns early - the overlap-nudging passes below are tuned for the
-        // flat plate and would fight the projection.
-        if (tepGlobeOn) {
-          const gg = tepGlobeGeom(w, h);
-          const gp = tepGlobeProject(m._lng, m._lat, gg.cx, gg.cy, gg.R);
-          m.classList.toggle('tep-agent-map-marker--globehidden', !gp.visible);
-          if (gp.visible) { m.style.left = gp.x + 'px'; m.style.top = gp.y + 'px'; }
-          continue;
+        // Globe view positions from the marker's own lon/lat; the flat map from
+        // its Mercator fraction. Either way the TRUE position feeds the same
+        // overlap-nudging below - the nudging is pure screen-space separation,
+        // so it works identically on a sphere. CONFIRMED via user request.
+        let trueX, trueY;
+        if (gg) {
+          const pt = morphPt(m._fx, m._fy, m._lng, m._lat);
+          m.classList.toggle('tep-agent-map-marker--globehidden', !pt.visible);
+          // Far side: takes no space, so it cannot shove visible markers about.
+          if (!pt.visible) continue;
+          trueX = pt.x; trueY = pt.y;
+        } else {
+          trueX = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
+          trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
         }
-        const trueX = epDashMapZoom.tx + m._fx * w * epDashMapZoom.s;
-        const trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
         const rM = markerRadiusPx(m);
         let x = trueX, y = trueY;
         // Several passes, not just one reaction per conflict — with 3+
@@ -25733,16 +26268,17 @@
         // Globe view: project like every other marker and drop the far side.
         // These were still being placed from their Mercator fraction, so they
         // sat where the FLAT map would have put them - CONFIRMED via user report.
+        let trueX, trueY;
         if (gg) {
-          if (ce.lon == null || ce.lat == null) { ce.el.style.display = 'none'; continue; }
-          const cp = tepGlobeProject(ce.lon, ce.lat, gg.cx, gg.cy, gg.R);
+          const cp = morphPt(ce.fx, ce.fy, ce.lon, ce.lat);
           ce.el.style.display = cp.visible ? '' : 'none';
-          if (cp.visible) { ce.el.style.left = cp.x + 'px'; ce.el.style.top = cp.y + 'px'; }
-          continue;
+          if (!cp.visible) continue;
+          trueX = cp.x; trueY = cp.y;
+        } else {
+          ce.el.style.display = '';
+          trueX = epDashMapZoom.tx + ce.fx * w * epDashMapZoom.s;
+          trueY = epDashMapZoom.ty + ce.fy * h * epDashMapZoom.s;
         }
-        ce.el.style.display = '';
-        const trueX = epDashMapZoom.tx + ce.fx * w * epDashMapZoom.s;
-        const trueY = epDashMapZoom.ty + ce.fy * h * epDashMapZoom.s;
         const rC = markerRadiusPx(ce.el);
         let x = trueX, y = trueY;
         if (!midAnimation) for (let pass = 0; pass < 6; pass++) {
@@ -25772,12 +26308,18 @@
       for (const fl of liveFlowLines) {
         let x1, y1, x2, y2;
         if (gg) {
-          // Same rule as the trace flows: both ends on the sphere, and a line
-          // with either end round the back is hidden rather than drawn across
-          // the limb as a path that does not exist.
-          const a = fl.srcLon != null ? tepGlobeProject(fl.srcLon, fl.srcLat, gg.cx, gg.cy, gg.R) : null;
-          const b = fl.destLon != null ? tepGlobeProject(fl.destLon, fl.destLat, gg.cx, gg.cy, gg.R) : null;
-          const shown = !!(a && b && a.visible && b.visible);
+          // Both ends blended onto the sphere. A line with either end round the
+          // back is hidden rather than drawn across the limb as a path that does
+          // not exist.
+          const a = morphPt(fl.srcFx, fl.srcFy, fl.srcLon, fl.srcLat);
+          const b = morphPt(fl.destFx, fl.destFy, fl.destLon, fl.destLat);
+          const shown = !!(a.visible && b.visible);
+          // Follow the marker to wherever overlap-nudging put it, so a line does
+          // not detach from the pin it belongs to. Same lookup as the flat path:
+          // the key is the Mercator fraction, which both carry either way.
+          const gKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
+          const gpx = markerPxByKey.get(gKey);
+          if (gpx) { a.x = gpx.x; a.y = gpx.y; }
           if (fl.pathEl) fl.pathEl.style.display = shown ? '' : 'none';
           if (fl.glowEl) fl.glowEl.style.display = shown ? '' : 'none';
           if (fl.packetEl) fl.packetEl.style.display = shown ? '' : 'none';
@@ -25810,12 +26352,18 @@
       for (const fl of testDestFlowLines) {
         let x1, y1, x2, y2;
         if (gg) {
-          // Both ends re-projected onto the sphere. A line with either end on
-          // the far side is hidden outright rather than drawn across the limb,
-          // where it would read as a path that does not exist.
-          const a = fl.srcLon != null ? tepGlobeProject(fl.srcLon, fl.srcLat, gg.cx, gg.cy, gg.R) : null;
-          const b = fl.destLon != null ? tepGlobeProject(fl.destLon, fl.destLat, gg.cx, gg.cy, gg.R) : null;
-          const shown = !!(a && b && a.visible && b.visible);
+          // Both ends blended onto the sphere. A line with either end round the
+          // back is hidden rather than drawn across the limb as a path that does
+          // not exist.
+          const a = morphPt(fl.srcFx, fl.srcFy, fl.srcLon, fl.srcLat);
+          const b = morphPt(fl.destFx, fl.destFy, fl.destLon, fl.destLat);
+          const shown = !!(a.visible && b.visible);
+          // Follow the marker to wherever overlap-nudging put it, so a line does
+          // not detach from the pin it belongs to. Same lookup as the flat path:
+          // the key is the Mercator fraction, which both carry either way.
+          const gKey = fl.srcFx.toFixed(6) + ',' + fl.srcFy.toFixed(6);
+          const gpx = markerPxByKey.get(gKey);
+          if (gpx) { a.x = gpx.x; a.y = gpx.y; }
           if (fl.pathEl) fl.pathEl.style.display = shown ? '' : 'none';
           if (fl.glowEl) fl.glowEl.style.display = shown ? '' : 'none';
           if (fl.packetEl) fl.packetEl.style.display = shown ? '' : 'none';
@@ -26002,9 +26550,12 @@
       // +/- buttons, the keyboard shortcuts and pinch as well as the wheel. Only
       // the wheel had its own branch, which is why the buttons did nothing in
       // globe view. CONFIRMED via user report.
-      if (tepGlobeOn) {
+      // Zoom always drives epDashMapZoom.s, in BOTH views - the globe derives its
+      // own radius from it (see drawGlobe), so there is one zoom, not two, and
+      // the auto-switch below has a single number to read.
+      if (tepGlobeMorph > 0) {
         tepGlobeStopGlide();   // an explicit zoom ends any coasting spin
-        tepGlobeZoom = Math.max(0.6, Math.min(6, tepGlobeZoom * factor));
+        epDashMapZoom.s = Math.min(MAX, Math.max(MIN, epDashMapZoom.s * factor));
         if (dashMapGlobeHook) dashMapGlobeHook();
         return;
       }
@@ -26023,11 +26574,36 @@
      *  drag frame: one SVG string plus a loop over the markers. */
     function drawGlobe() {
       if (!full) return;
-      wrap.classList.toggle('tep-globe-on', tepGlobeOn);
-      if (!tepGlobeOn) {
+      // The CLASS follows the target state (cursor, background); the LAYERS
+      // follow the morph, so the two views dissolve into each other.
+      tepGlobeSyncZoom();
+      const t = tepGlobeMorph;
+      // The flat map's zoom/pan is NOT touched here. The toggle hands the point
+      // of focus across once, when it is pressed (see the globe button), and
+      // that is the whole handover - re-aiming the map on every frame of the
+      // fade was part of the abandoned auto-switch and is what let the two
+      // views disagree about where an agent was.
+      // Keyed to the morph, not the target state, so the grab cursor persists
+      // through the fade out instead of snapping back at frame 1.
+      wrap.classList.toggle('tep-globe-on', tepGlobeOn || t > 0.02);
+      // A TRUE cross-fade: the map stays fully opaque underneath and the globe
+      // (with its own space backdrop) fades in on top. Fading BOTH would leave
+      // them each part-transparent mid-way, showing whatever is behind and
+      // dipping through dark - which is exactly what went wrong.
+      globeLayer.style.opacity = String(t);
+      canvas.style.opacity = '';
+      canvas.style.display = t >= 1 ? 'none' : '';
+      if (t <= 0) {
         globeLayer.innerHTML = '';
         // Back on the flat map - clear any far-side hiding the sphere applied.
         for (const m of markerEls) m.classList.remove('tep-agent-map-marker--globehidden');
+        // Hand leadership back: point the globe at whatever the map now shows,
+        // so if the fade runs again it starts from the same place rather than
+        // from wherever the sphere was left.
+        if (dashMapGlobeHook && dashMapGlobeHook.mapCentreLonLat) {
+          const c = dashMapGlobeHook.mapCentreLonLat();
+          if (c) { tepGlobeRot.lon = c.lon; tepGlobeRot.lat = Math.max(-82, Math.min(82, c.lat)); }
+        }
         return;
       }
       const gw = wrap.clientWidth, gh = wrap.clientHeight;
@@ -26036,7 +26612,7 @@
       // measures 0x0, which produced a viewBox of "0 0 0 0" and a globe that
       // silently vanished. CONFIRMED via user report ("disappears at times").
       // Retry on the next frame, by which point layout has happened.
-      if (gw < 2 || gh < 2) { requestAnimationFrame(() => { if (tepGlobeOn) drawGlobe(); }); return; }
+      if (gw < 2 || gh < 2) { requestAnimationFrame(() => { if (tepGlobeMorph > 0) drawGlobe(); }); return; }
       globeLayer.innerHTML = tepGlobeSvgHtml(gw, gh);
       // Logged once per entry into globe view. A blank sphere has several
       // possible causes - zero-size wrap, no land rings recovered, a radius that
@@ -26052,8 +26628,48 @@
     }
     if (full) {
       dashMapGlobeHook = () => { drawGlobe(); layoutMarkers(); };
+      /** What the flat map currently has in the middle of the viewport. */
+      dashMapGlobeHook.mapCentreLonLat = () => {
+        const cw = wrap.clientWidth, ch = wrap.clientHeight;
+        if (!cw || !ch) return null;
+        const fx = (cw / 2 - epDashMapZoom.tx) / (cw * epDashMapZoom.s);
+        const fy = (ch / 2 - epDashMapZoom.ty) / (ch * epDashMapZoom.s);
+        return tepFracToLonLat(Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy)));
+      };
+      /** Point the flat map at a lon/lat, so the globe can hand its focus back.
+       *
+       *  The plate does not wrap, so at low zoom it CANNOT put an off-centre
+       *  longitude in the middle - the whole world is already on screen and
+       *  clampPan pins tx to 0, which is why leaving the globe over Asia used to
+       *  land on an Atlantic-centred map. CONFIRMED via user report. So zoom in
+       *  by exactly as much as centring requires, and no more: a point already
+       *  near the middle needs no change at all. */
+      dashMapGlobeHook.centreMapOn = (lon, lat, scale) => {
+        const cw = wrap.clientWidth, ch = wrap.clientHeight;
+        if (!cw || !ch || lon == null || lat == null) return;
+        const pos = tepLonLatToPct(lon, lat);
+        const fx = pos.xPct / 100, fy = pos.yPct / 100;
+        // tx must satisfy both clampPan bounds, which solves to these two.
+        const needX = Math.max(1 / (2 * Math.max(fx, 1e-3)), 1 / (2 * Math.max(1 - fx, 1e-3)));
+        // Zoom in as far as centring actually requires, bounded only by the
+        // map's own MAX. Capping this lower left edge-of-plate longitudes
+        // off-centre, which defeats the point of handing the focus across -
+        // zooming in IS how a non-wrapping map centres on them.
+        // CONFIRMED via user request.
+        const sc = Math.max(Math.min(MAX, Math.max(MIN, scale || epDashMapZoom.s)), needX);
+        epDashMapZoom.s = Math.min(MAX, Math.max(MIN, sc));
+        epDashMapZoom.tx = cw / 2 - fx * cw * epDashMapZoom.s;
+        epDashMapZoom.ty = ch / 2 - fy * ch * epDashMapZoom.s;
+        // apply(), not clampPan(): clamping alone leaves epDashMapZoom updated but
+        // never rewrites the basemap SVG's viewBox, so the land stayed where it
+        // was while the markers (re-laid by the morph loop) moved to the new
+        // centre - the map read as being in the wrong place until any pan or
+        // zoom happened to call apply() and correct it. CONFIRMED via user
+        // report. apply() clamps as its first step, so nothing is lost.
+        try { apply(); } catch (_) { /* not every render exposes it */ }
+      };
       // Restore the sphere if the map re-rendered while globe view was on.
-      if (tepGlobeOn) drawGlobe();
+      if (tepGlobeMorph > 0) drawGlobe();
     }
     wrap.addEventListener('wheel', (e) => {
       if (e.target.closest('.tep-agent-map-tip')) return; // let the hover card scroll
@@ -31360,6 +31976,11 @@
     // mode too - otherwise re-opening would come up as a sphere with the flat
     // map's zoom state, which is not what the button was last seen doing.
     tepGlobeOn = false;
+    tepGlobeMorph = 0;
+    // The target too, or a queued ease would drag the next open straight back
+    // into whatever view this one was leaving.
+    tepGlobeMorphTarget = 0;
+    if (tepGlobeMorphFrame != null) { cancelAnimationFrame(tepGlobeMorphFrame); tepGlobeMorphFrame = null; }
     if (gBtn) gBtn.classList.remove('tep-globe-btn--on');
     tepGlobeSyncBtn();
     if (tepGlobeSpinFrame != null) { cancelAnimationFrame(tepGlobeSpinFrame); tepGlobeSpinFrame = null; }
