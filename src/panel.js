@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.15';
+  const TEP_VERSION = '4.16';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2090,6 +2090,10 @@
        the overlay of markers above it keeps working unchanged. */
     .tep-globe-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
     .tep-globe-svg { width: 100%; height: 100%; display: block; }
+    /* The sky is built once per viewport and only panned; the body is rebuilt
+       every frame. Separate layers so redrawing the Earth never costs a
+       re-rasterise of the starfield. */
+    .tep-globe-sky, .tep-globe-body { position: absolute; inset: 0; }
     /* Same land/border colours as the flat basemap, so switching views does not
        change what the world looks like. A contrasting border stroke is safe now
        that rings snap to a shared grid - neighbours abut exactly, so this draws
@@ -2118,6 +2122,18 @@
        with the sphere. */
     .tep-globe-on { cursor: grab; }
     .tep-globe-stars { pointer-events: none; }
+    /* The ThousandEyes eye, drawn behind the sphere at the far end of the
+       zoom-out. Brand orange for the lens arcs; the pupil is the ocean's mid
+       tone, so the Earth lands into a dot that is already the right colour.
+       CONFIRMED via user request. */
+    .tep-globe-eye { pointer-events: none; }
+    .tep-globe-eye-body { fill: url(#tep-eye-grad); }
+    .tep-globe-eye-pupil { fill: #0f172a; }
+    /* Agents and flow lines fade out as the Earth becomes the pupil - a few
+       hundred markers crowded into a 100px dot is noise, not information. */
+    .tep-agent-map-wrap--eye .tep-agent-map-overlay,
+    .tep-agent-map-wrap--eye .tep-livetest-flowsvg,
+    .tep-agent-map-wrap--eye .tep-testdest-flowsvg { opacity: var(--tep-eye-fade, 1); }
     .tep-globe-moon, .tep-globe-sun { pointer-events: none; }
     /* Same grid as the Earth and Moon, in a warm tone dark enough to read on a
        lit disc. */
@@ -5462,33 +5478,7 @@
     + '<span id="tep-globe-btn-label">GLOBE</span>';
   globeBtn.style.display = 'none';
   document.documentElement.appendChild(globeBtn);
-  globeBtn.addEventListener('click', () => {
-    const goingGlobe = !tepGlobeOn;
-    tepGlobeStopGlide();
-    // Hand the point of focus across so the two views show the SAME place -
-    // CONFIRMED via user request. Done BEFORE the crossfade starts, so markers
-    // glide to their final positions during the fade rather than after it.
-    if (dashMapGlobeHook) {
-      if (goingGlobe) {
-        const c = dashMapGlobeHook.mapCentreLonLat && dashMapGlobeHook.mapCentreLonLat();
-        if (c) {
-          tepGlobeRot.lon = c.lon;
-          tepGlobeRot.lat = Math.max(-82, Math.min(82, c.lat));
-        }
-        tepGlobeZoom = Math.max(0.6, Math.min(6, epDashMapZoom.s));
-      } else if (dashMapGlobeHook.centreMapOn) {
-        dashMapGlobeHook.centreMapOn(tepGlobeRot.lon, tepGlobeRot.lat, tepGlobeZoom);
-      }
-    }
-    tepGlobeOn = goingGlobe;
-    globeBtn.classList.toggle('tep-globe-btn--on', tepGlobeOn);
-    tepGlobeSyncBtn();
-    if (dashMapGlobeHook) tepGlobeMorphTo(goingGlobe ? 1 : 0);
-    else if (dashMapFullEl) {
-      tepGlobeMorph = tepGlobeMorphTarget = goingGlobe ? 1 : 0;
-      renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true });
-    }
-  });
+  globeBtn.addEventListener('click', () => { tepSetGlobeView(!tepGlobeOn); });
   liveTestBtn.addEventListener('mouseenter', () => { liveTestBtn.style.transform = 'scale(1.06)'; });
   liveTestBtn.addEventListener('mouseleave', () => { liveTestBtn.style.transform = ''; });
   const liveTestBeginRun = () => {
@@ -17863,6 +17853,76 @@
   }
 
   // ---------------------------------------------------------------------------
+  // The ThousandEyes eye, as vector outline. Two paths: the lens arcs (body)
+  // and the pupil, kept apart because the whole point is that the EARTH is the
+  // pupil - see tepEyeGeom / tepGlobeDotZoom below.
+  //
+  // Traced from the supplied logo SVG with its potrace wrapper
+  // (translate(0,1410) scale(.1,-.1)) baked into the coordinates and the
+  // artwork's own bounding box moved to the origin, so this is a plain path in
+  // a 1795.2 x 997.7 box with no nested transform to reason about. Measured,
+  // not eyeballed: the numbers below come from getBoundingClientRect on the
+  // rendered paths.
+  // ---------------------------------------------------------------------------
+  const TEP_EYE = {
+    w: 1795.2, h: 997.7,      // the artwork's own box
+    px: 885.03, py: 499.54,   // pupil centre within it
+    pr: 115.12,               // pupil radius
+    body: 'M690 0.5c-1.9 0.2-9.8 1-17.5 1.9-7.7 0.9-17.7 1.9-22.3 2.4-17.1 1.8-55.2 9.5-79.7 16.1-33.6 9-61.2 18.6-101.5 35.4-15.7 6.5-44 20.6-67.5 33.5-3.3 1.8-7.8 4.3-10 5.5-2.2 1.2-7.2 4.1-11 6.5-3.9 2.3-10.8 6.5-15.5 9.3-8.5 5.2-46.2 30.2-51 33.9-1.4 1.1-7.5 5.6-13.6 10.1-46.6 34.3-83.6 66.8-131.4 115.2-24.1 24.5-30.7 31.6-52.5 57-39.7 46.1-73.7 91.4-94 125.3-2.8 4.5-6.9 11.2-9.2 15-8.7 14-13.3 22.2-13.3 23.5 0 0.7 0.6 2.1 1.4 3.2 0.7 1.1 3.7 6.7 6.6 12.5 13.5 26.5 20.6 38.1 40.9 67 37 52.6 79.6 103.8 124.6 149.8 47.9 49 79.8 77.5 130.5 116.3 13.9 10.7 47.9 34.3 61 42.4 1.9 1.2 6 3.7 9 5.6 22.2 14.2 59.1 34.3 85.5 46.6 31.8 14.7 63.3 26.7 99 37.7 18.4 5.7 60.9 15.5 76 17.6 3.9 0.5 12.7 1.9 19.5 3 16.9 2.8 65 6 65 4.3 0-0.5-2.1-2-4.7-3.3-3.9-1.8-24.7-13.1-37.4-20.1-4.7-2.6-38.9-22.9-44.4-26.4-1.8-1.1-6.3-3.9-10.1-6.2-17.3-10.4-66.5-44.1-88.9-60.9-3.8-2.9-8.7-6.5-10.8-8.1-2-1.5-5.5-4.2-7.6-5.8-2.1-1.7-7.6-5.9-12.2-9.5-20.9-16.2-60.4-49.4-76.9-64.5-2.5-2.3-9.7-8.9-16-14.6-15.9-14.4-69.9-68.1-84.6-84.2-17.9-19.5-43.6-48.6-54.5-61.7-18.9-22.7-51.2-63.8-60.4-76.9-17.7-25.2-28.3-40.6-34.4-50.4l-4.3-6.8 7.5-11.2c38.5-57 99.5-133.8 149.7-188.2 31.7-34.3 79.7-82.3 105.1-105 34.2-30.7 39.6-35.4 68.3-58.3 3.2-2.6 7.2-5.9 9-7.3 7.3-6 39.5-29.9 48.2-35.9 1.2-0.8 6.4-4.4 11.6-8 10.1-7 30.4-20.5 35.5-23.6 1.7-1 9.8-5.9 18-10.8 8.1-4.9 16.8-10.1 19.3-11.6 8.9-5.4 29.3-16.2 49.9-26.5 11.6-5.8 21.1-10.8 21.1-11 0-0.5-19.4-0.4-25 0.2zM1003.5 0.4c-1.6 0.2-12.7 1.3-24.5 2.5-11.8 1.1-27.8 3.2-35.5 4.6-7.7 1.4-15.8 2.7-18 3-5.3 0.6-32.5 6.8-44.5 10-5.2 1.4-12 3.2-15 3.9-3 0.7-13.8 4.1-24 7.4-38.7 12.8-67.1 24.4-107 43.9-9.1 4.5-35.4 18.6-44 23.7-22.4 13.1-30.2 18-52.5 32.7-19.9 13.1-39.2 27.1-65.1 47-14.8 11.4-45.2 37.3-65.9 56.1-14.7 13.3-50.8 49-65.8 65.1-7.1 7.7-15.3 16.5-18.2 19.5-12.1 13-30.7 34.9-50.6 59.5-10.1 12.5-24.6 31.7-35.5 47-9.9 14-14.1 20.3-28.9 43-4.2 6.6-9.5 14.5-11.6 17.7-2.2 3.1-3.9 6.2-3.9 6.9 0 0.7 2 4.2 4.3 7.8 2.4 3.7 6.9 10.4 9.9 15.1 9.5 14.7 28.5 43.2 32.9 49.5 11.5 16.5 43 57.3 54.3 70.6 1.7 1.9 4 4.6 5.1 6 36.1 44.1 101.6 110.7 144.5 147 3 2.6 8.7 7.3 12.5 10.6 13 11 42.2 34 49.9 39.3 1.2 0.8 4.6 3.3 7.6 5.6 11 8.2 37.4 26 55.4 37.3 10.9 7 36.5 22.1 37.3 22.1 0.3-0 3.1 1.5 6.2 3.4 5 3.1 42.4 22 52.6 26.7 80.7 36.8 163.5 57.9 244.2 62 38.9 2 87.3 0.1 117.9-4.6 9.3-1.4 18.7-2.8 20.9-3.1 6.2-0.9 30.4-6.1 46.5-10 26.7-6.5 61-17.8 88-28.9 6.3-2.6 13.5-5.5 16-6.5 13.5-5.3 62-29.6 73.2-36.7 2.1-1.2 4-2.3 4.2-2.3 0.2-0 6.4-3.7 13.8-8.1 7.3-4.5 14.9-9.1 16.8-10.3 5-3 43-28.5 46.1-31 1.5-1.1 5.5-4.1 9-6.6 10.7-7.6 37.1-28.4 54-42.5 42.3-35.3 95.4-87.1 134.4-131 4.8-5.5 11.9-13.4 15.5-17.5 10.5-11.7 40.2-47.5 55.2-66.4 15.1-19.1 51.2-67.4 69.1-92.5l4.9-6.8-9.8-12.9c-9.5-12.5-32.1-42.2-45.3-59.4-3.5-4.7-7.8-10.1-9.5-12.1-1.7-1.9-4.4-5.3-6.1-7.4-8.4-10.8-41.2-50.5-43.4-52.5-0.4-0.3-3.3-3.7-6.6-7.5-5.9-6.9-8.1-9.3-30-33.1-23.3-25.2-47.1-48.8-82.5-81.9-7.7-7.1-34.5-30.3-47.1-40.5-91-74.5-189.2-128.8-284.4-157.4-36.7-11-77.6-19.9-104.3-22.6-4.8-0.5-14.8-1.7-22.2-2.6-10.2-1.3-23.9-1.7-55.5-1.9-23.1-0.2-43.3-0.1-45 0.1zm67 158.4c46.7 3.7 96.6 14.3 132.5 28.1 4.1 1.6 7.9 2.9 8.3 2.9 1-0 15.3 5.9 25.7 10.6 4.2 1.9 7.9 3.4 8.4 3.4 1.5-0 40.3 19.7 52.2 26.6 20.2 11.6 40.2 24.1 54.9 34.5 5.5 3.9 11.1 7.8 12.5 8.7 3.4 2.3 25.2 18.8 32.1 24.2 3.1 2.5 8.9 7.2 13 10.4 19.5 15.7 49.2 42.9 77 70.6 31.1 31.1 35.8 35.9 51.3 53.5 4.9 5.5 9.4 10.4 10 11 0.7 0.5 6.7 7.5 13.5 15.5 6.8 8 14.4 17 17 20 10.2 12 12.3 14.9 11.5 16.2-2.6 4.4-36.6 45.6-53.8 65.3-20.9 24-59.4 63.7-85.1 87.9-13 12.2-42.5 38-52.2 45.6-1.7 1.4-6.9 5.5-11.5 9.1-18 14.3-44.9 33.3-70.3 49.4-16.8 10.7-57.7 32.6-73.5 39.4-3 1.3-9.1 3.9-13.5 5.8-29.1 12.8-81.3 28.7-106 32.3-3.3 0.5-11.6 1.8-18.5 2.9-23 3.9-67.6 5.3-100.6 3.1-24.7-1.6-61.8-8.2-89.9-16.1-17.1-4.9-48.2-15.4-58.5-19.9-2.5-1.1-9.2-3.9-15-6.4-44-18.4-98.2-50.5-145.5-85.9-65.6-49.3-134.5-116.3-187-182.2-22.8-28.6-24.4-30.9-23.6-31.9 2.9-3.9 19.1-23.8 22-27.1 2-2.3 5.9-6.8 8.6-10 33.5-39.8 83.7-90.3 124-124.6 21.9-18.8 23-19.6 49-39.2 31.2-23.5 55.1-39.3 88-58.2 17.8-10.3 55.1-28.5 72-35.3 30.3-12.1 49.9-18.7 74.5-25.1 15.4-4 44.1-10.1 47.5-10.1 1.5-0 9.1-0.9 16.9-2 26.5-3.8 57.7-5 82.1-3zM1018 235.4c-1.9 0.2-10.2 1.1-18.5 2-13 1.3-19.2 2.4-30.2 4.9-3.6 0.8-2.7 2 4 5.4 3.4 1.7 8.7 4.5 11.7 6.2 3 1.7 14.3 7.9 25 13.8 10.7 5.9 20.4 11.2 21.5 11.9 4.8 2.7 22.3 12.7 26 14.7 6 3.2 25.1 14.6 32.5 19.4 3.6 2.2 7.9 4.8 9.5 5.7 5.6 3.2 34.3 22.1 52 34.3 4.4 3 14.9 10.7 23.4 17 8.4 6.4 16.5 12.5 18 13.6 22.7 17 65.8 56.6 88.2 81 10.5 11.4 23.9 27.6 23.9 28.8-0.1 2-22.9 28.9-40.5 47.7-61 65.2-132.1 121.3-222 175.3-13.6 8.2-36.7 21.7-37 21.7-0.1-0-5.2 2.8-11.2 6.3-6 3.5-11.7 6.6-12.6 7-13.5 5.2 50.7 8.3 89.8 4.4 32.4-3.3 77.1-13.5 106-24.2 8-3 27.3-10.6 36.1-14.3 17.6-7.4 59.7-29.8 73.1-39 1.6-1 8-5.3 14.3-9.5 39.4-25.9 87.8-67.5 121.3-104.2 5.5-6.1 12.1-13.3 14.6-16 16.9-18.4 47.6-54 47.6-55.1 0-2.5-60.2-68-80.6-87.9-12.9-12.6-35-32.1-46.9-41.5-2.4-1.9-5.8-4.7-7.5-6.1-11.2-9.5-67.7-48.9-70-48.9-0.4-0-1.9-0.8-3.3-1.9-1.5-1-4.5-2.9-6.7-4.1-2.2-1.3-7.6-4.3-12-6.8-10.8-6-33.7-17.7-40.5-20.6-3-1.3-9.8-4.3-15-6.6-21.7-9.4-60.6-22.2-76.5-25.1-3.3-0.6-9.7-1.9-14.3-3-15.3-3.5-41.2-6-66.2-6.4-12.9-0.2-25.1-0.1-27 0.1z',
+    pupil: 'M875.5 384.8c-30.4 3.5-53.7 14.8-73.5 35.6-16 16.8-25.1 34.4-30 58.4-3.1 14.6-2.4 33.8 1.5 49 2.6 9.6 9.4 25.4 14.7 34 5.3 8.6 15.2 19.6 23.8 26.6 12.2 9.9 21.9 15.1 42 22.5 4 1.4 23.7 3.9 31.5 3.9 48-0 92.3-31.3 108.5-76.6 4.8-13.6 6-21.1 6-38.9 0-18.6-1.2-25.6-6.8-41-11-30.2-34.8-54.7-64.4-66.4-15-5.9-37.6-8.9-53.3-7.1z',
+  };
+  // Clear space left around the mark, as a fraction of the box it is fitted
+  // into, on each side. CONFIRMED via user request ("10% space from the
+  // edges") - the limiting axis gets exactly this, the other gets more.
+  const TEP_EYE_MARGIN = 0.10;
+  // The mark's palette. Deliberately softer than the flat brand orange, which
+  // at full-screen size was glaring, and shaded from the Sun's real direction
+  // so the shape reads with some depth instead of as a flat cut-out.
+  // CONFIRMED via user request.
+  const TEP_EYE_LIT = '#e87a2b';
+  const TEP_EYE_SHADE = '#7e3a12';
+  // Even fully revealed the mark stays slightly transparent, so the starfield
+  // reads through it and it sits IN the scene rather than on top of it.
+  // CONFIRMED via user request ("20% transparent").
+  const TEP_EYE_MAX_OPACITY = 0.8;
+  /** The eye laid out full-screen, positioned by its PUPIL rather than by its
+   *  bounding box - the pupil is the thing that has to land on the globe, and
+   *  the globe is always at the centre of the viewport. The pupil sits at
+   *  (49.3%, 50.1%) of the artwork, so this is a ~0.7% nudge off a plain
+   *  centre: invisible, and it makes the dot exact instead of nearly right.
+   *
+   *  w/h are the SVG's own box; vw/vh the VISIBLE one. In fullscreen the wrap
+   *  overflows the map body and is centred in it, so those differ - fitting the
+   *  wrap is what cropped the mark off the top and bottom of the screen.
+   *  CONFIRMED via user screenshot. Both are centred on the same point, so only
+   *  the scale has to care. */
+  function tepEyeGeom(w, h, vw, vh) {
+    const bw = (vw > 0 ? vw : w) * (1 - 2 * TEP_EYE_MARGIN);
+    const bh = (vh > 0 ? vh : h) * (1 - 2 * TEP_EYE_MARGIN);
+    const k = Math.min(bw / TEP_EYE.w, bh / TEP_EYE.h);
+    return {
+      k,
+      tx: w / 2 - TEP_EYE.px * k,
+      ty: h / 2 - TEP_EYE.py * k,
+      r: TEP_EYE.pr * k,        // the pupil's radius on screen
+    };
+  }
+  /** Where the Sun is, as a unit direction on screen (+x right, +y down).
+   *  Drives the mark's shading, so the lit side of the logo is the lit side of
+   *  the world. Degenerate when the Sun is nearly dead ahead or behind, where
+   *  there is no meaningful screen direction - fall back to a fixed diagonal. */
+  function tepEyeSunDir() {
+    try {
+      const sp = tepSubsolarPoint(tepMetricsNowMs());
+      const sv = tepGlobeViewBasis(sp.lon, sp.lat);
+      const dx = sv.right, dy = -sv.up;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.05) return { x: dx / len, y: dy / len };
+    } catch (e) { /* shading is decorative - never break the mark over it */ }
+    return { x: 0.6, y: -0.8 };
+  }
+
+  // ---------------------------------------------------------------------------
   // EXPERIMENTAL — Globe view
   // Swaps the fullscreen map's flat Web-Mercator plate for an orthographic globe:
   // one hemisphere at a time, dragged to spin. CONFIRMED via user request.
@@ -17993,12 +18053,33 @@
       visible: cosC >= 0,
     };
   }
+  /** Inverse of tepGlobeProject: a point on the visible disc back to lon/lat,
+   *  or null if it is off the sphere. Standard inverse orthographic. This is
+   *  what lets globe view run the SAME land test the flat map does - unproject
+   *  to lon/lat, forward through Mercator, then ask the basemap. */
+  function tepGlobeUnproject(x, y, cx, cy, R) {
+    if (!(R > 0)) return null;
+    const xs = (x - cx) / R, ys = (cy - y) / R;
+    const rho = Math.hypot(xs, ys);
+    if (rho > 1) return null;                       // past the limb
+    const l0 = tepGlobeRot.lon * TEP_GLOBE_RAD, p0 = tepGlobeRot.lat * TEP_GLOBE_RAD;
+    if (rho < 1e-9) return { lon: tepGlobeRot.lon, lat: tepGlobeRot.lat };
+    const sinC = rho, cosC = Math.sqrt(Math.max(0, 1 - rho * rho));
+    const sinP0 = Math.sin(p0), cosP0 = Math.cos(p0);
+    const lat = Math.asin(Math.max(-1, Math.min(1, cosC * sinP0 + (ys * sinC * cosP0) / rho)));
+    const lon = l0 + Math.atan2(xs * sinC, rho * cosC * cosP0 - ys * sinC * sinP0);
+    return { lon: (((lon / TEP_GLOBE_RAD + 540) % 360) - 180), lat: lat / TEP_GLOBE_RAD };
+  }
   // Momentum. Letting go mid-drag keeps the globe turning and eases it down,
   // the way Google Earth does - CONFIRMED via user request. Velocity is measured
   // over the last few move events rather than the whole gesture, so a drag that
   // slows to a stop before release coasts to a stop too instead of flinging.
   const tepGlobeVel = { lon: 0, lat: 0, t: 0 };
   let tepGlobeGlideFrame = null;
+  // True from pointerdown to pointerup on the map. The idle spin stands aside
+  // while it is set: a drag writes tepGlobeRot ABSOLUTELY from its anchor, so
+  // the two would fight frame by frame and the globe would judder.
+  let tepGlobeDragging = false;
   const TEP_GLOBE_FRICTION = 0.94;     // per frame at 60fps - about 0.7s to settle
   const TEP_GLOBE_MIN_VEL = 0.02;      // deg/frame; below this the motion reads as stopped
   function tepGlobeStopGlide() {
@@ -18021,6 +18102,8 @@
       if (dashMapGlobeHook) dashMapGlobeHook();
       if (Math.abs(tepGlobeVel.lon) + Math.abs(tepGlobeVel.lat) < TEP_GLOBE_MIN_VEL) {
         tepGlobeGlideFrame = null;
+        // Coasted to a stop: if that left us far enough out, take over.
+        tepGlobeAutoSpinKick();
         return;
       }
       tepGlobeGlideFrame = requestAnimationFrame(step);
@@ -18049,10 +18132,147 @@
     }
     return tepGlobeProject(a[0] + dLon * lo, a[1] + (b[1] - a[1]) * lo, cx, cy, R);
   }
+  // Roughly where the user is, worked out from settings the browser already
+  // exposes - no permission prompt, no dialog, and nothing to deny.
+  // CONFIRMED via user request (the geolocation prompt was unwanted). It is a
+  // generalised answer by design: good enough to aim a globe, and never
+  // precise enough to be worth treating as personal data. Synchronous, so the
+  // view can be aimed BEFORE the fade starts rather than swinging round after.
+  let tepHomeGuess;   // undefined until worked out, then { lon, lat } or null
+  /** The zone's STANDARD offset, not today's. Reading the current one puts a
+   *  place 15 degrees out for half the year, because DST is exactly one hour.
+   *  The larger of January and July is standard time in either hemisphere. */
+  function tepStdUtcOffsetMin() {
+    const y = new Date().getFullYear();
+    return Math.max(new Date(y, 0, 1).getTimezoneOffset(),
+                    new Date(y, 6, 1).getTimezoneOffset());
+  }
+  // Fallback latitudes by IANA region, for the zones whose own name resolves to
+  // nothing. Crude on purpose - it only decides how far the globe is tilted.
+  // How far a country centroid may sit from the longitude its clock implies
+  // before the clock wins. Low enough to catch the wide countries whose second
+  // cities do not name a timezone (Canada, the US, Russia, Brazil).
+  const TEP_TZ_CENTROID_MAX_SEP = 12;
+  const TEP_TZ_REGION_LAT = {
+    america: 40, europe: 50, asia: 35, africa: 5, australia: -27,
+    pacific: -15, atlantic: 40, indian: -10, antarctica: -75, arctic: 78,
+  };
+  /** A rough home point, cached. Three sources, best first:
+   *   1. the timezone's own path, through the gazetteer the map already ships -
+   *      "America/Denver" is Denver, "America/Argentina/Salta" falls back to
+   *      Argentina. Exact for essentially every major metro.
+   *   2. the browser locale's region subtag as a country centroid, with the
+   *      longitude taken from the UTC offset instead when the two disagree
+   *      badly - that means a country wide enough to span zones (Canada, the
+   *      US, Russia), where the centroid is useless but the offset is not.
+   *   3. the UTC offset alone for longitude - 15 degrees an hour, good to a
+   *      few degrees - with the region's nominal latitude.
+   *  Returns null only if there is no timezone and no locale at all. */
+  function tepHomeGuessLonLat() {
+    if (tepHomeGuess !== undefined) return tepHomeGuess;
+    tepHomeGuess = null;
+    let tz = '';
+    try { tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || ''; } catch (e) { /* */ }
+    const segs = String(tz).split('/').filter(Boolean);
+    // 1) Most specific segment first, skipping the region word at the front.
+    for (let i = segs.length - 1; i >= 1; i--) {
+      const hit = epGeocode(segs[i].replace(/_/g, ' '));
+      if (hit) { tepHomeGuess = { lon: hit.lng, lat: hit.lat }; return tepHomeGuess; }
+    }
+    // WRAPPED, not clamped. UTC+13 and +14 exist (Chatham, Apia, Kiritimati),
+    // and clamping pinned them to +180 - the wrong side of the antimeridian by
+    // the width of the Pacific.
+    const offLon = ((-tepStdUtcOffsetMin() / 4 + 540) % 360) - 180;
+    // 2) Locale region -> country centroid.
+    let region = '';
+    try {
+      const loc = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+      const m = /^[A-Za-z]{2,3}[-_]([A-Za-z]{2})\b/.exec(loc);
+      if (m) region = m[1].toLowerCase();
+    } catch (e) { /* */ }
+    const ctry = region && TEP_GEO.countries[region];
+    if (ctry) {
+      // A centroid far from where the clock says you are means a country wide
+      // enough to span zones; keep its latitude, take the offset's longitude.
+      // Canada's centroid is in the Northwest Territories, which is no use to
+      // anyone in Halifax. Below the threshold the country is narrow and its
+      // centroid is the better of the two (Latvia sits at the west edge of
+      // UTC+2, so the clock alone would put it in Belarus).
+      // Shortest way round, or a country beside the antimeridian reads as
+      // hundreds of degrees adrift from a longitude on the other side of it.
+      const sep = Math.abs(((ctry[1] - offLon + 540) % 360) - 180);
+      const lon = sep > TEP_TZ_CENTROID_MAX_SEP ? offLon : ctry[1];
+      tepHomeGuess = { lon, lat: ctry[0] };
+      return tepHomeGuess;
+    }
+    // 3) The clock alone.
+    if (segs.length) {
+      tepHomeGuess = { lon: offLon, lat: TEP_TZ_REGION_LAT[segs[0].toLowerCase()] != null
+        ? TEP_TZ_REGION_LAT[segs[0].toLowerCase()] : 25 };
+    }
+    return tepHomeGuess;
+  }
+  /** Switch between the flat map and the globe, carrying the point of focus
+   *  across in both directions so the two views show the SAME place - done
+   *  BEFORE the crossfade starts, so markers glide to their final positions
+   *  during the fade rather than after it. CONFIRMED via user request.
+   *
+   *  The ONE place the view changes. The button and the zoom-out handoff at the
+   *  map's stop (see zoomAt) both come through here, so they cannot drift. */
+  function tepSetGlobeView(on, opts) {
+    if (on === tepGlobeOn) return;
+    const toHome = !!(on && opts && opts.toHome);
+    tepGlobeStopGlide();
+    if (dashMapGlobeHook) {
+      if (on) {
+        const c = dashMapGlobeHook.mapCentreLonLat && dashMapGlobeHook.mapCentreLonLat();
+        if (c) {
+          tepGlobeRot.lon = c.lon;
+          tepGlobeRot.lat = Math.max(-82, Math.min(82, c.lat));
+        }
+        // Aim at the user's own part of the world BEFORE the fade starts, so
+        // it arrives pointing there rather than swinging round afterwards.
+        const home = toHome ? tepHomeGuessLonLat() : null;
+        if (home) {
+          tepGlobeRot.lon = home.lon;
+          tepGlobeRot.lat = Math.max(-82, Math.min(82, home.lat));
+        }
+        tepGlobeZoom = Math.max(TEP_GLOBE_ZOOM_MIN, Math.min(TEP_GLOBE_ZOOM_MAX, epDashMapZoom.s));
+      } else if (dashMapGlobeHook.centreMapOn) {
+        // With the whole globe on screen you were looking at the whole world,
+        // not at one place on it - so there is no point of focus worth carrying
+        // across, and zooming the map in far enough to centre some longitude
+        // would invent one. Hand back the map's own start framing instead.
+        // CONFIRMED via user request.
+        const whole = dashMapGlobeHook.globeFullyVisible && dashMapGlobeHook.globeFullyVisible();
+        if (whole && dashMapGlobeHook.resetMapView) dashMapGlobeHook.resetMapView();
+        else dashMapGlobeHook.centreMapOn(tepGlobeRot.lon, tepGlobeRot.lat, tepGlobeZoom);
+      }
+    }
+    tepGlobeOn = on;
+    const btn = document.getElementById('tep-globe-btn');
+    if (btn) btn.classList.toggle('tep-globe-btn--on', on);
+    tepGlobeSyncBtn();
+    if (dashMapGlobeHook) tepGlobeMorphTo(on ? 1 : 0);
+    else if (dashMapFullEl) {
+      tepGlobeMorph = tepGlobeMorphTarget = on ? 1 : 0;
+      renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true });
+    }
+  }
   /** Spin the globe so a point faces the viewer, easing rotation and zoom
    *  together - the sphere's answer to the flat map's fly-to-and-centre. */
   let tepGlobeSpinFrame = null;
-  function tepGlobeSpinTo(lon, lat, zoom, onDone) {
+  // Base length of a globe spin-to. Framing a pinned trace destination keeps
+  // this; locating a node runs slower - see TEP_LOCATE_SPIN_MS.
+  const TEP_GLOBE_SPIN_MS = 620;
+  // Locating a node - the search box jumping to a hit, and the agent-list / ISP
+  // popover jumping to an agent, which the comment at that call site says is
+  // deliberately the same motion - runs at three quarters speed. A longer,
+  // calmer glide onto the thing you just asked for. CONFIRMED via user request.
+  const TEP_LOCATE_SPEED = 0.75;
+  const TEP_LOCATE_MS = Math.round(500 / TEP_LOCATE_SPEED);                 // 667, flat map
+  const TEP_LOCATE_SPIN_MS = Math.round(TEP_GLOBE_SPIN_MS / TEP_LOCATE_SPEED); // 827, globe
+  function tepGlobeSpinTo(lon, lat, zoom, onDone, durMs) {
     if (lon == null || lat == null) { if (onDone) onDone(); return; }
     if (tepGlobeSpinFrame != null) { cancelAnimationFrame(tepGlobeSpinFrame); tepGlobeSpinFrame = null; }
     tepGlobeStopGlide();
@@ -18062,7 +18282,7 @@
     const dp = Math.max(-82, Math.min(82, lat)) - p0;
     const dz = (zoom != null ? zoom : z0) - z0;
     const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
-    const DUR = 620;
+    const DUR = durMs || TEP_GLOBE_SPIN_MS;
     const step = (now) => {
       const t = Math.min(1, ((now || Date.now()) - t0) / DUR);
       const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // easeInOutQuad
@@ -18075,15 +18295,107 @@
     };
     tepGlobeSpinFrame = requestAnimationFrame(step);
   }
+  // How much of the smaller viewport dimension the sphere spans at zoom 1.
+  // Named because tepGlobeDotZoom has to invert it - if the two ever drifted
+  // apart the globe would stop landing exactly inside the pupil.
+  const TEP_GLOBE_R_FRAC = 0.42;
   /** Globe geometry for a given viewport - shared by the painter and the marker
    *  layout so they can never disagree about where the sphere is. */
   function tepGlobeGeom(w, h) {
-    return { cx: w / 2, cy: h / 2, R: Math.min(w, h) * 0.42 * tepGlobeZoom };
+    return { cx: w / 2, cy: h / 2, R: Math.min(w, h) * TEP_GLOBE_R_FRAC * tepGlobeZoom };
   }
-  /** Keep the globe's own scale in step with the single shared zoom, clamped to
-   *  the range a sphere reads well at. */
-  function tepGlobeSyncZoom() {
-    tepGlobeZoom = Math.max(0.6, Math.min(6, epDashMapZoom.s));
+  /** The zoom at which the Earth is EXACTLY the eye's pupil - the far end of
+   *  the zoom-out, and the whole point of the effect. CONFIRMED via user
+   *  request ("if you zoom out to that point, the globe will be the dot").
+   *
+   *  Solve tepGlobeGeom's R for z, given the pupil's radius at full-screen
+   *  size. The artwork is 1.7994:1, so on a viewport WIDER than that the eye
+   *  is height-limited: its scale and the globe's radius then both key off the
+   *  viewport height, and this comes out a constant 0.2747 whatever the window
+   *  size. On a narrower viewport the eye is width-limited and the answer
+   *  tracks the aspect (0.1527 * w/h). Either way it is exact, because it is
+   *  derived from the same numbers the painter uses rather than tuned. */
+  function tepGlobeDotZoom(w, h, vw, vh) {
+    const base = Math.min(w, h) * TEP_GLOBE_R_FRAC;
+    return base > 0 ? tepEyeGeom(w, h, vw, vh).r / base : TEP_GLOBE_ZOOM_MIN;
+  }
+  // Zoom limits. The floor is the dot zoom, computed per viewport; this is only
+  // the fallback for the handful of paths that have no viewport to measure.
+  const TEP_GLOBE_ZOOM_MIN = 0.2747;
+  const TEP_GLOBE_ZOOM_MAX = 6;
+  /** Zoom the sphere by a factor, clamped so it can reach the pupil exactly and
+   *  go no further. */
+  function tepGlobeZoomBy(factor, w, h, vw, vh) {
+    const lo = (w > 0 && h > 0) ? tepGlobeDotZoom(w, h, vw, vh) : TEP_GLOBE_ZOOM_MIN;
+    tepGlobeZoom = Math.max(lo, Math.min(TEP_GLOBE_ZOOM_MAX, tepGlobeZoom * factor));
+  }
+  // How far out you are, as a fraction of the globe's whole zoom-out journey:
+  // 0 at the closest it goes, 1 at the dot. Logarithmic, like the zoom itself.
+  function tepGlobeZoomOutFrac(z, zDot) {
+    if (!(z > 0) || !(zDot > 0)) return 0;
+    const span = Math.log(TEP_GLOBE_ZOOM_MAX / zDot);
+    if (!(span > 0)) return 0;
+    return Math.max(0, Math.min(1, Math.log(TEP_GLOBE_ZOOM_MAX / z) / span));
+  }
+  // Right out at the end of the zoom-out there is nothing to read and nothing
+  // to click, so the Earth turns on its own. CONFIRMED via user request.
+  const TEP_GLOBE_SPIN_OUT = 0.90;   // only past this far out
+  // Seconds for one full turn. 13.33 rather than 10 - a quarter slower.
+  // CONFIRMED via user request.
+  const TEP_GLOBE_SPIN_SECS = 13.33;
+  let tepGlobeAutoSpinFrame = null;
+  let tepGlobeAutoSpinLast = 0;
+  /** Everything that has to be true for the Earth to turn by itself. Anything
+   *  else driving the rotation - a drag, a release glide, a fly-to - wins. */
+  function tepGlobeAutoSpinAllowed() {
+    return !!(dashMapGlobeHook && tepGlobeMorph > 0 && !tepGlobeDragging
+      && tepGlobeGlideFrame == null && tepGlobeSpinFrame == null
+      && dashMapGlobeHook.zoomedOutFrac
+      && dashMapGlobeHook.zoomedOutFrac() >= TEP_GLOBE_SPIN_OUT);
+  }
+  /** Start the idle rotation if it is wanted. Cheap no-op otherwise, so every
+   *  repaint can call it and the spin picks itself up the moment the last zoom
+   *  press, drag or glide leaves it in range. */
+  function tepGlobeAutoSpinKick() {
+    if (tepGlobeAutoSpinFrame != null || !tepGlobeAutoSpinAllowed()) return;
+    tepGlobeAutoSpinLast = 0;
+    const step = (ts) => {
+      if (!tepGlobeAutoSpinAllowed()) { tepGlobeAutoSpinFrame = null; tepGlobeAutoSpinLast = 0; return; }
+      if (tepGlobeAutoSpinLast) {
+        // Time-based rather than per-frame, so the turn takes ten seconds on a
+        // 144Hz display as well as a 60Hz one. The cap covers a tab that was
+        // backgrounded: come back to a huge dt and it would jump a third of
+        // the way round.
+        const dt = Math.min(0.1, (ts - tepGlobeAutoSpinLast) / 1000);
+        // Eastward, which on screen carries features left to right - and means
+        // the sub-viewer longitude DEcreases, exactly as the sub-solar one does
+        // through a day.
+        const lon = tepGlobeRot.lon - (360 / TEP_GLOBE_SPIN_SECS) * dt;
+        tepGlobeRot.lon = ((lon + 540) % 360) - 180;
+        dashMapGlobeHook();
+      }
+      tepGlobeAutoSpinLast = ts;
+      tepGlobeAutoSpinFrame = requestAnimationFrame(step);
+    };
+    tepGlobeAutoSpinFrame = requestAnimationFrame(step);
+  }
+  function tepGlobeStopAutoSpin() {
+    if (tepGlobeAutoSpinFrame != null) { cancelAnimationFrame(tepGlobeAutoSpinFrame); tepGlobeAutoSpinFrame = null; }
+    tepGlobeAutoSpinLast = 0;
+  }
+  // The eye means nothing until you are nearly at the dot, so ramp it in over
+  // the last stretch of the zoom-out rather than hanging a full-screen logo
+  // over the globe the whole time. 2.0 = nothing at all until the sphere is
+  // within a factor of two of the pupil. CONFIRMED via user request ("the logo
+  // should not show at all until at least 2.0 or less").
+  const TEP_EYE_REVEAL_SPAN = 2.0;
+  /** 0 = no eye, 1 = fully drawn, at the dot. Logarithmic, like the zoom. */
+  function tepEyeReveal(z, zDot) {
+    if (!(zDot > 0)) return 0;
+    const hi = zDot * TEP_EYE_REVEAL_SPAN;
+    if (z >= hi) return 0;
+    if (z <= zDot) return 1;
+    return Math.log(hi / z) / Math.log(hi / zDot);
   }
   /** Sub-solar point (the spot where the sun is straight overhead) for a given
    *  instant, as { lon, lat }. Standard low-precision almanac formulae - good to
@@ -18181,14 +18493,34 @@
   const TEP_GLOBE_CAM_D = 1.0;
   /** Perspective placement for a body in the sky. null when it is behind the
    *  camera or hidden by the Earth. */
+  // The sky is mapped by ANGLE, not by pinhole perspective. A pinhole camera
+  // with a field of view this wide magnifies whatever approaches the edge of
+  // it: the Sun swelled 56x across its sweep and ballooned just before passing
+  // out of view, which read as a small lamp nearby rather than something vast
+  // and far away. CONFIRMED via user report. Angular mapping is what a
+  // planetarium does - direction decides where it sits, and the apparent size
+  // never changes at all, which is the truth for a body at a fixed distance:
+  // the Sun subtends 0.53 degrees wherever it happens to be in the sky.
+  const TEP_SKY_R_MAX = 2.6;                    // screen radius in globe radii, at 90 degrees off-axis
+  const TEP_SKY_FADE_ANG = 74 * Math.PI / 180;  // starts fading out here
+  const TEP_SKY_MAX_ANG = 90 * Math.PI / 180;   // gone by here - it is behind you
   function tepGlobeSkyPos(v, dist, bodyR, cx, cy, R) {
-    const denom = TEP_GLOBE_CAM_D - dist * v.toward;
-    if (denom <= 0.02) return null;   // at or past the camera plane: behind you
-    const k = R * TEP_GLOBE_CAM_D / denom;
-    const x = cx + k * dist * v.right;
-    const y = cy - k * dist * v.up;
+    // z runs from the Earth's centre toward the viewer; the camera sits at
+    // TEP_GLOBE_CAM_D along it, the body at dist along its own direction.
+    const px = dist * v.right, py = dist * v.up, pz = dist * v.toward - TEP_GLOBE_CAM_D;
+    const perp = Math.hypot(px, py);
+    // Angle off the view axis: 0 is directly beyond the Earth, 90 is square to
+    // the side, and anything past that has gone behind you.
+    const ang = Math.atan2(perp, -pz);
+    if (ang >= TEP_SKY_MAX_ANG) return null;
+    const rad = R * TEP_SKY_R_MAX * (ang / (Math.PI / 2));
+    const x = cx + (perp > 1e-9 ? (px / perp) * rad : 0);
+    const y = cy - (perp > 1e-9 ? (py / perp) * rad : 0);
     if (v.toward < 0 && Math.hypot(x - cx, y - cy) < R) return null;   // behind the Earth
-    return { x, y, r: k * bodyR, inFront: v.toward >= 0 };
+    // Ease out over the last stretch rather than blinking off at the boundary.
+    const fade = ang <= TEP_SKY_FADE_ANG ? 1
+      : Math.max(0, 1 - (ang - TEP_SKY_FADE_ANG) / (TEP_SKY_MAX_ANG - TEP_SKY_FADE_ANG));
+    return { x, y, r: R * bodyR, fade, inFront: v.toward >= 0 };
   }
   /** The Moon as SVG, or null when the Earth is hiding it. Also reports whether
    *  it is in front of the globe, so the caller can paint it in the right order. */
@@ -18251,6 +18583,7 @@
     }
     return {
       inFront: pos.inFront,
+      fade: pos.fade,
       html: `<g class="tep-globe-moon" transform="translate(${f(x)} ${f(y)})">`
         + `<defs><clipPath id="tep-moon-clip"><circle r="${f(rm)}"/></clipPath>`
         // Softens the terminator - a hard vector edge on a body this small reads
@@ -18319,6 +18652,7 @@
     }
     return {
       inFront: pos.inFront,
+      fade: pos.fade,
       html: `<g class="tep-globe-sun" transform="translate(${f(x)} ${f(y)})">`
         + `<defs><radialGradient id="tep-sun-face" cx="38%" cy="34%" r="74%">`
         + `<stop offset="0%" stop-color="#fffaf0"/><stop offset="58%" stop-color="#fdd9a0"/>`
@@ -18380,12 +18714,28 @@
     76.286, 76, 75.714, 75.429, 75.143, 74.857, 74.571, 74.286,
     74, 73.714, 73.429, 73.143, 72.857, 72.571, 72.286, 72,
   ];
+  /** As many bands as the sphere can actually show, no more. Twilight spans 18
+   *  degrees, which near the centre of the disc is 0.314 * R pixels wide, so past
+   *  about one band per 1.5px the extra ones are finer than the screen and cost a
+   *  180-point clipped ring each for nothing. The full 64 whenever the globe is
+   *  big - which is where the gradient was tuned and confirmed - and coarser only
+   *  as it shrinks, which is exactly when the idle spin is redrawing every frame.
+   *  The ends are always kept, so the ramp still runs terminator to full night at
+   *  the same darkness. CONFIRMED via user report of stutter when zoomed out. */
+  function tepGlobeNightBands(R) {
+    const B = TEP_GLOBE_NIGHT_BANDS;
+    const want = Math.max(16, Math.min(B.length, Math.round((0.314 * R) / 1.5)));
+    if (want >= B.length) return B;
+    const out = [];
+    for (let i = 0; i < want; i++) out.push(B[Math.round((i * (B.length - 1)) / (want - 1))]);
+    return out;
+  }
   function tepGlobeNightPaths(cx, cy, R) {
     const sun = tepSubsolarPoint(tepMetricsNowMs());
     // Centre of night is the point opposite the sun.
     const antiLon = ((sun.lon + 180 + 540) % 360) - 180;
     const antiLat = -sun.lat;
-    const B = TEP_GLOBE_NIGHT_BANDS;
+    const B = tepGlobeNightBands(R);
     const out = [];
     // Each band is the ZONE BETWEEN two cap radii, drawn once at its own
     // absolute opacity - NOT a stack of nested translucent caps.
@@ -18543,73 +18893,157 @@
     const n = Math.max(60, Math.min(420, Math.round((w * h) / 4200)));
     let out = '';
     for (let i = 0; i < n; i++) {
-      const x = Math.round(rnd() * w * 10) / 10;
-      const y = Math.round(rnd() * h * 10) / 10;
       const r = Math.round((0.4 + rnd() * 0.85) * 10) / 10;
+      // Inset by the radius: a pattern tile CLIPS at its edge rather than
+      // wrapping, so a star straddling it would be sliced in half.
+      const x = Math.round((r + rnd() * (w - 2 * r)) * 10) / 10;
+      const y = Math.round((r + rnd() * (h - 2 * r)) * 10) / 10;
       // Mostly very faint, a few brighter - an even opacity reads as noise.
       const o = Math.round((0.12 + Math.pow(rnd(), 2.2) * 0.55) * 100) / 100;
       out += `<circle cx="${x}" cy="${y}" r="${r}" fill="#dbeafe" fill-opacity="${o}"/>`;
     }
-    const html = `<g class="tep-globe-stars">${out}</g>`;
-    tepGlobeStarCache = { key, html };
-    return html;
+    tepGlobeStarCache = { key, html: out };
+    return out;
   }
-  /** The whole sphere as one SVG string: stars, ocean, graticule, land, limb. */
-  function tepGlobeSvgHtml(w, h) {
+  // The sky drifts as you turn, which is what says the CAMERA is moving rather
+  // than the map being redrawn. The stars are an SVG pattern, declared once per
+  // viewport and cached, so panning them is one transform attribute and costs
+  // nothing per frame - and the tile wraps by construction, so there is never a
+  // seam.
+  //
+  // A projected sphere of real fixed stars was tried instead and reverted: it
+  // shimmered, and it did not read as any more convincing than this.
+  // CONFIRMED via user report.
+  //
+  // Half a screen width per full turn. CONFIRMED via user request.
+  const TEP_SKY_PAN_X = 0.5;     // screen widths per 360 degrees of longitude
+  const TEP_SKY_PAN_Y = 0.175;   // screen heights across the full latitude range
+  /** Space and the stars - everything in the globe layer that does NOT change
+   *  from frame to frame. Built once per viewport; a rotation only moves the
+   *  pattern, which is one attribute write. */
+  function tepGlobeSkySvgHtml(w, h) {
+    const f = (v) => Math.round(v * 10) / 10;
+    return `<svg class="tep-globe-svg" viewBox="0 0 ${f(w)} ${f(h)}" aria-hidden="true">`
+      + `<defs><pattern id="tep-globe-sky-pat" patternUnits="userSpaceOnUse"`
+      + ` width="${f(w)}" height="${f(h)}">${tepGlobeStarsHtml(w, h)}</pattern></defs>`
+      // Opaque space backdrop, first so everything else sits on it. This is what
+      // lets the layer cross-fade over the map: the whole night sky arrives with
+      // the sphere instead of the map being blacked out underneath it.
+      + `<rect x="0" y="0" width="${f(w)}" height="${f(h)}" fill="#05070d"/>`
+      + `<rect class="tep-globe-stars" x="0" y="0" width="${f(w)}" height="${f(h)}"`
+      + ` fill="url(#tep-globe-sky-pat)"/></svg>`;
+  }
+  function tepGlobeSkyPan(w, h) {
+    const f = (v) => Math.round(v * 10) / 10;
+    return `translate(${f(-(tepGlobeRot.lon / 360) * w * TEP_SKY_PAN_X)}`
+      + ` ${f((tepGlobeRot.lat / 90) * h * TEP_SKY_PAN_Y)})`;
+  }
+  /** The sphere itself, rebuilt every frame: ocean, graticule, land, limb. */
+  function tepGlobeSvgHtml(w, h, vw, vh) {
     const g = tepGlobeGeom(w, h);
     const { cx, cy, R } = g;
     const f = (v) => Math.round(v * 10) / 10;
+    // Worked out FIRST, because it decides how much of the rest is worth
+    // building at all. The graticule, the Moon and the Sun together come to
+    // roughly three thousand projections a frame, and at the far end of the
+    // zoom-out every one of them was computed and then thrown away unseen - on
+    // exactly the frames the idle spin is redrawing sixty times a second.
+    // CONFIRMED via user report of stutter when zoomed out.
+    const rev = tepEyeReveal(tepGlobeZoom, tepGlobeDotZoom(w, h, vw, vh));
+    const planet = 1 - rev;
+    const showDetail = planet > 0.01;
     let d = '';
     for (const ring of tepGlobeLand()) d += tepGlobeRingPath(ring, cx, cy, R);
     // The Moon, drawn behind or in front of the globe as its real position
     // demands. Decorative, so a failure must never take the sphere with it.
     let moon = null, sun = null;
-    try { moon = tepGlobeMoonHtml(cx, cy, R); } catch (e) { /* */ }
-    try { sun = tepGlobeSunHtml(cx, cy, R); } catch (e) { /* */ }
+    if (showDetail) {
+      try { moon = tepGlobeMoonHtml(cx, cy, R); } catch (e) { /* */ }
+      try { sun = tepGlobeSunHtml(cx, cy, R); } catch (e) { /* */ }
+    }
     // Day/night shadow for the moment the map is showing.
     let night = [];
     try { night = tepGlobeNightPaths(cx, cy, R); } catch (e) { /* shadow is decorative - never break the globe over it */ }
     let grat = '';
-    for (let lon = -180; lon < 180; lon += 30) {
-      let run = null;
-      for (let lat = -80; lat <= 80; lat += 4) {
-        const pt = tepGlobeProject(lon, lat, cx, cy, R);
-        if (!pt.visible) { run = null; continue; }
-        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
-        run = 1;
+    if (showDetail) {
+      for (let lon = -180; lon < 180; lon += 30) {
+        let run = null;
+        for (let lat = -80; lat <= 80; lat += 4) {
+          const pt = tepGlobeProject(lon, lat, cx, cy, R);
+          if (!pt.visible) { run = null; continue; }
+          grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+          run = 1;
+        }
+      }
+      for (let lat = -60; lat <= 60; lat += 30) {
+        let run = null;
+        for (let lon = -180; lon <= 180; lon += 4) {
+          const pt = tepGlobeProject(lon, lat, cx, cy, R);
+          if (!pt.visible) { run = null; continue; }
+          grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
+          run = 1;
+        }
       }
     }
-    for (let lat = -60; lat <= 60; lat += 30) {
-      let run = null;
-      for (let lon = -180; lon <= 180; lon += 4) {
-        const pt = tepGlobeProject(lon, lat, cx, cy, R);
-        if (!pt.visible) { run = null; continue; }
-        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
-        run = 1;
-      }
-    }
+    // How far into "the Earth is the pupil" we are. At rev = 1 the sphere is
+    // sitting exactly inside the eye's pupil; everything that only makes sense
+    // at planet scale is faded out by then, because a graticule, a limb ring, a
+    // Moon and a Sun drawn around a 100px dot is just noise - and the limb in
+    // particular would add its own stroke width to the dot's radius and break
+    // the very thing the effect is about.
+    const eye = tepEyeGeom(w, h, vw, vh);
+    // Shading axis, in the mark's OWN coordinates - so it is unaffected by the
+    // translate/scale the group carries. Runs from the lit edge straight across
+    // to the far one, through the centre of the artwork.
+    const sd = tepEyeSunDir();
+    const ecx = TEP_EYE.w / 2, ecy = TEP_EYE.h / 2;
+    const elen = (Math.abs(sd.x) * TEP_EYE.w + Math.abs(sd.y) * TEP_EYE.h) / 2;
+    const skyBody = (b) => {
+      if (!b) return '';
+      const op = planet * (b.fade != null ? b.fade : 1);
+      if (op <= 0.01) return '';
+      return op >= 0.999 ? b.html : `<g style="opacity:${op.toFixed(3)}">${b.html}</g>`;
+    };
     return `<svg class="tep-globe-svg" viewBox="0 0 ${f(w)} ${f(h)}" aria-hidden="true">`
       // Ocean is the flat map's own background (--tep-slate-900 / #0f172a) with
       // just enough radial shading to read as a sphere rather than a disc.
       + `<defs><radialGradient id="tep-globe-sea" cx="34%" cy="28%" r="78%">`
       + `<stop offset="0%" stop-color="#1b2942"/><stop offset="62%" stop-color="#0f172a"/>`
-      + `<stop offset="100%" stop-color="#080d18"/></radialGradient></defs>`
-      // Opaque space backdrop, first so everything else sits on it. This is what
-      // lets the layer cross-fade over the map: the whole night sky arrives with
-      // the sphere instead of the map being blacked out underneath it.
-      + `<rect x="0" y="0" width="${f(w)}" height="${f(h)}" fill="#05070d"/>`
-      + tepGlobeStarsHtml(w, h)
-      + (sun && !sun.inFront ? sun.html : '')
-      + (moon && !moon.inFront ? moon.html : '')
+      + `<stop offset="100%" stop-color="#080d18"/></radialGradient>`
+      + (rev > 0
+        ? `<linearGradient id="tep-eye-grad" gradientUnits="userSpaceOnUse"`
+          + ` x1="${f(ecx + sd.x * elen)}" y1="${f(ecy + sd.y * elen)}"`
+          + ` x2="${f(ecx - sd.x * elen)}" y2="${f(ecy - sd.y * elen)}">`
+          + `<stop offset="0%" stop-color="${TEP_EYE_LIT}"/>`
+          + `<stop offset="100%" stop-color="${TEP_EYE_SHADE}"/></linearGradient>`
+        : '')
+      + `</defs>`
+      // Space and the stars are their own layer underneath - see
+      // tepGlobeSkySvgHtml. This SVG is transparent so they show through.
+      // The eye goes BEHIND the sphere, so the Earth is what fills the pupil.
+      // Its own pupil is painted underneath in the ocean's mid tone: at the dot
+      // the Earth covers it exactly, and this is what guarantees there is never
+      // a bright seam if the two disagree by a fraction of a pixel.
+      + (rev > 0
+        ? `<g class="tep-globe-eye" style="opacity:${(rev * TEP_EYE_MAX_OPACITY).toFixed(3)}"`
+          + ` transform="translate(${f(eye.tx)} ${f(eye.ty)}) scale(${eye.k.toFixed(5)})">`
+          + `<path class="tep-globe-eye-body" d="${TEP_EYE.body}"/>`
+          + `<path class="tep-globe-eye-pupil" d="${TEP_EYE.pupil}"/></g>`
+        : '')
+      + skyBody(sun && !sun.inFront ? sun : null)
+      + skyBody(moon && !moon.inFront ? moon : null)
       + `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="url(#tep-globe-sea)"/>`
-      + `<path class="tep-globe-grat" d="${grat}"/>`
+      + (planet > 0.01 ? `<path class="tep-globe-grat" style="opacity:${planet.toFixed(3)}" d="${grat}"/>` : '')
       + `<path class="tep-globe-land" d="${d}"/>`
       + night.map((b) => (b.d
         ? `<path class="tep-globe-night" fill-rule="evenodd" style="fill-opacity:${b.o.toFixed(4)}" d="${b.d}"/>`
         : '')).join('')
-      + `<circle class="tep-globe-limb" cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="none"/>`
-      + (sun && sun.inFront ? sun.html : '')
-      + (moon && moon.inFront ? moon.html : '') + '</svg>';
+      + (planet > 0.01
+        ? `<circle class="tep-globe-limb" style="opacity:${planet.toFixed(3)}"`
+          + ` cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="none"/>`
+        : '')
+      + skyBody(sun && sun.inFront ? sun : null)
+      + skyBody(moon && moon.inFront ? moon : null) + '</svg>';
   }
   /** Great-circle distance in km between two lat/lng points. */
   function tepHaversineKm(aLat, aLng, bLat, bLng) {
@@ -25982,6 +26416,34 @@
     // MAX 32 = 2× the old 16 ceiling, per user request — lets the trace/subnet
     // map push in twice as far. viewBox-based so it stays vector-crisp.
     const MIN = 1, MAX = 32;
+    /** The box the eye has to fit inside. In fullscreen the wrap deliberately
+     *  overflows the map body (it is centred in it, and taller), so the wrap's
+     *  own size is NOT what the user can see - fitting that is what pushed the
+     *  mark off the top and bottom of the screen. Both boxes share a centre, so
+     *  only the extent matters. CONFIRMED via user screenshot. */
+    let eyeBoxVal = null, eyeBoxAt = -1;
+    const eyeBox = () => {
+      // Memoised for a frame. Each call reads four layout properties, and it
+      // was being called half a dozen times per frame from drawGlobe, from
+      // layoutMarkers and from the idle-spin test - interleaved with the class,
+      // custom-property and marker style writes those same functions make.
+      // That is textbook layout thrashing, and it showed up as stutter exactly
+      // when the spin was driving a redraw every frame. CONFIRMED via user
+      // report. The viewport cannot meaningfully change between two reads 16ms
+      // apart, and the next frame picks up anything that did.
+      const now = (window.performance && performance.now) ? performance.now() : Date.now();
+      if (eyeBoxVal && now - eyeBoxAt < 16) return eyeBoxVal;
+      eyeBoxAt = now;
+      eyeBoxVal = {
+        w: Math.min(wrap.clientWidth, host.clientWidth || wrap.clientWidth),
+        h: Math.min(wrap.clientHeight, host.clientHeight || wrap.clientHeight),
+      };
+      return eyeBoxVal;
+    };
+    // How visible the markers are, 0..1. Written by drawGlobe (which already has
+    // to work it out for the CSS variable) and read by layoutMarkers, so the two
+    // do not each re-derive it - and re-measure for it.
+    let eyeFadeNow = 1;
     function clampPan() {
       const w = wrap.clientWidth, hh = wrap.clientHeight, s = epDashMapZoom.s;
       // epDashMapZoom is shared module state between the inline map and the
@@ -26011,6 +26473,11 @@
     }
     function layoutMarkers() {
       const w = wrap.clientWidth, h = wrap.clientHeight;
+      // Everything placed below is faded to nothing by the eye (see drawGlobe),
+      // and out there the idle spin is calling this every frame. Positioning a
+      // few hundred invisible markers - every write forcing a style recalc - is
+      // pure cost, and they are all replaced the moment the fade lifts.
+      if (tepGlobeMorph > 0 && eyeFadeNow <= 0.01) return;
       // At MAX zoom the user wants ZERO overlap — markers AND trace labels. Both
       // passes below switch to measuring each element's REAL rendered box (the
       // cluster bubble/badge is bigger than its SVG width attribute, which is why
@@ -26119,24 +26586,46 @@
       // appear in ocean for any nodes … still needs to center on land").
       // Full separation is always tried first; these are fallbacks.
       const LAND_RADIUS_STEPS = [1, 0.78, 0.58, 0.4];
+      /** A candidate point's position in the BASEMAP's viewBox, whichever view
+       *  we are in - which is the space tepIsViewboxPtOnLand works in, and the
+       *  space its cache is keyed on, so both views share one warm cache.
+       *  Globe view used to return null here and fall back to plain radial
+       *  separation, which is how agents ended up flung into the Pacific and
+       *  out past the limb. CONFIRMED via user screenshot. */
+      function viewboxPtAt(x, y) {
+        if (gg) {
+          const ll = tepGlobeUnproject(x, y, gg.cx, gg.cy, gg.R);
+          if (!ll) return null;                       // off the sphere entirely
+          const pos = tepLonLatToPct(ll.lon, ll.lat);
+          return { x: (pos.xPct / 100) * TEP_BASEMAP.vbw, y: (pos.yPct / 100) * TEP_BASEMAP.vbh };
+        }
+        const fxC = (x - epDashMapZoom.tx) / (w * epDashMapZoom.s);
+        const fyC = (y - epDashMapZoom.ty) / (h * epDashMapZoom.s);
+        return { x: fxC * TEP_BASEMAP.vbw, y: fyC * TEP_BASEMAP.vbh };
+      }
       function landSafeSpot(baseAngle, px, py, sep) {
-        // Globe view has no Mercator fraction to test against - this maps pixels
-        // back through epDashMapZoom into the basemap's viewBox, which means
-        // nothing on a sphere. Returning null makes every caller fall back to
-        // plain radial separation, which is projection-independent.
-        if (gg) return null;
         for (const frac of LAND_RADIUS_STEPS) {
           const r = sep * frac;
           for (const offDeg of WATER_SEARCH_DEG) {
             const angle = baseAngle + offDeg * Math.PI / 180;
             const cx = px + Math.cos(angle) * r;
             const cy = py + Math.sin(angle) * r;
-            const fxC = (cx - epDashMapZoom.tx) / (w * epDashMapZoom.s);
-            const fyC = (cy - epDashMapZoom.ty) / (h * epDashMapZoom.s);
-            if (tepIsViewboxPtOnLand(svg, fxC * TEP_BASEMAP.vbw, fyC * TEP_BASEMAP.vbh)) return { x: cx, y: cy };
+            const vb = viewboxPtAt(cx, cy);
+            if (vb && tepIsViewboxPtOnLand(svg, vb.x, vb.y)) return { x: cx, y: cy };
           }
         }
         return null;
+      }
+      /** Globe view: a nudge must never walk a marker past the limb - there is
+       *  no sphere out there to stand on. Pull anything that overshoots back to
+       *  just inside the edge. */
+      function clampToGlobe(x, y) {
+        if (!gg) return { x, y };
+        const dx = x - gg.cx, dy = y - gg.cy, d = Math.hypot(dx, dy);
+        const lim = gg.R * 0.97;
+        if (!(d > lim) || d === 0) return { x, y };
+        const k = lim / d;
+        return { x: gg.cx + dx * k, y: gg.cy + dy * k };
       }
       const placedPx = destPx.slice();
       // Spatial grid over placed points so each marker only collision-checks its
@@ -26180,6 +26669,10 @@
       // animateZoomTo's step() now makes right as it finishes — on the
       // settled final frame, so it's only ever skipped for the handful of
       // frames an animation is actually mid-flight, never permanently.
+      // Fully faded out by the eye (and the idle spin is redrawing at 60fps out
+      // there) - so skip the overlap-avoidance pass and just place everything at
+      // its true position. Nobody can see the difference, and it keeps the spin
+      // from running the land hit-tests once per frame for markers at opacity 0.
       const midAnimation = dashMapZoomAnimFrame !== null;
       for (const m of markerEls) {
         // Hidden markers (e.g. non-source clusters omitted while a trace is
@@ -26249,6 +26742,7 @@
           }
           if (!moved) break;
         }
+        ({ x, y } = clampToGlobe(x, y));
         m.style.left = x + 'px';
         m.style.top = y + 'px';
         const mapKey = m._fx.toFixed(6) + ',' + m._fy.toFixed(6);
@@ -26298,6 +26792,7 @@
           }
           if (!moved) break;
         }
+        ({ x, y } = clampToGlobe(x, y));
         ce.el.style.left = x + 'px';
         ce.el.style.top = y + 'px';
         placedPx.push({ x, y, movable: false, radius: rC });
@@ -26550,13 +27045,30 @@
       // +/- buttons, the keyboard shortcuts and pinch as well as the wheel. Only
       // the wheel had its own branch, which is why the buttons did nothing in
       // globe view. CONFIRMED via user report.
-      // Zoom always drives epDashMapZoom.s, in BOTH views - the globe derives its
-      // own radius from it (see drawGlobe), so there is one zoom, not two, and
-      // the auto-switch below has a single number to read.
       if (tepGlobeMorph > 0) {
         tepGlobeStopGlide();   // an explicit zoom ends any coasting spin
-        epDashMapZoom.s = Math.min(MAX, Math.max(MIN, epDashMapZoom.s * factor));
+        // The sphere has its OWN zoom, and must: the flat map's scale is floored
+        // at MIN (1), which is 3.6x too big to ever reach the pupil.
+        const zb = eyeBox();
+        tepGlobeZoomBy(factor, wrap.clientWidth, wrap.clientHeight, zb.w, zb.h);
         if (dashMapGlobeHook) dashMapGlobeHook();
+        return;
+      }
+      // The flat map is already at its stop and the user is still asking to go
+      // out: hand over to the globe. Everything that zooms funnels through
+      // here, so this covers the wheel, a trackpad pinch, a touch pinch, the
+      // on-screen minus button and the keyboard alike. CONFIRMED via user
+      // request. This is a DISCRETE handoff at the floor, not the continuous
+      // zoom-driven switch that was tried and removed - the morph still only
+      // moves during a transition, so nothing drifts while you zoom.
+      // The 0.995 guard keeps a stray one-pixel trackpad scroll, which arrives
+      // as a factor a hair under 1, from tripping it.
+      if (factor <= 0.995 && !tepGlobeOn && dashMapGlobeHook
+          && epDashMapZoom.s <= MIN + 1e-4) {
+        cancelZoomAnim();
+        // Arriving at the globe by zooming out of the world points it at your
+        // own part of it. CONFIRMED via user request.
+        tepSetGlobeView(true, { toHome: true });
         return;
       }
       cancelZoomAnim();
@@ -26576,7 +27088,6 @@
       if (!full) return;
       // The CLASS follows the target state (cursor, background); the LAYERS
       // follow the morph, so the two views dissolve into each other.
-      tepGlobeSyncZoom();
       const t = tepGlobeMorph;
       // The flat map's zoom/pan is NOT touched here. The toggle hands the point
       // of focus across once, when it is pressed (see the globe button), and
@@ -26593,8 +27104,22 @@
       globeLayer.style.opacity = String(t);
       canvas.style.opacity = '';
       canvas.style.display = t >= 1 ? 'none' : '';
+      // Agents and flow lines fade out as the Earth shrinks into the pupil.
+      // Same ramp the painter uses, so they are gone exactly when the eye is
+      // fully drawn - at that size they are a smear over a 100px dot.
+      // One measurement for the whole frame - gw/gh are reused below rather
+      // than read again.
+      const gw = wrap.clientWidth, gh = wrap.clientHeight;
+      const evb = eyeBox();
+      const eyeFade = (t > 0 && gw > 1 && gh > 1)
+        ? 1 - tepEyeReveal(tepGlobeZoom, tepGlobeDotZoom(gw, gh, evb.w, evb.h)) : 1;
+      eyeFadeNow = eyeFade;
+      wrap.classList.toggle('tep-agent-map-wrap--eye', eyeFade < 0.999);
+      if (eyeFade < 0.999) wrap.style.setProperty('--tep-eye-fade', eyeFade.toFixed(3));
+      else wrap.style.removeProperty('--tep-eye-fade');
       if (t <= 0) {
         globeLayer.innerHTML = '';
+        eyeFadeNow = 1;
         // Back on the flat map - clear any far-side hiding the sphere applied.
         for (const m of markerEls) m.classList.remove('tep-agent-map-marker--globehidden');
         // Hand leadership back: point the globe at whatever the map now shows,
@@ -26606,14 +27131,28 @@
         }
         return;
       }
-      const gw = wrap.clientWidth, gh = wrap.clientHeight;
       // The render builds this tree before attaching it, and live repaints go
       // through the same path - so drawGlobe can land while the wrap still
       // measures 0x0, which produced a viewBox of "0 0 0 0" and a globe that
       // silently vanished. CONFIRMED via user report ("disappears at times").
       // Retry on the next frame, by which point layout has happened.
       if (gw < 2 || gh < 2) { requestAnimationFrame(() => { if (tepGlobeMorph > 0) drawGlobe(); }); return; }
-      globeLayer.innerHTML = tepGlobeSvgHtml(gw, gh);
+      // Two layers. The SKY is built once per viewport and thereafter only
+      // panned: it used to be part of the one SVG string, which meant a
+      // viewport-sized <pattern> holding hundreds of circles was discarded and
+      // rasterised again from scratch on every frame of the spin - easily the
+      // most expensive thing in the loop, and what made the stars stutter.
+      // CONFIRMED via user report. A rotation is now one attribute write.
+      const boxKey = gw + 'x' + gh;
+      let skyEl = globeLayer.firstElementChild;
+      if (!skyEl || skyEl.dataset.box !== boxKey) {
+        globeLayer.innerHTML = `<div class="tep-globe-sky" data-box="${boxKey}">`
+          + tepGlobeSkySvgHtml(gw, gh) + '</div><div class="tep-globe-body"></div>';
+        skyEl = globeLayer.firstElementChild;
+      }
+      const pat = skyEl.querySelector('pattern');
+      if (pat) pat.setAttribute('patternTransform', tepGlobeSkyPan(gw, gh));
+      globeLayer.lastElementChild.innerHTML = tepGlobeSvgHtml(gw, gh, evb.w, evb.h);
       // Logged once per entry into globe view. A blank sphere has several
       // possible causes - zero-size wrap, no land rings recovered, a radius that
       // throws the limb off-screen - and these numbers separate them.
@@ -26627,7 +27166,32 @@
       }
     }
     if (full) {
-      dashMapGlobeHook = () => { drawGlobe(); layoutMarkers(); };
+      dashMapGlobeHook = () => { drawGlobe(); layoutMarkers(); tepGlobeAutoSpinKick(); };
+      /** How far out the sphere is, 0..1, for the idle-spin threshold. Lives
+       *  here because only the render closure knows the viewport. */
+      dashMapGlobeHook.zoomedOutFrac = () => {
+        const gw = wrap.clientWidth, gh = wrap.clientHeight;
+        if (!(gw > 1 && gh > 1)) return 0;
+        const b = eyeBox();
+        return tepGlobeZoomOutFrac(tepGlobeZoom, tepGlobeDotZoom(gw, gh, b.w, b.h));
+      };
+      /** Is the whole sphere on screen, with nothing running off an edge? The
+       *  globe is centred on the wrap's centre, which is also the centre of the
+       *  visible box, so it fits exactly when its radius clears the nearest
+       *  edge of that box - NOT of the wrap, which in fullscreen overflows the
+       *  map body top and bottom. */
+      dashMapGlobeHook.globeFullyVisible = () => {
+        const gw = wrap.clientWidth, gh = wrap.clientHeight;
+        if (!(gw > 1 && gh > 1)) return false;
+        const b = eyeBox();
+        return tepGlobeGeom(gw, gh).R <= Math.min(b.w, b.h) / 2;
+      };
+      /** The flat map's own start framing - the whole plate, unzoomed and
+       *  unpanned. Exactly what the zoom widget's reset button does. */
+      dashMapGlobeHook.resetMapView = () => {
+        epDashMapZoom = { s: 1, tx: 0, ty: 0 };
+        try { apply(); } catch (_) { /* not every render exposes it */ }
+      };
       /** What the flat map currently has in the middle of the viewport. */
       dashMapGlobeHook.mapCentreLonLat = () => {
         const cw = wrap.clientWidth, ch = wrap.clientHeight;
@@ -26732,6 +27296,7 @@
         // map doesn't also drag, and set `moved` so releasing never registers
         // as a click (which would select a geographic point).
         down = null;
+        tepGlobeDragging = false;
         moved = true;
         pinchDist = pinchState().d;
         return;
@@ -26743,6 +27308,7 @@
       // gesture) and read at up, to tell a finger tap from a mouse click.
       down = { x: e.clientX, y: e.clientY, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty, target: e.target, ptype: e.pointerType,
         glon: tepGlobeRot.lon, glat: tepGlobeRot.lat };
+      tepGlobeDragging = true;
       moved = false;
       try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     });
@@ -26808,7 +27374,7 @@
     // the map forever and the next single touch would look like a pinch.
     wrap.addEventListener('pointercancel', (e) => {
       endMapPointer(e);
-      if (!mapPts.size) { down = null; try { wrap.releasePointerCapture(e.pointerId); } catch (_) { /* */ } }
+      if (!mapPts.size) { down = null; tepGlobeDragging = false; try { wrap.releasePointerCapture(e.pointerId); } catch (_) { /* */ } }
     });
     wrap.addEventListener('pointerup', (e) => {
       endMapPointer(e);
@@ -26818,6 +27384,7 @@
       if (mapPts.size >= 1) return;
       // Released mid-spin: let the globe carry on and ease down. `moved` gates
       // it so a plain click never sets the world drifting.
+      tepGlobeDragging = false;
       if (tepGlobeOn && moved) tepGlobeStartGlide();
       if (!down) return;
       // Use the element recorded at pointerdown — pointer capture retargets
@@ -26826,6 +27393,7 @@
       const tgt = down.target || e.target;
       const downPtype = down.ptype;
       down = null;
+      tepGlobeDragging = false;
       try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
       if (moved) return;
       // EXPERIMENTAL (test-destinations): a bottleneck hop node opens that
@@ -27058,7 +27626,7 @@
             // animateZoomTo's onDone instead of opening it immediately.
             animateZoomTo(
               { s, tx: w / 2 - targetMarker._fx * w * s, ty: h / 2 - targetMarker._fy * h * s + topShift },
-              500,
+              TEP_LOCATE_MS,
               () => showTip(targetMarker)
             );
           } else {
@@ -27190,11 +27758,12 @@
               // the viewer and zoom in, then open its card once it has settled -
               // same sequencing reason as the flat path, showTip reads the
               // marker's live rect.
-              tepGlobeSpinTo(first._lng, first._lat, Math.max(tepGlobeZoom, 2.2), () => showTip(first));
+              tepGlobeSpinTo(first._lng, first._lat, Math.max(tepGlobeZoom, 2.2),
+                () => showTip(first), TEP_LOCATE_SPIN_MS);
             } else {
               animateZoomTo(
                 { s, tx: w / 2 - first._fx * w * s, ty: h / 2 - first._fy * h * s + topShift },
-                500,
+                TEP_LOCATE_MS,
                 () => showTip(first)
               );
             }
@@ -29615,6 +30184,22 @@
     if (!dashMapFullEl) return;
     if (typeof dashMapLivePaint === 'function') dashMapLivePaint();
     else renderDashboardAgentMap(dashMapFullEl.querySelector('#tep-dashmap-mapbody'), { full: true, preserveZoom: true });
+    // The Source-ISP stack is DERIVED from the drawn traces, so it has to be
+    // rebuilt whenever they change. Adding a trace already refreshed the
+    // widgets; none of the removal paths did, so unchecking a test left its
+    // cards sitting on screen with nothing behind them - and clicking one found
+    // no agents, so toggleTraceIspAgentsPopover returned early and the tile did
+    // nothing at all. CONFIRMED via user report. Done HERE, in the one place
+    // every trace change already goes through, rather than at each call site,
+    // so the two halves cannot drift apart again.
+    const wEl = dashMapFullEl.querySelector('#tep-dashmap-widgets');
+    if (wEl) { try { renderDashWidgets(wEl); } catch (_) { /* */ } }
+    // Same staleness one layer up: a Source-ISP popover left open over an ISP
+    // that is no longer traced would list agents that are no longer drawn.
+    if (tepTraceIspPopoverEl) {
+      const openIsp = tepTraceIspPopoverEl.dataset ? tepTraceIspPopoverEl.dataset.traceisp : '';
+      if (!openIsp || !tepTraceIspAgentsFor(openIsp).length) hideTraceIspPopover();
+    }
     document.querySelectorAll('.tep-saas-breakdown-pop.tep-breakdown-min').forEach((pop) => tepBreakdownSetFocus(pop));
   }
   function tepBreakdownSetFocus(pop) {
@@ -30951,6 +31536,7 @@
     pop.innerHTML = `<div class="tep-saas-breakdown-head">${tepEscapeHtmlText(isp)} — source agents (worst first)`
       + '<span class="tep-saas-breakdown-hint">click an agent to locate it on the map</span></div>'
       + `<div class="tep-saas-breakdown-list">${rows}</div>`;
+    pop.dataset.traceisp = isp;   // so a repaint can tell whether it went stale
     document.documentElement.appendChild(pop);
     tepTraceIspPopoverEl = pop;
     const rect = anchorEl.getBoundingClientRect();
@@ -31976,6 +32562,7 @@
     // mode too - otherwise re-opening would come up as a sphere with the flat
     // map's zoom state, which is not what the button was last seen doing.
     tepGlobeOn = false;
+    tepGlobeStopAutoSpin();
     tepGlobeMorph = 0;
     // The target too, or a queued ease would drag the next open straight back
     // into whatever view this one was leaving.
