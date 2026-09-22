@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.16';
+  const TEP_VERSION = '4.17';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4083,6 +4083,15 @@
     .tep-devtopo-canvas--pz { overflow: hidden; cursor: grab; touch-action: none; }
     .tep-devtopo-canvas--pz.tep-grabbing { cursor: grabbing; }
     .tep-devtopo-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    /* An agent that used several radios is drawn ONCE, with one of these running
+       back to each of the others - so it appears as one agent with a line to
+       each BSSID, not as three copies of itself, and a radio whose only client
+       has since roamed away still reads as connected rather than empty.
+       CONFIRMED via user request. Quiet by default: this is context, not
+       structure. It lights up when you hover the agent. */
+    .tep-wtopo-roamline { stroke: var(--tdt-ac); stroke-width: 1.1; stroke-dasharray: 3 5; fill: none;
+      opacity: .16; transition: opacity .12s ease, stroke-width .12s ease; }
+    .tep-wtopo-roamline--hl { opacity: .85; stroke-width: 1.7; }
     .tep-devtopo-tierlbl { position: absolute; left: 14px; font-family: var(--tdt-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #3f5170; transform: translateY(-50%); pointer-events: none; }
     /* ---- nodes ---- */
     .tep-devtopo-node {
@@ -4296,7 +4305,7 @@
       display: grid; place-items: center; box-shadow: 0 0 0 1.5px var(--tdt-bg); }
     .tep-wtopo-ep .ep-nm { max-width: 62px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center;
       font-size: 9.5px; font-weight: 600; color: #cdd8ea; }
-    /* "Wireless Active Testing" pill — an agent that hit multiple APs/SSIDs; opens
+    /* "Roaming" pill — an agent that hit multiple APs/SSIDs; opens
        the agent-centric AP view. Orange (the TE enrichment accent), softly pulsing. */
     .tep-wtopo-ep .ep-pill { max-width: 96px; margin-top: 1px; padding: 1px 7px; border-radius: 999px; cursor: pointer;
       font-family: var(--tdt-mono); font-size: 7.5px; font-weight: 800; letter-spacing: .03em; line-height: 1.5; text-align: center;
@@ -22031,9 +22040,16 @@
       // list↔map cross-highlight the fullscreen map does.
       const cssEsc = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&');
       const setHl = (mid) => {
-        if (t._tepHlMk) { t._tepHlMk.classList.remove('tep-wtopo-ep--hl'); t._tepHlMk = null; }
+        // ALL of them: an agent that roamed is drawn once per radio it used, so
+        // there can be several markers carrying the same machineId and lighting
+        // only the first left the others dark. CONFIRMED via user request that
+        // a roaming agent shows on both.
+        if (t._tepHlMk) { for (const el of t._tepHlMk) el.classList.remove('tep-wtopo-ep--hl'); t._tepHlMk = null; }
         const ov = tepDeviceTopoEl;
-        if (mid && ov) { const mk = ov.querySelector('.tep-wtopo-ep[data-mid="' + cssEsc(mid) + '"]'); if (mk) { mk.classList.add('tep-wtopo-ep--hl'); t._tepHlMk = mk; } }
+        if (mid && ov) {
+          const mks = ov.querySelectorAll('.tep-wtopo-ep[data-mid="' + cssEsc(mid) + '"]');
+          if (mks.length) { for (const el of mks) el.classList.add('tep-wtopo-ep--hl'); t._tepHlMk = mks; }
+        }
       };
       t.addEventListener('mouseover', (e) => { const row = e.target.closest && e.target.closest('[data-mid]'); setHl(row ? row.getAttribute('data-mid') : null); });
       t.addEventListener('mouseleave', () => setHl(null));
@@ -22715,7 +22731,9 @@
   /** Model for the wireless topology: the scoped wireless endpoint agents grouped
    *  by SSID, then by the BSSID (AP radio) they associate with. AP names come from
    *  matching a BSSID to a monitored device's interface MAC (when the inventory is
-   *  loaded). scopeIds limits to specific machineIds; onlySsid limits to one SSID. */
+   *  loaded). scopeIds limits to specific machineIds; ssidFilter (a Set, or null)
+   *  limits which SSIDs are shown. An agent appears under EVERY radio it used in
+   *  the window, not just its newest one. */
   /* ── Wireless topology layout ledger ──────────────────────────────────────
    *  The board paints progressively: 20 sample rounds stream in and each one
    *  used to re-derive EVERY position from whatever was known at that instant,
@@ -22738,6 +22756,7 @@
       ringCap: new Map(),    // ssid        → ring slots the hub is drawn for
       cols: 0,               // frozen grid width; grows only on a capacity step
       cellD: 0,              // uniform cell size; monotonic, never shrinks
+      seen: new Map(),       // ssid → Set<bssid> ever shown; nodes never leave
       sig: null,             // last painted entity set (see tepWtopoModelSig)
       paints: 0,
     };
@@ -22767,13 +22786,34 @@
     }
     return parts.sort().join('|');
   }
-  function tepBuildWirelessTopo(scopeIds, onlySsid) {
+  /** An agent as it looked on a radio it is no longer using. The record's
+   *  headline numbers are the NEWEST round's and belong to whatever it is on
+   *  now, so showing them under an earlier radio would attribute one link's
+   *  signal to another. The roam entry carries that radio's own samples. */
+  function tepWtopoPastAssoc(rec, rp) {
+    if (!rp) return rec;
+    const avg = (a) => (a && a.length ? Math.round(a.reduce((x, v) => x + v, 0) / a.length) : null);
+    return Object.assign({}, rec, {
+      ssid: rp.ssid || rec.ssid,
+      bssid: rp.bssid,
+      channel: rp.channel != null ? rp.channel : null,
+      phyMode: rp.phyMode || '',
+      vendor: rp.vendor || '',
+      quality: avg(rp.quals),
+      snr: avg(rp.snrs),
+      rssi: avg(rp.rssis),
+      _past: true,
+    });
+  }
+  /** ssidFilter: null for everything in scope, or a Set of SSID names.
+   *  seen: the layout's running record of every node that has been on the
+   *  board, so nothing can drop off it. */
+  function tepBuildWirelessTopo(scopeIds, ssidFilter, seen) {
     const wl = tepEpWirelessCache;
     const recs = [];
     if (wl && wl.byMachineId) {
       for (const r of wl.byMachineId.values()) {
         if (scopeIds && scopeIds.size && !scopeIds.has(r.machineId)) continue;
-        if (onlySsid != null && (r.ssid || 'Hidden SSID') !== onlySsid) continue;
         recs.push(r);
       }
     }
@@ -22788,18 +22828,46 @@
       }
     }
     const bySsid = new Map();
+    const inScope = new Set();
     for (const r of recs) {
-      const ssid = r.ssid || 'Hidden SSID';
-      if (!bySsid.has(ssid)) bySsid.set(ssid, new Map());
-      const byB = bySsid.get(ssid);
-      if (!byB.has(r.bssid)) byB.set(r.bssid, []);
-      byB.get(r.bssid).push(r);
+      // EVERY radio this agent used across the window, not just the one it
+      // happens to be on now. rec.ssid/rec.bssid are overwritten by each newer
+      // round, so keying off them alone meant an agent that roamed took its
+      // earlier SSID off the board with it - and if it had been that SSID's
+      // only client, the whole node vanished mid-load, which is the jumping.
+      // rec.roam already holds the lot. CONFIRMED via user request.
+      const roam = r.roam instanceof Map ? r.roam : null;
+      const pairs = [];
+      if (roam && roam.size) {
+        for (const rp of roam.values()) {
+          if (!rp || !rp.bssid) continue;
+          pairs.push({ ssid: rp.ssid || 'Hidden SSID', bssid: rp.bssid, rp });
+        }
+      } else if (r.bssid) {
+        pairs.push({ ssid: r.ssid || 'Hidden SSID', bssid: r.bssid, rp: null });
+      }
+      for (const pr of pairs) {
+        if (ssidFilter && !ssidFilter.has(pr.ssid)) continue;
+        inScope.add(r.machineId);
+        if (!bySsid.has(pr.ssid)) bySsid.set(pr.ssid, new Map());
+        const byB = bySsid.get(pr.ssid);
+        if (!byB.has(pr.bssid)) byB.set(pr.bssid, []);
+        // The live association keeps the record itself; a past one gets that
+        // radio's own averages instead of the current link's numbers.
+        byB.get(pr.bssid).push(pr.bssid === r.bssid ? r : tepWtopoPastAssoc(r, pr.rp));
+      }
     }
     const ssids = [];
     for (const [ssid, byB] of bySsid) {
       const bssids = [];
       for (const [bssid, clients] of byB) {
-        clients.sort((a, b) => (b.quality || 0) - (a.quality || 0));
+        // Identity order, NOT quality - same reasoning as the bssid and ssid
+        // sorts below. A client's ANGLE around its AP comes from its index in
+        // this array, so re-ranking by a number that moves every round made
+        // clients swap seats on each paint. Distance from the AP still tracks
+        // signal, which is the part that is meant to move. CONFIRMED via user
+        // request that the board stop jumping around.
+        clients.sort((a, b) => String(a.machineId).localeCompare(String(b.machineId)));
         const ch = (clients.find((c) => c.channel != null) || {}).channel;
         bssids.push({ bssid, apName: bssidToAp.get(bssid) || '', channel: ch != null ? ch : null, band: tepWirelessBand(ch),
           phyMode: (clients.find((c) => c.phyMode) || {}).phyMode || '', vendor: (clients.find((c) => c.vendor) || {}).vendor || '', clients });
@@ -22809,12 +22877,41 @@
       // the layout below hands them different ring positions — the "APs jump
       // around" half of the loading churn. See tepWtopoLayout.
       bssids.sort((a, b) => String(a.bssid).localeCompare(String(b.bssid)));
-      ssids.push({ ssid, bssids, clientCount: bssids.reduce((s, b) => s + b.clients.length, 0) });
+      // Distinct agents, not associations - one that roamed between two radios
+      // on the same SSID is still one client.
+      const ids = new Set();
+      for (const b of bssids) for (const c of b.clients) ids.add(c.machineId);
+      ssids.push({ ssid, bssids, clientCount: ids.size });
+    }
+    // Once a node has been on the board it stays. Slots are already sticky (see
+    // tepWtopoLayout); this makes the ENTITY SET sticky too, so nothing can
+    // disappear out from under the user part-way through a load.
+    // CONFIRMED via user request ("when an SSID or BSSID shows up ... it never
+    // leaves"). A node with nothing on it right now is drawn empty rather than
+    // removed, which is also the honest reading: it WAS there.
+    if (seen) {
+      for (const sx of ssids) {
+        let set = seen.get(sx.ssid);
+        if (!set) { set = new Set(); seen.set(sx.ssid, set); }
+        for (const b of sx.bssids) set.add(b.bssid);
+      }
+      for (const [ssid, set] of seen) {
+        if (ssidFilter && !ssidFilter.has(ssid)) continue;
+        let sx = ssids.find((x) => x.ssid === ssid);
+        if (!sx) { sx = { ssid, bssids: [], clientCount: 0 }; ssids.push(sx); }
+        for (const bssid of set) {
+          if (sx.bssids.some((b) => b.bssid === bssid)) continue;
+          sx.bssids.push({ bssid, apName: bssidToAp.get(bssid) || '', channel: null,
+            band: tepWirelessBand(null), phyMode: '', vendor: '', clients: [] });
+        }
+        sx.bssids.sort((a, b) => String(a.bssid).localeCompare(String(b.bssid)));
+      }
     }
     // Same reasoning as the bssid sort above: by name, so an SSID's rank can't
     // change just because one more of its clients reported this round.
     ssids.sort((a, b) => String(a.ssid).localeCompare(String(b.ssid)));
-    return { ssids, clientCount: recs.length, ssidCount: ssids.length, bssidCount: ssids.reduce((s, x) => s + x.bssids.length, 0) };
+    return { ssids, clientCount: inScope.size || recs.length,
+      ssidCount: ssids.length, bssidCount: ssids.reduce((s, x) => s + x.bssids.length, 0) };
   }
 
   /** Sticky card for a BSSID node — its AP/radio facts + the clients on it. */
@@ -22829,7 +22926,10 @@
     rows.push(['BSSID', macFmt(b.bssid)]);
     const head = '<div class="tt-head"><span class="tt-name">' + esc(b.apName || macFmt(b.bssid)) + '</span><span class="tt-badge" style="background:var(--tdt-ac)">BSSID</span></div>';
     const grid = '<dl class="tt-grid">' + rows.map((r) => '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>').join('') + '</dl>';
-    return head + grid + '<div class="tt-clients"><div class="tt-clients-hd">Clients · ' + b.clients.length + '</div>' + tepClientRowsHtml(b.clients, true, false) + '</div>';
+    // A COPY sorted by signal: the board needs a stable order for placement, a
+    // reading list wants the worst first.
+    const byQ = b.clients.slice().sort((x, y) => (y.quality || 0) - (x.quality || 0));
+    return head + grid + '<div class="tt-clients"><div class="tt-clients-hd">Clients · ' + b.clients.length + '</div>' + tepClientRowsHtml(byQ, true, false) + '</div>';
   }
 
   /** Deep-link to TE's endpoint Wireless view filtered to one BSSID (the wireless
@@ -22874,7 +22974,8 @@
       + '<span class="tep-ap-rmeta">' + (r.channel != null ? 'ch ' + r.channel + ' · ' : '') + (r.phyMode ? esc(r.phyMode) + ' · ' : '') + macFmt(r.bssid) + '</span></div>').join('');
     return head + '<div class="tt-ip">' + ap.radios.length + ' radio' + (ap.radios.length === 1 ? '' : 's') + ' · ' + ap.clients.length + ' client' + (ap.clients.length === 1 ? '' : 's') + '</div>'
       + '<div class="tep-ap-wifi">' + radios + '</div>'
-      + '<div class="tt-clients"><div class="tt-clients-hd">Clients · ' + ap.clients.length + '</div>' + tepClientRowsHtml(ap.clients, true, true) + '</div>';
+      + '<div class="tt-clients"><div class="tt-clients-hd">Clients · ' + ap.clients.length + '</div>'
+      + tepClientRowsHtml(ap.clients.slice().sort((x, y) => (y.quality || 0) - (x.quality || 0)), true, true) + '</div>';
   }
 
   /** Colored wireless-stat chips for a client (band pill + ch/mode + health-tinted
@@ -23115,7 +23216,11 @@
         for (const c of x.clients) if (!ap.seen.has(c.machineId)) { ap.seen.add(c.machineId); ap.clients.push(c); }
       }
       const aps = Array.from(apMap.values());
-      aps.forEach((a) => { a.radios.sort((p, q) => (p.channel || 0) - (q.channel || 0)); a.clients.sort((p, q) => (q.quality || 0) - (p.quality || 0)); });
+      aps.forEach((a) => {
+        a.radios.sort((p, q) => (p.channel || 0) - (q.channel || 0));
+        // Identity, not quality - see the client sort in tepBuildWirelessTopo.
+        a.clients.sort((p, q) => String(p.machineId).localeCompare(String(q.machineId)));
+      });
       const nA = aps.length;
       // Ring sized to CAPACITY, and monotonic: the hub never shrinks back and
       // re-divides when an AP stops reporting for a round. R1 therefore holds
@@ -23202,10 +23307,50 @@
       const p = document.createElementNS(TEP_SVGNS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'var(--tdt-ac)'); p.setAttribute('stroke-width', thin ? '1.2' : '1.6'); p.setAttribute('opacity', String(op)); p.setAttribute('class', 'tep-wl'); svg.appendChild(p);
     };
     stage.appendChild(svg);
+    // A roam link: the faint tie from an agent's single marker back to another
+    // radio it used. Drawn into the same SVG as the hub->AP links, so it sits
+    // under every node.
+    const roamLine = (x1, y1, x2, y2, mid) => {
+      const pth = document.createElementNS(TEP_SVGNS, 'path');
+      pth.setAttribute('d', 'M' + x1.toFixed(1) + ' ' + y1.toFixed(1) + ' L' + x2.toFixed(1) + ' ' + y2.toFixed(1));
+      pth.setAttribute('class', 'tep-wtopo-roamline');
+      pth.setAttribute('data-mid', String(mid));
+      svg.appendChild(pth);
+    };
+    // ONE marker per agent, however many radios it used. Ownership goes to the
+    // radio it is on NOW - the association that is not a past one - so distance
+    // from the AP still reads as current signal. Every other radio it used gets
+    // a line to that single marker instead of a copy of it.
+    // CONFIRMED via user request (an agent was appearing three times).
+    const clientOwner = new Map();   // machineId -> the ap that draws it
+    const clientAps = new Map();     // machineId -> Set of every ap it used
+    for (const cc of clusters) {
+      for (const ap of cc.aps) {
+        for (const cl of ap.clients) {
+          const id = String(cl.machineId);
+          let set = clientAps.get(id);
+          if (!set) { set = new Set(); clientAps.set(id, set); }
+          set.add(ap);
+          const cur = clientOwner.get(id);
+          // First one wins, unless a LIVE association turns up after a past one.
+          if (!cur || (cur.past && !cl._past)) clientOwner.set(id, { ap, past: !!cl._past });
+        }
+      }
+    }
+    const apPos = new Map();       // ap -> { x, y } once placed
+    const clientPos = new Map();   // machineId -> { x, y } of its one marker
     const place = (el, x, y) => { el.style.left = x + 'px'; el.style.top = y + 'px'; };
     for (const c of clusters) {
       const v = c.v, HX = c.cx + offX, HY = c.cy;
-      const sMembers = v.bssids.reduce((a, x) => a.concat(x.clients), []);
+      // Distinct agents: one that used two radios on this SSID is still one
+      // client, and since it is now drawn once it must also be counted once.
+      const sMembers = [];
+      { const sSeen = new Set();
+        for (const x of v.bssids) for (const cl of x.clients) {
+          const id = String(cl.machineId);
+          if (sSeen.has(id)) continue;
+          sSeen.add(id); sMembers.push(cl);
+        } }
       const sEl = document.createElement('div'); sEl.className = 'tep-wtopo-ssid';
       sEl.title = 'Open Wireless Views filtered to SSID “' + v.s.ssid + '”';
       sEl.innerHTML = '<div class="tep-wtopo-ssid-ico" style="color:' + qColor(avgQ(sMembers)) + '">' + bigWifi + '</div>'
@@ -23220,6 +23365,7 @@
         const th = -Math.PI / 2 + (ap.slot != null ? ap.slot : i) * TWO_PI / Math.max(1, c.cap || c.nA);
         const ct = Math.cos(th), stt = Math.sin(th);
         const AX = HX + c.R1 * ct, AY = HY + c.R1 * stt;
+        apPos.set(ap, { x: AX, y: AY });
         line(HX, HY, AX, AY, 0.42);
         const apq = qColor(avgQ(ap.clients));
         // Generic Wi-Fi pulse: solid concentric rings expanding steadily (linear,
@@ -23255,12 +23401,19 @@
         place(apEl, AX, AY); stage.appendChild(apEl);
         // Fan the clients across an arc opening AWAY from the hub. The arc widens
         // with client count but is capped so neighbouring APs' fans don't collide.
-        const nc = ap.clients.length;
+        // Only the agents THIS radio owns get drawn here; the rest are drawn at
+        // their own radio and reach back with a roam line. The fan is sized to
+        // what is actually placed, or it would leave gaps where the copies were.
+        const drawn = ap.clients.filter((cl) => {
+          const o = clientOwner.get(String(cl.machineId));
+          return !o || o.ap === ap;
+        });
+        const nc = drawn.length;
         const maxFan = c.nA > 1 ? (TWO_PI / c.nA) * 0.82 : Math.PI * 1.08;
         const fan = nc > 1 ? Math.min(maxFan, 0.5 + (nc - 1) * 0.34) : 0;
         // Seed each client's position: angle from the fan, distance from SNR
         // (strong = close), plus a little organic jitter.
-        const pos = ap.clients.map((cl, j) => {
+        const pos = drawn.map((cl, j) => {
           const sv = snrOf(cl);
           const snrNorm = sv != null ? Math.max(0, Math.min(1, sv / 100)) : 0.45;   // sv is already a percent
           const jd = (hash16(cl.machineId) % 27) - 13;
@@ -23291,15 +23444,24 @@
           const cEl = document.createElement('div'); cEl.className = 'tep-wtopo-ep' + (roamInfo.roaming ? ' tep-wtopo-ep--roam' : '')
             + (isHit ? ' tep-wtopo-ep--hit' : '') + (searchActive && !isHit ? ' tep-wtopo-ep--dim' : '');
           cEl.setAttribute('data-mid', String(cl.machineId));
-          cEl.title = cl.name + (cl.quality != null ? ' · ' + cl.quality + '%' : '') + (roamInfo.roaming ? ' · wireless active testing (' + roamInfo.bssids + ' APs)' : '');
+          cEl.title = cl.name + (cl.quality != null ? ' · ' + cl.quality + '%' : '') + (roamInfo.roaming ? ' · roaming (' + roamInfo.bssids + ' APs)' : '');
           // Same marker as the main map: the filled person glyph (health fill +
           // stroke), not a circled avatar — plus a small signal badge + name.
           cEl.innerHTML = '<span class="ep-mk"><svg viewBox="0 0 24 24" width="22" height="22">' + tepUserIconInner('style="fill:' + cc.fill + ';stroke:' + cc.stroke + ';stroke-width:2"') + '</svg>'
             + (cl.quality != null ? '<span class="ep-q" style="background:' + cq + '">' + cl.quality + '</span>' : '') + '</span>'
             + '<span class="ep-nm">' + esc(cl.name) + '</span>'
-            + (roamInfo.roaming ? '<span class="ep-pill" title="Seen on ' + roamInfo.bssids + ' access points / ' + roamInfo.ssids + ' SSID' + (roamInfo.ssids === 1 ? '' : 's') + ' — open the agent-centric AP view">Wireless Active Testing</span>' : '');
-          cEl.addEventListener('mouseenter', (ev) => tepDevtopoShowStickyCard(tepWtopoClientDetailHtml(cl), ev.clientX, ev.clientY));
-          cEl.addEventListener('mouseleave', () => tepDevtopoScheduleHideSticky());
+            + (roamInfo.roaming ? '<span class="ep-pill" title="Seen on ' + roamInfo.bssids + ' access points / ' + roamInfo.ssids + ' SSID' + (roamInfo.ssids === 1 ? '' : 's') + ' — open the agent-centric AP view">Roaming</span>' : '');
+          // Light this agent's ties to the other radios it used, so "one agent,
+          // several BSSIDs" is legible without the lines shouting at rest.
+          const roamPaths = () => svg.querySelectorAll('.tep-wtopo-roamline[data-mid="' + String(cl.machineId).replace(/["\\]/g, '\\$&') + '"]');
+          cEl.addEventListener('mouseenter', (ev) => {
+            for (const pl of roamPaths()) pl.classList.add('tep-wtopo-roamline--hl');
+            tepDevtopoShowStickyCard(tepWtopoClientDetailHtml(cl), ev.clientX, ev.clientY);
+          });
+          cEl.addEventListener('mouseleave', () => {
+            for (const pl of roamPaths()) pl.classList.remove('tep-wtopo-roamline--hl');
+            tepDevtopoScheduleHideSticky();
+          });
           cEl.addEventListener('click', (ev) => {
             ev.stopPropagation();
             // The "active testing" pill opens the agent-centric AP view; the marker
@@ -23308,8 +23470,23 @@
             window.open(buildEndpointAgentViewUrl({ id: cl.machineId }), '_blank', 'noopener');
           });
           place(cEl, x, y); stage.appendChild(cEl);
+          clientPos.set(String(cl.machineId), { x, y });
         });
       });
+    }
+    // Every radio an agent used, other than the one drawing it, gets a line to
+    // that single marker. Done after the whole board is placed, because both
+    // ends have to exist first.
+    for (const [mid, aps] of clientAps) {
+      if (aps.size < 2) continue;
+      const pt = clientPos.get(mid);
+      if (!pt) continue;
+      const own = clientOwner.get(mid);
+      for (const ap of aps) {
+        if (own && ap === own.ap) continue;
+        const a = apPos.get(ap);
+        if (a) roamLine(pt.x, pt.y, a.x, a.y, mid);
+      }
     }
     stage.addEventListener('click', (ev) => { if (ev.target === stage || ev.target === svg) tepDevtopoHideTip(true); });
     // Zoom-to-fit the whole board into the viewport (like the map) — kept fitted
@@ -23562,23 +23739,39 @@
       try { tepPlaySonarPing(0.5); } catch (_) { /* */ }
       try { tepWtopoFireScreenPulse(); } catch (_) { /* */ }
     }); });
-    // For the single-agent entry the SSID is only known after the fetch, so
-    // resolve it from that agent's record then.
-    const resolveSsid = () => {
-      if (opts.onlySsid != null) return opts.onlySsid;
-      if (opts.agentId) { const rec = tepEpWirelessCache && tepEpWirelessCache.byMachineId.get(String(opts.agentId)); return rec ? (rec.ssid || 'Hidden SSID') : null; }
-      return null;
+    // Which SSIDs this view is scoped to: null for everything in scope, or a
+    // Set. For the single-agent entry it is EVERY SSID that agent has used, not
+    // the one it happens to be on now - that value is overwritten by each newer
+    // round, so scoping to it swapped the entire board mid-load whenever the
+    // agent had roamed. The set only ever GROWS, so a later round can never
+    // take an SSID away. CONFIRMED via user request.
+    let ssidScope = null;
+    const resolveSsids = () => {
+      if (opts.onlySsid != null) return new Set([opts.onlySsid]);
+      if (!opts.agentId) return null;
+      const rec = tepEpWirelessCache && tepEpWirelessCache.byMachineId.get(String(opts.agentId));
+      if (!rec) return ssidScope;
+      const out = ssidScope ? new Set(ssidScope) : new Set();
+      if (rec.roam instanceof Map) for (const rp of rec.roam.values()) if (rp) out.add(rp.ssid || 'Hidden SSID');
+      if (!out.size) out.add(rec.ssid || 'Hidden SSID');
+      ssidScope = out;
+      return out;
+    };
+    const ssidScopeTitle = (set) => {
+      if (!set || !set.size) return '';
+      const names = [...set].sort();
+      return names.length <= 2 ? names.join(' · ') : names.length + ' SSIDs';
     };
     // Paint the board the moment the first sample lands (progressive), so the
     // scan never appears to hang while later rounds trickle in.
     let firstPaint = false;
     const onRound = () => {
       if (tepDeviceTopoEl !== overlay) return;
-      const ssid = resolveSsid();
-      const m = tepBuildWirelessTopo(opts.scopeIds, ssid);
+      const ssids = resolveSsids();
+      const m = tepBuildWirelessTopo(opts.scopeIds, ssids, tepWtopoLayout && tepWtopoLayout.seen);
       if (!m.clientCount) return;   // keep the scan animation until there's something to show
       model = m;
-      if (opts.agentId && ssid) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssid; }
+      if (opts.agentId && ssids) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssidScopeTitle(ssids); }
       if (overlay._tepScanStop) overlay._tepScanStop();   // stop the code-rain before the board replaces it
       // Repaint ONLY when the set of SSIDs / radios / clients actually changed.
       // Every one of the 20 sample rounds used to repaint, even when it carried
@@ -23600,14 +23793,23 @@
         if (overlay._tepScanTimer) { clearInterval(overlay._tepScanTimer); overlay._tepScanTimer = null; }
         if (overlay._tepScanStop) overlay._tepScanStop();
         if (tepDeviceTopoEl !== overlay) return;
-        const ssid = resolveSsid();
-        if (opts.agentId && ssid) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssid; }
-        model = tepBuildWirelessTopo(opts.scopeIds, ssid);
+        const ssids = resolveSsids();
+        if (opts.agentId && ssids) { const t = overlay.querySelector('.tep-devtopo-title'); if (t) t.textContent = 'Wireless · ' + ssidScopeTitle(ssids); }
+        model = tepBuildWirelessTopo(opts.scopeIds, ssids, tepWtopoLayout && tepWtopoLayout.seen);
         // Unconditional: this is the settle paint. Nothing new may have arrived
         // in the last rounds, but every client's final SNR lands here, so this
         // is the one place positions are allowed to move without a set change.
         if (tepWtopoLayout) tepWtopoLayout.sig = tepWtopoModelSig(model);
         updateSub(); paint();
+        // Centre the finished board. paint() only re-fits when the content box
+        // changed AND the user has not taken over the view; this is the one
+        // moment it should fit regardless - loading is done, and where the board
+        // has ended up is rarely where it started.
+        // CONFIRMED via user request ("center when done loading").
+        if (canvas && canvas._tepPZfit && canvas._tepContentW) {
+          canvas._tepUserZoomed = false;
+          canvas._tepPZfit(canvas._tepContentW, canvas._tepContentH);
+        }
         // Signal-lock chirp once the board resolves with real clients (if the
         // progressive path didn't already fire it).
         if (model.clientCount && !firstPaint) { firstPaint = true; try { tepPlaySignalLock(0.7); } catch (_) { /* */ } }
@@ -23645,7 +23847,7 @@
 
   /** Agent-centric AP view: the AGENT sits at the centre, and every access point
    *  it touched over the window rings it — distance set by SNR (strong = close),
-   *  colour by health. Opened from a client's "Wireless Active Testing" pill. */
+   *  colour by health. Opened from a client's "Roaming" pill. */
   function tepPaintAgentApView(canvas, rec, info) {
     if (!canvas) return;
     let stage = canvas.querySelector('.tep-devtopo-stage');
