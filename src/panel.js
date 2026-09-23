@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.17';
+  const TEP_VERSION = '4.18';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2137,8 +2137,12 @@
     .tep-globe-moon, .tep-globe-sun { pointer-events: none; }
     /* Same grid as the Earth and Moon, in a warm tone dark enough to read on a
        lit disc. */
-    .tep-globe-sun-grat { fill: none; stroke: rgba(124,45,18,.28); stroke-width: .7; }
-    .tep-globe-sun-rim { stroke: rgba(255,237,213,.5); stroke-width: .7; }
+    /* Limb brightening: the edge of the disc is the hottest line on it. */
+    .tep-globe-sun-rim { stroke: rgba(255,240,205,.85); stroke-width: .8; }
+    /* Corona spikes and the prominences looping off the limb. Both are plain
+       static geometry - no filters, no animation - so they cost a few hundred
+       characters of path and nothing per frame. */
+    .tep-globe-sun-prom { fill: none; stroke: #ff5f22; stroke-opacity: .6; stroke-linecap: round; }
     /* The night side keeps a trace of earthshine rather than going to nothing,
        so a crescent still reads as a sphere. */
     .tep-globe-moon-shadow { fill: #0b0e16; fill-opacity: .93; }
@@ -2345,6 +2349,20 @@
       animation: none !important;
       will-change: auto !important;
     }
+    /* ZOOMING: freeze every animation inside the map while a zoom is running.
+       The breathe note above already has the reason - a few hundred online
+       markers is a few hundred forever-animating compositor layers - and during
+       a zoom every one of those layers is ALSO being repositioned on each
+       frame, so the two costs multiply. Pausing removes one of the factors for
+       the handful of frames it matters. CONFIRMED via user request.
+
+       play-state, NOT animation:none - paused animations resume mid-cycle
+       instead of snapping back to frame zero, so nothing visibly restarts when
+       the gesture ends. will-change is deliberately left alone - dropping it
+       would destroy and rebuild every one of those layers on every gesture,
+       which is the very churn this is trying to avoid. */
+    .tep-agent-map-wrap--quiet,
+    .tep-agent-map-wrap--quiet * { animation-play-state: paused !important; }
     /* fill-box makes the 50%/50% origin above resolve against this SVG's own
        rendered content instead of its viewBox — deliberately solo markers
        only (excludes --cluster): a cluster marker's SVG also renders a text
@@ -18274,6 +18292,31 @@
   // Base length of a globe spin-to. Framing a pinned trace destination keeps
   // this; locating a node runs slower - see TEP_LOCATE_SPIN_MS.
   const TEP_GLOBE_SPIN_MS = 620;
+  /** How far IN you are, 0..1, along a view's own zoom range. Logarithmic, like
+   *  the zoom itself, so one number describes the flat map (1..32) and the globe
+   *  (the dot zoom..6) alike. */
+  function tepZoomInFrac(z, zMin, zMax) {
+    if (!(z > 0) || !(zMin > 0) || !(zMax > zMin)) return 1;
+    return Math.max(0, Math.min(1, Math.log(z / zMin) / Math.log(zMax / zMin)));
+  }
+  // Marker de-collision is OFF until you are halfway in, then fades up rather
+  // than snapping on. Separation is measured in PIXELS, and zoomed out a pixel
+  // is miles: nudging there walked clusters clean off their own country, and
+  // because the nudge was recomputed at every zoom step the whole board seemed
+  // to swim as you zoomed. Overlapping markers when zoomed out are the honest
+  // picture - the detail you would separate them to read is not on screen
+  // anyway. CONFIRMED via user request.
+  //
+  // This one number is the whole rule: it scales the required separation, and
+  // being zero is also what switches the nudge pass (and its land search) off.
+  const TEP_NUDGE_FROM = 0.50;   // fraction of the way in before anything moves
+  const TEP_NUDGE_FULL = 0.65;   // fully applied by here
+  function tepNudgeScale(z, zMin, zMax) {
+    const p = tepZoomInFrac(z, zMin, zMax);
+    if (p <= TEP_NUDGE_FROM) return 0;
+    if (p >= TEP_NUDGE_FULL) return 1;
+    return (p - TEP_NUDGE_FROM) / (TEP_NUDGE_FULL - TEP_NUDGE_FROM);
+  }
   // Locating a node - the search box jumping to a hit, and the agent-list / ISP
   // popover jumping to an agent, which the comment at that call site says is
   // deliberately the same motion - runs at three quarters speed. A longer,
@@ -18554,7 +18597,7 @@
     // The bright limb faces the Sun: take its direction on screen. Falls back to
     // the Sun's raw view-space direction when the Sun is itself past the camera
     // and so has no screen position of its own.
-    const sp = tepGlobeSkyPos(sv, TEP_SUN_DIST_R, TEP_MOON_R_FRAC, cx, cy, R);
+    const sp = tepGlobeSkyPos(sv, TEP_SUN_DIST_R, TEP_SUN_R_FRAC, cx, cy, R);
     const ang = sp
       ? Math.atan2(sp.y - y, sp.x - x) * 180 / Math.PI
       : Math.atan2(-sv.up, sv.right) * 180 / Math.PI;
@@ -18627,53 +18670,102 @@
   // side entirely. It reads as distant now rather than parked next to the Earth
   // - CONFIRMED via user report - and the distance/size ratio rises to ~88,
   // against the Moon's 48 and a true value of ~220 for both.
-  const TEP_SUN_DIST_R = 2.1;
+  // Far enough out that it behaves like something at infinity. What this
+  // distance really controls is WHEN the Sun passes behind you: with the camera
+  // at TEP_GLOBE_CAM_D, it goes by at toward = CAM_D / dist, so 2.1 kept it in
+  // view until the sub-solar point was within 62 degrees of the middle of the
+  // screen - the Sun hanging there while you looked straight at the lit face,
+  // which is the single strongest cue that it is close. At 6 that boundary is
+  // 80 degrees, near the 90 a genuinely distant Sun would have: look at the day
+  // side and the Sun is behind your shoulder, as it should be.
+  // CONFIRMED via user report that it looked far too close.
+  const TEP_SUN_DIST_R = 6;
+  // A small, fierce core rather than a disc you could land on. The Sun and Moon
+  // do subtend almost the same angle in reality, which is why they were drawn
+  // the same size - but the Sun carries a corona several times its own radius,
+  // so matching the DISCS never made them read as the same size anyway. A
+  // brilliant point inside a wide bloom is what distance looks like.
+  const TEP_SUN_R_FRAC = 0.013;
+  const TEP_SUN_GLOW_MUL = 5.5;
   /** The Sun as SVG, or null when the Earth is in the way. Same construction as
    *  the Moon - a grid sphere, no surface - just lit rather than shaded. */
+  // Corona spikes, as ONE path. Alternating lengths so it reads as a star
+  // rather than a cog, and fixed angles so it cannot shimmer as the Sun crosses
+  // the sky. CONFIRMED via user request for more flair than a plain circle.
+  const TEP_SUN_RAYS = 12;
+  function tepSunRaysPath(rs) {
+    const f = (v) => Math.round(v * 10) / 10;
+    const inner = rs * 0.92, wide = rs * 0.22;
+    let d = '';
+    for (let i = 0; i < TEP_SUN_RAYS; i++) {
+      const a = (i / TEP_SUN_RAYS) * Math.PI * 2;
+      const len = rs * (i % 2 ? 2.4 : 3.6);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const px = -sa, py = ca;   // perpendicular, for the spike's base
+      d += 'M' + f(inner * ca + wide * px) + ' ' + f(inner * sa + wide * py)
+        + 'L' + f(len * ca) + ' ' + f(len * sa)
+        + 'L' + f(inner * ca - wide * px) + ' ' + f(inner * sa - wide * py) + 'Z';
+    }
+    return d;
+  }
+  // Prominences: loops standing off the limb at fixed angles. Drawn BEFORE the
+  // disc, so each one emerges from behind the edge the way a real one does.
+  const TEP_SUN_PROMS = [28, 196];   // degrees round the limb
+  function tepSunPromPath(rs) {
+    const f = (v) => Math.round(v * 10) / 10;
+    const spread = 0.32, r0 = rs * 0.94, arch = rs * 1.85;
+    let d = '';
+    for (const deg of TEP_SUN_PROMS) {
+      const a = deg * Math.PI / 180, a0 = a - spread, a1 = a + spread;
+      d += 'M' + f(r0 * Math.cos(a0)) + ' ' + f(r0 * Math.sin(a0))
+        + 'Q' + f(arch * Math.cos(a)) + ' ' + f(arch * Math.sin(a)) + ' '
+        + f(r0 * Math.cos(a1)) + ' ' + f(r0 * Math.sin(a1));
+    }
+    return d;
+  }
   function tepGlobeSunHtml(cx, cy, R) {
     const sunPt = tepSubsolarPoint(tepMetricsNowMs());
     const sv = tepGlobeViewBasis(sunPt.lon, sunPt.lat);
-    // Same apparent size as the Moon - their real angular diameters match - and
-    // the same perspective placement, so the Sun now genuinely sweeps past and
-    // behind the viewer instead of needing to be special-cased out of the way.
-    const pos = tepGlobeSkyPos(sv, TEP_SUN_DIST_R, TEP_MOON_R_FRAC, cx, cy, R);
+    // No graticule: a grid turns it into a modelled sphere sitting nearby, and
+    // the Sun is the one body here that should read as a light rather than a
+    // place. CONFIRMED via user request.
+    const pos = tepGlobeSkyPos(sv, TEP_SUN_DIST_R, TEP_SUN_R_FRAC, cx, cy, R);
     if (!pos) return null;
     const x = pos.x, y = pos.y, rs = pos.r;
     const f = (v) => Math.round(v * 10) / 10;
-    let grat = '';
-    for (let lo = -180; lo < 180; lo += 30) {
-      let run = 0;
-      for (let la = -90; la <= 90; la += 6) {
-        const pt = tepOrthoProject(lo, la, 0, 0, 0, 0, rs);
-        if (!pt.visible) { run = 0; continue; }
-        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
-        run = 1;
-      }
-    }
-    for (let la = -60; la <= 60; la += 30) {
-      let run = 0;
-      for (let lo = -180; lo <= 180; lo += 6) {
-        const pt = tepOrthoProject(lo, la, 0, 0, 0, 0, rs);
-        if (!pt.visible) { run = 0; continue; }
-        grat += (run ? 'L' : 'M') + f(pt.x) + ' ' + f(pt.y);
-        run = 1;
-      }
-    }
     return {
       inFront: pos.inFront,
       fade: pos.fade,
       html: `<g class="tep-globe-sun" transform="translate(${f(x)} ${f(y)})">`
-        + `<defs><radialGradient id="tep-sun-face" cx="38%" cy="34%" r="74%">`
-        + `<stop offset="0%" stop-color="#fffaf0"/><stop offset="58%" stop-color="#fdd9a0"/>`
-        + `<stop offset="100%" stop-color="#f59e42"/></radialGradient>`
+        // Photosphere: a white-hot core falling away through yellow to a deep
+        // orange limb, rather than one flat tint.
+        + `<defs><radialGradient id="tep-sun-face" cx="40%" cy="35%" r="76%">`
+        + `<stop offset="0%" stop-color="#fffdf2"/><stop offset="28%" stop-color="#ffe08a"/>`
+        + `<stop offset="62%" stop-color="#ff8c1f"/><stop offset="100%" stop-color="#cf3f12"/></radialGradient>`
+        // The wide outer bloom.
         + `<radialGradient id="tep-sun-glow" cx="50%" cy="50%" r="50%">`
-        + `<stop offset="0%" stop-color="#fdba74" stop-opacity=".45"/>`
-        + `<stop offset="55%" stop-color="#f97316" stop-opacity=".14"/>`
+        + `<stop offset="0%" stop-color="#ffc689" stop-opacity=".40"/>`
+        + `<stop offset="48%" stop-color="#f97316" stop-opacity=".13"/>`
+        + `<stop offset="100%" stop-color="#e2531a" stop-opacity="0"/></radialGradient>`
+        // A tight, hot halo hugging the disc - the blazing edge in the middle of
+        // the softer bloom, and what stops it flattening into a sticker.
+        + `<radialGradient id="tep-sun-inner" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="${f(rs * 2.1)}">`
+        + `<stop offset="42%" stop-color="#ffe6ae" stop-opacity=".55"/>`
+        + `<stop offset="100%" stop-color="#ff9b2f" stop-opacity="0"/></radialGradient>`
+        // Spikes fade out along their own length.
+        + `<radialGradient id="tep-sun-ray" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="${f(rs * 4.2)}">`
+        + `<stop offset="0%" stop-color="#ffd9a0" stop-opacity=".17"/>`
         + `<stop offset="100%" stop-color="#f97316" stop-opacity="0"/></radialGradient></defs>`
-        // Corona first, so the disc sits inside it.
-        + `<circle r="${f(rs * 3.1)}" fill="url(#tep-sun-glow)"/>`
+        // Spikes go UNDER the bloom, not over it: the bloom is what softens
+        // their edges. Drawn on top they were hard-edged triangles and read as a
+        // cartoon sparkle rather than a corona, and SVG has no cheap way to blur
+        // them - a filter would be rebuilt with the rest of the sphere on every
+        // frame of the spin.
+        + `<path d="${tepSunRaysPath(rs)}" fill="url(#tep-sun-ray)"/>`
+        + `<circle r="${f(rs * TEP_SUN_GLOW_MUL)}" fill="url(#tep-sun-glow)"/>`
+        + `<circle r="${f(rs * 2.1)}" fill="url(#tep-sun-inner)"/>`
+        + `<path class="tep-globe-sun-prom" d="${tepSunPromPath(rs)}" stroke-width="${f(Math.max(0.6, rs * 0.17))}"/>`
         + `<circle r="${f(rs)}" fill="url(#tep-sun-face)"/>`
-        + `<path class="tep-globe-sun-grat" d="${grat}"/>`
         + `<circle r="${f(rs)}" class="tep-globe-sun-rim" fill="none"/>`
         + `</g>`,
     };
@@ -26685,12 +26777,6 @@
       // cluster bubble/badge is bigger than its SVG width attribute, which is why
       // two bubbles still touched) and separating to full contact.
       const atMaxZoom = epDashMapZoom.s >= MAX - 0.01;
-      // Trace latency pills / hop nodes want clean, ZERO-overlap spacing whenever
-      // the user has zoomed into a region — not only at absolute MAX (which, after
-      // the 32× cap, is almost never reached). Past ~3× there's screen room to
-      // spread them fully. Kept separate from the heavier marker-nudge pass above
-      // (which still keys off atMaxZoom) so that stays unchanged.
-      const spreadTraceLabels = epDashMapZoom.s >= 3;
 
       // Place "G" destinations FIRST, at their TRUE position — confirmed or
       // estimated, Google's marker is never moved for overlap avoidance. The
@@ -26713,6 +26799,11 @@
         // hiding them at the first frame of the fade would read as a glitch.
         return { x: px + (gp.x - px) * t, y: py + (gp.y - py) * t, visible: gp.visible || t < 0.55 };
       };
+      // How hard markers are pushed apart, 0..1, from how far in this view is.
+      // Zero means nothing is moved at all - see tepNudgeScale.
+      const sepScale = gg
+        ? (() => { const eb = eyeBox(); return tepNudgeScale(tepGlobeZoom, tepGlobeDotZoom(w, h, eb.w, eb.h), TEP_GLOBE_ZOOM_MAX); })()
+        : tepNudgeScale(epDashMapZoom.s, MIN, MAX);
       const placeDest = (de, radius) => {
         const pt = morphPt(de.fx, de.fy, de.lon, de.lat);
         de.el.style.display = pt.visible ? '' : 'none';
@@ -26805,7 +26896,12 @@
         const fyC = (y - epDashMapZoom.ty) / (h * epDashMapZoom.s);
         return { x: fxC * TEP_BASEMAP.vbw, y: fyC * TEP_BASEMAP.vbh };
       }
+      // One layout read, not one per miss: if the basemap cannot be hit-tested
+      // the search is skipped outright rather than answering "ocean" for
+      // everything and writing that into a cache the flat map shares.
+      const landOk = !!(svg && svg.getClientRects && svg.getClientRects().length);
       function landSafeSpot(baseAngle, px, py, sep) {
+        if (!landOk) return null;
         for (const frac of LAND_RADIUS_STEPS) {
           const r = sep * frac;
           for (const offDeg of WATER_SEARCH_DEG) {
@@ -26817,6 +26913,23 @@
           }
         }
         return null;
+      }
+      /** How much ground a screen pixel covers at this point, relative to the
+       *  middle of the disc: 1 at the centre, 0 at the limb. For an orthographic
+       *  projection that is exactly cos(angle from the centre), and the distance
+       *  from the centre gives it directly: sqrt(1 - (d/R)^2). 1 on the flat map,
+       *  which has no such falloff.
+       *
+       *  A separation that is sensible in the middle of the globe drags a marker
+       *  hundreds of miles out to sea near the edge - and the west coast is near
+       *  the edge whenever you are looking at North America, which is exactly
+       *  where the misplaced markers were. Scaling the push by this means the
+       *  limb barely moves anything: overlap out there beats invention.
+       *  CONFIRMED via user request to allow more overlap to fix it. */
+      function foreshorten(x, y) {
+        if (!gg || !(gg.R > 0)) return 1;
+        const d = Math.hypot(x - gg.cx, y - gg.cy) / gg.R;
+        return Math.sqrt(Math.max(0, 1 - Math.min(1, d * d)));
       }
       /** Globe view: a nudge must never walk a marker past the limb - there is
        *  no sphere out there to stand on. Pull anything that overshoots back to
@@ -26840,42 +26953,32 @@
       const gridAdd = (pt) => { const k = Math.floor(pt.x / GRID_CELL) + ',' + Math.floor(pt.y / GRID_CELL); let a = grid.get(k); if (!a) { a = []; grid.set(k, a); } a.push(pt); };
       const gridNear = (px, py) => { const cx = Math.floor(px / GRID_CELL), cy = Math.floor(py / GRID_CELL); const out = []; for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) { const a = grid.get(gx + ',' + gy); if (a) for (let i = 0; i < a.length; i++) out.push(a[i]); } return out; };
       for (const p of destPx) gridAdd(p);
-      // The land-safe search runs at EVERY zoom. It used to be skipped below
-      // 1.5x on the reasoning that "zoomed out, a small nudge into open water
-      // is imperceptible" — which has it backwards. The nudge is a fixed number
-      // of PIXELS, so the further out you are the more GROUND it covers: at 1x,
-      // separating two clusters by ~30px walks a marker several hundred miles,
-      // which is how a California cluster ended up sitting in the Pacific.
-      // Zoomed in, that same 30px is a few streets and genuinely wouldn't
-      // matter. CONFIRMED via user screenshot.
-      //
-      // The cost that justified the skip is mostly already paid:
-      // tepIsViewboxPtOnLand memoises on rounded VIEWBOX coordinates, which are
-      // basemap-space and therefore zoom- and pan-independent — so the cache is
-      // shared across every zoom level and fills once, after which each test is
-      // a Map lookup. The nudge pass is also skipped outright while a pan/zoom
-      // animation is running (see below), which is where the per-frame cost
-      // actually mattered.
+      // The land-safe search only ever runs while something is actually being
+      // nudged, which is now only past the halfway zoom (see tepNudgeScale). It
+      // is cheap there: tepIsViewboxPtOnLand memoises on rounded VIEWBOX
+      // coordinates, which are basemap-space and so zoom- and pan-independent,
+      // meaning the cache is shared across every zoom level and every view and
+      // fills once - after which each test is a Map lookup.
       const markerPxByKey = new Map();   // "fx,fy" → nudged {x,y}, shared by every
                                           // flow line starting from the same agent marker
-      // While a pan/zoom animation is actively running (animateZoomTo's own
-      // rAF loop — see dashMapZoomAnimFrame), skip the overlap-avoidance
-      // nudging below (the nested loop + up to 14 SVG isPointInFill hit-
-      // tests per conflicting marker) and just place every marker at its
-      // true fractional position instead. That per-frame cost, multiplied
-      // across however many markers/clusters exist, is what was making a
-      // sizable animated reframe (e.g. the fullscreen map's 1s-after-open
-      // settle) stutter and read as jerky rather than smooth — CONFIRMED
-      // via user report. Overlap avoidance still runs on every NON-animated
-      // apply() (drag/pan, instant snaps) and — via the extra apply() call
-      // animateZoomTo's step() now makes right as it finishes — on the
-      // settled final frame, so it's only ever skipped for the handful of
-      // frames an animation is actually mid-flight, never permanently.
-      // Fully faded out by the eye (and the idle spin is redrawing at 60fps out
-      // there) - so skip the overlap-avoidance pass and just place everything at
-      // its true position. Nobody can see the difference, and it keeps the spin
-      // from running the land hit-tests once per frame for markers at opacity 0.
-      const midAnimation = dashMapZoomAnimFrame !== null;
+      // Place everything at its TRUE position and move nothing. THE rule for
+      // overlap avoidance, and the only switch that turns it off - three
+      // separate ones used to do this job. Reasons, in order of how often they
+      // fire:
+      //   1. Zoomed out past the halfway point, where a separation measured in
+      //      pixels is measured in hundreds of miles on the ground. A nudge
+      //      there lies about where a cluster is, and re-deriving it at every
+      //      zoom step made the whole board swim. CONFIRMED via user screenshot
+      //      (a cluster sitting out in the Atlantic when zoomed out, correct
+      //      when zoomed in).
+      //   2. A zoom animation is mid-flight (animateZoomTo's own rAF loop). The
+      //      nested relaxation plus up to 14 SVG hit-tests per conflicting
+      //      marker, every frame, is what made a sizable animated reframe read
+      //      as jerky. The extra apply() that animateZoomTo makes as it finishes
+      //      means the settled frame is still fully placed.
+      // (The third case - the globe faded to the eye's pupil - returns from
+      // layoutMarkers outright at the top, since nothing there is visible.)
+      const placeTrue = sepScale <= 0 || dashMapZoomAnimFrame !== null;
       for (const m of markerEls) {
         // Hidden markers (e.g. non-source clusters omitted while a trace is
         // pinned) take no space — skip them so they neither get positioned nor
@@ -26897,6 +27000,9 @@
           trueY = epDashMapZoom.ty + m._fy * h * epDashMapZoom.s;
         }
         const rM = markerRadiusPx(m);
+        // How hard THIS marker may be pushed: the view-wide scale, damped by how
+        // foreshortened the sphere is where it sits.
+        const mScale = sepScale * foreshorten(trueX, trueY);
         let x = trueX, y = trueY;
         // Several passes, not just one reaction per conflict — with 3+
         // markers crowded into the same small area, moving away from the
@@ -26905,10 +27011,10 @@
         // until nothing's left too close — usually 1-2 passes — or it's
         // tried enough times that it settles for the closest miss found
         // rather than looping forever on a genuinely packed cluster.
-        if (!midAnimation) for (let pass = 0; pass < 6; pass++) {
+        if (!placeTrue) for (let pass = 0; pass < 6; pass++) {
           let moved = false;
           for (const p of gridNear(x, y)) {
-            const sep = rM + (p.radius != null ? p.radius : DEFAULT_RADIUS) + SEP_GAP;
+            const sep = (rM + (p.radius != null ? p.radius : DEFAULT_RADIUS) + SEP_GAP) * mScale;
             const ddx = x - p.x, ddy = y - p.y;
             const dist = Math.hypot(ddx, ddy);
             if (dist < sep) {
@@ -26976,11 +27082,12 @@
           trueY = epDashMapZoom.ty + ce.fy * h * epDashMapZoom.s;
         }
         const rC = markerRadiusPx(ce.el);
+        const cScale = sepScale * foreshorten(trueX, trueY);
         let x = trueX, y = trueY;
-        if (!midAnimation) for (let pass = 0; pass < 6; pass++) {
+        if (!placeTrue) for (let pass = 0; pass < 6; pass++) {
           let moved = false;
           for (const p of placedPx) {
-            const sep = rC + (p.radius != null ? p.radius : DEFAULT_RADIUS) + SEP_GAP;
+            const sep = (rC + (p.radius != null ? p.radius : DEFAULT_RADIUS) + SEP_GAP) * cScale;
             const ddx = x - p.x, ddy = y - p.y;
             if (Math.hypot(ddx, ddy) < sep) {
               const bx = trueX - p.x, by = trueY - p.y;
@@ -27113,21 +27220,21 @@
       // otherwise it nudges clear so it stays visible and clickable. Anchors
       // (dest pins, agent markers, cloud icons) hold their true position; only
       // the hop nodes + total labels move. Runs after everything is placed.
-      try {
-        // At MAX zoom the user wants ZERO overlap. Two things change there: we
-        // measure each element's REAL rendered box (a wide "44ms" pill dwarfs the
-        // old fixed r=11 guess, which is why pills still touched) and separate to
-        // full contact (COVER 1) over more passes with a higher cap. At lesser
-        // zooms the cheaper fixed-radius / 25%-slack pass stays (there just isn't
-        // screen room to fully spread a dense area when zoomed out). atMaxZoom is
-        // computed once at the top of layoutMarkers.
+      // Same rule as the markers above: while we are placing true, nothing moves.
+      if (!placeTrue) try {
+        // Elements are measured by their REAL rendered box (a wide "44ms" pill
+        // dwarfs the old fixed r=11 guess, which is why pills still touched) and
+        // separated to full contact. There used to be a cheaper fixed-radius,
+        // 25%-slack tier below 3x zoom; it is unreachable now that nothing is
+        // nudged until halfway in, so it is gone along with the flag that chose
+        // between them. atMaxZoom still buys the most thorough pass of all.
         const readXY = (el) => ({ x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 });
         // Half the element's LARGER dimension (+pad) — the tightest circle that
         // fully contains its box, so non-overlapping circles ⇒ non-overlapping
         // boxes. Reads are batched before any write below, so this costs one
         // reflow, not one per element.
         const radOf = (el, fallback) => {
-          if (!spreadTraceLabels || !el || !el.offsetWidth && !el.offsetHeight) return fallback;
+          if (!el || !el.offsetWidth && !el.offsetHeight) return fallback;
           return Math.max(el.offsetWidth || 0, el.offsetHeight || 0) / 2 + 2;
         };
         const anchors = placedPx.map((p) => ({ x: p.x, y: p.y, r: radOf(p.el, p.radius != null ? p.radius : 12) }));
@@ -27143,11 +27250,11 @@
         }
         // Cap the O(n²) relaxation so a test with hundreds of source agents (all
         // their hop/total markers) can't freeze layoutMarkers on every pan.
-        const COVER = spreadTraceLabels ? 1 : 0.75;   // centers must be ≥ COVER·(r1+r2) apart
+        const COVER = 1;   // centers must be ≥ COVER·(r1+r2) apart
         // Bounded harder below true max so a huge fan-out can't stall a pan, but
         // still enough passes to fully clear a typical zoomed-in cluster.
-        const cap = spreadTraceLabels ? (atMaxZoom ? 1500 : 700) : 400;
-        const passLimit = spreadTraceLabels ? (atMaxZoom ? 18 : 12) : 5;
+        const cap = atMaxZoom ? 1500 : 700;
+        const passLimit = atMaxZoom ? 18 : 12;
         if (movers.length && movers.length <= cap) {
           for (let pass = 0; pass < passLimit; pass++) {
             let moved = false;
@@ -27195,6 +27302,20 @@
     function cancelZoomAnim() {
       if (dashMapZoomAnimFrame) { cancelAnimationFrame(dashMapZoomAnimFrame); dashMapZoomAnimFrame = null; }
     }
+    // Hold the map's animations still for the duration of a zoom. Re-armed on
+    // every zoom event and lifted a short while after the last one, so a run of
+    // wheel notches, a pinch, or a multi-second animated glide all count as one
+    // gesture rather than flickering the class on and off.
+    const TEP_ZOOM_QUIET_MS = 220;
+    let zoomQuietTimer = null;
+    const markZooming = () => {
+      if (zoomQuietTimer) clearTimeout(zoomQuietTimer);
+      else wrap.classList.add('tep-agent-map-wrap--quiet');
+      zoomQuietTimer = setTimeout(() => {
+        zoomQuietTimer = null;
+        wrap.classList.remove('tep-agent-map-wrap--quiet');
+      }, TEP_ZOOM_QUIET_MS);
+    };
     function animateZoomTo(target, duration, onDone) {
       cancelZoomAnim();
       const from = { s: epDashMapZoom.s, tx: epDashMapZoom.tx, ty: epDashMapZoom.ty };
@@ -27202,6 +27323,7 @@
       const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
       const step = (now) => {
+        markZooming();
         const p = Math.min(1, (now - t0) / dur);
         const e = easeOutCubic(p);
         epDashMapZoom.s = from.s + (target.s - from.s) * e;
@@ -27242,6 +27364,7 @@
       animateZoomTo({ s: ns, tx: rect.width / 2 - wx * ns, ty: rect.height / 2 - wy * ns });
     }
     function zoomAt(factor, clientX, clientY) {
+      markZooming();
       // Globe view scales the sphere, not the plate. Handled HERE rather than at
       // each call site because everything funnels through zoomAt - the on-screen
       // +/- buttons, the keyboard shortcuts and pinch as well as the wheel. Only
@@ -27305,7 +27428,17 @@
       // dipping through dark - which is exactly what went wrong.
       globeLayer.style.opacity = String(t);
       canvas.style.opacity = '';
-      canvas.style.display = t >= 1 ? 'none' : '';
+      // visibility, NOT display. The land test that keeps nudged markers out of
+      // the water asks the flat basemap's paths via isPointInFill, and inside a
+      // display:none subtree that returns FALSE for every point - so in full
+      // globe view every candidate position read as ocean, no safe angle was
+      // ever found, and every conflict fell through to a plain bearing nudge
+      // into the sea. Verified in-browser: display:none false, visibility:hidden
+      // true. CONFIRMED via user report (markers in the Pacific on the globe,
+      // correct on the map). The canvas is absolutely positioned, so hiding it
+      // this way costs no layout and still paints nothing.
+      canvas.style.visibility = t >= 1 ? 'hidden' : '';
+      canvas.style.display = '';
       // Agents and flow lines fade out as the Earth shrinks into the pupil.
       // Same ramp the painter uses, so they are gone exactly when the eye is
       // fully drawn - at that size they are a smear over a 100px dot.
