@@ -40,11 +40,31 @@
   // skeleton or a second copy of the build.
   if (D.getElementById(BOOT)) return;
 
+  // Every click is an UNCACHED round trip - the bookmarklet busts this file's
+  // cache and this file busts the build's - so a single stalled request is the
+  // difference between working and not. It is not slowness: the build is ~7KB
+  // over the wire (1.4MB brotli'd) and compiles in milliseconds, so anything
+  // that reaches the cutoff has stalled outright rather than crawled. Retry
+  // once, automatically, which is exactly the thing that makes it work when a
+  // user clicks the bookmarklet a second time. CONFIRMED via user report
+  // ("getting this a lot today, sometimes it works").
+  var tries = 0;
   function inject() {
+    tries++;
     var s = D.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js?' + Date.now();
-    s.onerror = function () { fail('Could not reach the CDN'); };
+    s.onload = function () { loaded = true; paintStatus(); };
+    s.onerror = function () { again('Could not reach the CDN'); };
     (D.body || D.documentElement).appendChild(s);
+  }
+  // A second attempt, or the failure card if we have already had one.
+  function again(why) {
+    if (done || failed) return;
+    if (tries >= 2) { fail(why); return; }
+    retrying = true; paintStatus();
+    inject();
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () { fail(why); }, RETRY_MS);
   }
 
   // Already up — this click is a toggle, which the build handles. A skeleton
@@ -166,6 +186,20 @@
     '#B .bst{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:.03em;',
     'text-align:center;color:#fdba74;flex:0 0 auto;min-height:15px}',
     '#B .bst u{text-decoration:none;color:#64748b}',
+    '#B .bck{margin:7px 18px 0;display:none}#B .bck.on{display:block}',
+    '#B .bcr{display:flex;gap:2px}',
+    '#B .bcs{flex:1;text-align:center;position:relative;font-family:ui-monospace,Menlo,monospace}',
+    '#B .bcs::before{content:"";position:absolute;left:-50%;top:4px;width:100%;height:1px;background:#1e293b}',
+    '#B .bcs:first-child::before{display:none}',
+    '#B .bcd{width:9px;height:9px;border-radius:50%;margin:0 auto 4px;background:#334155;position:relative;z-index:1}',
+    '#B .bcs.ok .bcd{background:#22c55e;box-shadow:0 0 7px rgba(34,197,94,.5)}',
+    '#B .bcs.wa .bcd{background:#f59e0b;box-shadow:0 0 7px rgba(245,158,11,.5)}',
+    '#B .bcs.ba .bcd{background:#ef4444;box-shadow:0 0 7px rgba(239,68,68,.5)}',
+    '#B .bcn{font-size:8px;letter-spacing:.06em;color:#64748b;text-transform:uppercase}',
+    '#B .bcv{font-size:10px;font-weight:700;color:#cbd5e1}',
+    '#B .bcm{margin-top:7px;font-size:10px;color:#64748b;text-align:center;line-height:1.4}',
+    '#B .bsx{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9.5px;letter-spacing:.04em;',
+    'color:#475569;text-align:center;margin-top:3px;min-height:12px;text-transform:uppercase}',
     '#B .bcar{display:inline-block;width:6px;height:11px;vertical-align:-1px;margin-left:4px;',
     'background:#fdba74;animation:tepcar 1.05s steps(1) infinite}',
     '@keyframes tepcar{50%{opacity:0}}',
@@ -203,6 +237,8 @@
       '#B.lt .br{box-shadow:inset 0 0 0 1px #24324d,inset 0 0 26px -6px rgba(249,115,22,.35),',
       '0 0 0 1px rgba(15,23,42,.1),0 8px 20px -8px rgba(15,23,42,.5)}',
       '#B.lt .bst{color:#c2410c}#B.lt .bst u{color:#78838f}#B.lt .bcar{background:#c2410c}',
+      '#B.lt .bsx{color:#8b95a1}#B.lt .bcn{color:#8b95a1}#B.lt .bcv{color:#334155}',
+      '#B.lt .bcm{color:#5f6b77}#B.lt .bcd{background:#cbd5e1}#B.lt .bcs::before{background:#d7dce2}',
       '#B.lt .bc{background:#fff;border-color:#e1e4e8}',
       '#B.lt .bl{background:#e8ebee}',
       '#B.lt .bl::after{background:linear-gradient(90deg,transparent,rgba(15,23,42,.07),transparent)}',
@@ -242,6 +278,8 @@
     + '<span class="brs"></span><span class="brl"></span>'
     + '<span class="brb"><i style="left:73.0%;top:29.3%;animation-delay:0.35s"></i><i style="left:63.9%;top:63.0%;animation-delay:0.96s"></i><i style="left:30.4%;top:79.0%;animation-delay:1.55s"></i><i style="left:29.8%;top:33.6%;animation-delay:2.23s"></i></span></span></div>'
     + '<div class="bst" id="' + BOOT + '-st"></div>'
+    + '<div class="bsx" id="' + BOOT + '-sx"></div>'
+    + '<div class="bck" id="' + BOOT + '-ck"></div>'
     + card + card
     + '<div class="bf" id="' + BOOT + '-f"></div></div>';
 
@@ -254,21 +292,153 @@
   // Status line. These are the real phases: the CDN request goes out, the build
   // downloads, and past a few seconds it is simply slow. Nothing here claims a
   // percentage, because none is knowable (see the progress bar note above).
-  var stEl = D.getElementById(BOOT + '-st'), elEl = D.getElementById(BOOT + '-el'), t0 = Date.now();
+  var stEl = D.getElementById(BOOT + '-st'), elEl = D.getElementById(BOOT + '-el'),
+      sxEl = D.getElementById(BOOT + '-sx'), t0 = Date.now();
+  // Three things here are genuinely observable, so the status reports only
+  // those and still never invents a percentage (see the progress bar note
+  // above - the sweep stays indeterminate because no fraction is knowable):
+  //   1. whether there is a connection at all,
+  //   2. whether the build's script has finished loading and running,
+  //   3. how jsDelivr is behaving RIGHT NOW - which is free, because the
+  //      bookmarklet pulled THIS file from the same CDN a moment ago, so its
+  //      Resource Timing entry is a real measurement rather than a guess.
+  var loaded = false;
+  function isOnline() { try { return navigator.onLine !== false; } catch (e) { return true; } }
+  function conn() {
+    try { return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null; }
+    catch (e) { return null; }
+  }
+  // Slowest completed jsDelivr request so far: this loader's own fetch to begin
+  // with, then the build's once it lands.
+  function cdnMs() {
+    var e = entryFor('cdn.jsdelivr.net');
+    return e ? Math.round(e.duration) : null;
+  }
+  // ── Connection check ────────────────────────────────────────────────────
+  // NOT a traceroute: a browser has no raw sockets and no TTL control, so no
+  // page can produce a hop list. This is the real connection to the CDN split
+  // into the stages the Resource Timing API actually measures, which is what
+  // says WHERE a slow load went slow. jsDelivr sends Timing-Allow-Origin: *,
+  // so the detailed cross-origin timings are ours to read instead of zeroed.
+  var ckEl = D.getElementById(BOOT + '-ck'), ckDone = false;
+  // Entries are collected by an OBSERVER, not read out of the buffer. The
+  // resource buffer holds 250 entries and a heavy SPA fills it long before
+  // anyone clicks a bookmarklet; once full the browser silently stops recording,
+  // so getEntriesByType('resource') can return nothing at all for our own
+  // fetches. An observer is still delivered every new entry regardless, and
+  // buffered:true also hands us whatever is still in the buffer - including
+  // this loader's own fetch, which happened before we could observe anything.
+  var seenRes = [];
+  try {
+    var po = new PerformanceObserver(function (list) {
+      var es = list.getEntries();
+      for (var i = 0; i < es.length; i++) if (es[i].duration > 0) seenRes.push(es[i]);
+      if (seenRes.length > 60) seenRes = seenRes.slice(-60);
+    });
+    po.observe({ type: 'resource', buffered: true });
+  } catch (e) { /* older engine - fall back to the buffer below */ }
+  function entryFor(host) {
+    if (!host) return null;
+    var pool = seenRes;
+    try {
+      if (!pool.length) pool = performance.getEntriesByType('resource');
+    } catch (e) { /* */ }
+    var best = null;
+    for (var i = 0; i < pool.length; i++) {
+      var e = pool[i];
+      if (!e || !e.name || e.name.indexOf(host) < 0 || !(e.duration > 0)) continue;
+      if (!best || e.startTime > best.startTime) best = e;
+    }
+    return best;
+  }
+  // thresholds: [good, bad] ms per stage
+  var LIM = { dns: [40, 200], tcp: [80, 300], tls: [80, 300], ttfb: [150, 600], xfer: [100, 500] };
+  function msFmt(v) { return v < 1 ? '<1ms' : v < 1000 ? Math.round(v) + 'ms' : (v / 1000).toFixed(1) + 's'; }
+  function kb(v) { return v < 1024 ? v + 'B' : (v / 1024).toFixed(1) + 'KB'; }
+  function renderCheck() {
+    if (!ckEl) return;
+    var e = entryFor('cdn.jsdelivr.net');
+    if (!e) return;
+    var tls = e.secureConnectionStart > 0 ? e.connectEnd - e.secureConnectionStart : 0;
+    // A reused connection reports connectStart === connectEnd; the zeros are
+    // real and worth saying out loud rather than drawing as instant stages.
+    var fresh = e.connectEnd > e.connectStart;
+    var st = [
+      ['dns',  e.domainLookupEnd - e.domainLookupStart],
+      ['tcp',  (e.connectEnd - e.connectStart) - tls],
+      ['tls',  tls],
+      ['ttfb', e.responseStart - e.requestStart],
+      ['xfer', e.responseEnd - e.responseStart]
+    ];
+    var row = '';
+    for (var i = 0; i < st.length; i++) {
+      var k = st[i][0], v = Math.max(0, st[i][1]), L = LIM[k];
+      var cls = (!fresh && (k === 'dns' || k === 'tcp' || k === 'tls')) ? ''
+        : v <= L[0] ? 'ok' : v <= L[1] ? 'wa' : 'ba';
+      row += '<div class="bcs ' + cls + '"><div class="bcd"></div>'
+        + '<div class="bcn">' + k + '</div><div class="bcv">'
+        + ((!fresh && cls === '') ? '\u2014' : msFmt(v)) + '</div></div>';
+    }
+    // The control: is it the CDN, or is everything slow? The app's own origin
+    // is same-origin, so its timings need no opt-in.
+    var app = entryFor(location.hostname), note = '';
+    var SLOW = 400;   // ms: below this nothing here is worth calling a problem
+    if (!fresh) note = 'Connection reused \u2014 no new DNS, TCP or TLS needed.';
+    else if (!app) note = '';
+    // Only draw a conclusion when one side is ACTUALLY slow. Saying "the link is
+    // the common factor" because a healthy 130ms beat a healthy 110ms is noise
+    // dressed up as a diagnosis.
+    else if (e.duration > SLOW && e.duration > app.duration * 2) {
+      note = location.hostname + ' answered in ' + msFmt(app.duration) + ', so the CDN is the slow side.';
+    } else if (app.duration > SLOW && app.duration > e.duration * 2) {
+      note = location.hostname + ' is slower still (' + msFmt(app.duration) + ') \u2014 the link is the common factor.';
+    } else if (e.duration > SLOW) {
+      note = location.hostname + ' answered in ' + msFmt(app.duration) + ' \u2014 both are slow.';
+    } else {
+      note = 'For comparison, ' + location.hostname + ' answered in ' + msFmt(app.duration) + '.';
+    }
+    ckEl.innerHTML = '<div class="bcr">' + row + '</div><div class="bcm">'
+      + 'Total ' + msFmt(e.duration) + ' \u00b7 ' + kb(e.transferSize || e.encodedBodySize || 0)
+      + (e.nextHopProtocol ? ' \u00b7 ' + e.nextHopProtocol : '')
+      + (note ? '<br>' + note : '') + '</div>';
+    ckEl.className = 'bck on';
+    ckDone = true;
+  }
   var PHASES = [
     [0,    'Checking for updates'],
     [1500, 'Loading panel']
   ];
+  var retrying = false;
   function paintStatus() {
     if (!stEl) return;
     var ms = Date.now() - t0, txt = PHASES[0][1];
     for (var i = 0; i < PHASES.length; i++) if (ms >= PHASES[i][0]) txt = PHASES[i][1];
+    // Real state beats the clock wherever we have it.
+    if (!isOnline()) txt = 'No connection';
+    else if (loaded) txt = 'Starting panel';
+    else if (retrying) txt = 'Retrying';
+    else if (ms >= 2500) txt = 'CDN is slow';
     stEl.innerHTML = txt + '<u>…</u><span class="bcar"></span>';
     if (elEl) elEl.textContent = (ms / 1000).toFixed(1) + 's';
+    if (!ckDone && ms >= 2500) renderCheck();
+    if (sxEl) {
+      var bits = [];
+      if (!isOnline()) bits.push('offline');
+      var d = cdnMs();
+      if (d != null) bits.push('cdn ' + (d < 1000 ? d + 'ms' : (d / 1000).toFixed(1) + 's'));
+      var c = conn();
+      if (c && c.effectiveType && c.effectiveType !== '4g') bits.push('link ' + c.effectiveType);
+      if (tries > 1) bits.push('attempt ' + tries + ' of 2');
+      sxEl.textContent = bits.join('  \u00b7  ');
+    }
   }
   paintStatus();
   var tick = setInterval(paintStatus, 100);
 
+  // First attempt gets a shorter fuse than the old flat 8s, because the retry
+  // now costs almost nothing; the second gets longer, since by then a slow link
+  // is the likeliest explanation left.
+  var FIRST_MS = 6000, RETRY_MS = 12000;
   var done = false, failed = false, timer = null;
   function stop() { if (timer) clearTimeout(timer); clearInterval(tick); }
   function kill() {
@@ -295,10 +465,48 @@
     var f = D.getElementById(BOOT + '-f');
     if (f) {
       f.className = 'bf be';
-      f.textContent = why + '. Click the bookmarklet again to retry.';
+      // Name the cause rather than the symptom. These three are distinguishable
+      // and mean completely different things to whoever has to fix it.
+      var cause = !isOnline() ? 'You appear to be offline'
+        : loaded ? 'The panel downloaded but did not start'
+        : why + ' after two attempts';
+      // Label the number for what it actually is - the slowest COMPLETED
+      // jsDelivr request, which early on is this loader's own fetch. Calling it
+      // "the CDN responded in 41ms" right under "could not reach the CDN" reads
+      // as a contradiction when it is really the useful part: the connection
+      // was fine, so the build request specifically is what went wrong.
+      ckDone = false; renderCheck();   // refresh with whatever the last attempt measured
+      var d = isOnline() ? cdnMs() : null;
+      f.textContent = cause + '.'
+        + (d != null ? ' Slowest CDN request: ' + (d < 1000 ? d + 'ms' : (d / 1000).toFixed(1) + 's') + '.' : '');
+      var r = D.createElement('button');
       var b = D.createElement('button');
+      function restart() {
+        if (done || !failed) return;
+        failed = false; tries = 0; loaded = false; retrying = false;
+        el.classList.remove('err');
+        var tt = el.querySelector('.bt'); if (tt) tt.textContent = 'TE Optics';
+        var vv = el.querySelector('.bv'); if (vv) vv.textContent = 'loading';
+        f.className = 'bf'; f.textContent = '';
+        try { r.remove(); } catch (e) {}
+        try { b.remove(); } catch (e) {}
+        t0 = Date.now();
+        tick = setInterval(paintStatus, 100); paintStatus();
+        inject();
+        timer = setTimeout(function () { again('Taking longer than expected'); }, FIRST_MS);
+      }
+      // Came back online while the failure card was up: just go, rather than
+      // making someone who already knows their wifi dropped click anything.
+      try { window.addEventListener('online', restart); } catch (e) {}
+      r.className = 'bx'; r.textContent = 'Try again';
+      r.onclick = restart;
       b.className = 'bx'; b.textContent = 'Dismiss';
-      b.onclick = function () { done = true; try { obs.disconnect(); } catch (e) {} kill(); };
+      b.onclick = function () {
+        done = true;
+        try { window.removeEventListener('online', restart); } catch (e) {}
+        try { obs.disconnect(); } catch (e) {} kill();
+      };
+      f.parentNode.appendChild(r);
       f.parentNode.appendChild(b);
     }
   }
@@ -316,7 +524,7 @@
   });
   try { obs.observe(D.documentElement, { childList: true, subtree: true }); } catch (e) {}
 
-  timer = setTimeout(function () { fail('Taking longer than expected'); }, 8000);
+  timer = setTimeout(function () { again('Taking longer than expected'); }, FIRST_MS);
 
   inject();
 })();
