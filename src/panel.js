@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.18';
+  const TEP_VERSION = '4.19';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2126,6 +2126,16 @@
        zoom-out. Brand orange for the lens arcs; the pupil is the ocean's mid
        tone, so the Earth lands into a dot that is already the right colour.
        CONFIRMED via user request. */
+    /* A Starlink hop, drawn as the satellite that carried it. Globe only:
+       there is no altitude on a flat Mercator plate. Flat fills, no gradients
+       and no filter - a trace that crosses Starlink should cost a handful of
+       nodes, not a scene. */
+    .tep-sat, .tep-sat-beam, .tep-sat-lbl { pointer-events: none; }
+    .tep-sat-body { fill: #f1f8ff; }
+    .tep-sat-wing { fill: #38bdf8; }
+    .tep-sat-beam { fill: #38bdf8; opacity: .13; }
+    .tep-sat-lbl { fill: #bfe3ff; font: 700 8.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .04em; }
     .tep-globe-eye { pointer-events: none; }
     .tep-globe-eye-body { fill: url(#tep-eye-grad); }
     .tep-globe-eye-pupil { fill: #0f172a; }
@@ -2250,6 +2260,19 @@
        Mint/green so it reads as neutral summary info, distinct from the amber
        bottleneck delta. Non-interactive — the agent marker owns its own hover. */
     .tep-testdest-total { z-index: 6; filter: none; pointer-events: none; }
+    /* A board carries one of these per source cluster, and at a glance they are
+       noise - and paint cost, since each is a bordered, text-shadowed pill that
+       moves on every pan. Only the ones worth reading stay up: anything slow,
+       anything losing packets, or whatever the cursor is on. The OUTER element
+       still positions normally, so revealing one needs no re-layout.
+       CONFIRMED via user request. */
+    .tep-testdest-total--quiet .tep-testdest-total-lbl { display: none; }
+    .tep-testdest-total--quiet.tep-testdest-total--peek .tep-testdest-total-lbl { display: block; }
+    /* The glow sits 4.5px wider than the line it backs, which makes it the
+       natural hover target - no extra hit path needed. Its parent SVG is
+       pointer-events:none, so opting IN here is what makes the line hoverable
+       at all, and markers stay above it and unaffected. */
+    .tep-testdest-flowsvg .tep-livetest-flow-glow { pointer-events: stroke; }
     .tep-testdest-total-lbl {
       /* BELOW the source node (was bottom:15px = above) so the agent hover card,
          which opens upward over the marker, no longer covers it — CONFIRMED via
@@ -2345,6 +2368,20 @@
        animating compositor layers — the dominant cost on a big map. Above the
        marker threshold (see renderDashboardAgentMap) drop BOTH the animation and
        the layer promotion; at that density the missing breathe isn't noticed. */
+    /* Past the pixel budget (see TEP_FX_PIXEL_BUDGET): drop every effect whose
+       cost scales with AREA rather than with element count. The blurs go, the
+       geometry does not - so the map stays exactly as sharp as the display can
+       render it, it just stops painting a glow around each of several hundred
+       markers and two around every flow line, four times over on a Retina
+       panel. !important because the flow lines set their filter inline. */
+    .tep-agent-map-wrap--lowfx .tep-agent-map-marker,
+    .tep-agent-map-wrap--lowfx .tep-agent-map-marker:hover,
+    .tep-agent-map-wrap--lowfx .tep-dash-map-marker,
+    .tep-agent-map-wrap--lowfx .tep-dash-map-marker:hover,
+    .tep-agent-map-wrap--lowfx .tep-cloud-agent-ic svg,
+    .tep-agent-map-wrap--lowfx .tep-livetest-flow,
+    .tep-agent-map-wrap--lowfx .tep-livetest-flow-glow,
+    .tep-agent-map-wrap--lowfx .tep-testdest-hop { filter: none !important; }
     .tep-agent-map-wrap--dense .tep-agent-map-marker--online svg {
       animation: none !important;
       will-change: auto !important;
@@ -5634,7 +5671,128 @@
       btn.setAttribute('aria-label', label);
     }
   }
-  applyTheme(tepTheme);
+  // Last light/dark reading mirrored from TE, kept separately from
+  // TEP_THEME_KEY so a reload starts on the right one immediately instead of
+  // flashing the wrong theme until TE has painted enough to be read.
+  // Deliberately NOT TEP_THEME_EXPLICIT_KEY: that means "a human clicked the
+  // toggle", and mirroring TE is not that.
+  const TEP_TE_THEME_SEEN_KEY = 'tep-te-theme-seen';
+  let tepTeThemeSeen = null;
+  try {
+    const st = localStorage.getItem(TEP_TE_THEME_SEEN_KEY);
+    if (st === 'light' || st === 'dark') tepTeThemeSeen = st;
+  } catch (_) { /* */ }
+  // TE wins at load. The toggle still works, but as an override for the session
+  // rather than a preference that outlives it - mirroring is the point.
+  applyTheme(tepTeThemeSeen || tepTheme);
+  // Set the moment someone clicks the theme toggle. Mirroring runs on a timer
+  // now, so without this a deliberate click would be silently undone a few
+  // seconds later - the toggle has to win for the rest of the session.
+  let tepThemeUserOverride = false;
+  /** Mirror a light/dark reading, if it is actually new. */
+  function tepAdoptTeTheme(t) {
+    if (tepThemeUserOverride) return;
+    if (t !== 'light' && t !== 'dark') return;
+    if (t === tepTeThemeSeen) return;
+    tepTeThemeSeen = t;
+    applyTheme(t);
+    try {
+      localStorage.setItem(TEP_TE_THEME_SEEN_KEY, t);
+      localStorage.setItem(TEP_THEME_KEY, t);
+    } catch (_) { /* */ }
+  }
+  /** Is ThousandEyes painted light or dark right now? 'light', 'dark', or null
+   *  when the page cannot be read confidently.
+   *
+   *  Measured off the page rather than asked for over the network. Asking TE
+   *  (GET /ajax/menu/settings) is the authoritative answer but it has to clear
+   *  a session, the right headers and a load-order race before it can give one,
+   *  and every one of those was a way for mirroring to silently do nothing.
+   *  Nothing here can fail that way.
+   *
+   *  The earlier paint attempt failed for a specific reason worth recording:
+   *  it read <html> and <body>, and TE leaves BOTH at their default background,
+   *  so a plainly dark app measured as light. This samples where the app
+   *  actually paints - a grid of points across the viewport, climbing from each
+   *  to the first ancestor with an opaque background - and takes the MEDIAN
+   *  luma, so a white card on a dark page (or the reverse) cannot swing it.
+   *  Points that land on our own panel are skipped entirely. */
+  const TEP_TE_PAINT_XS = [0.10, 0.32, 0.55, 0.78, 0.94];
+  const TEP_TE_PAINT_YS = [0.18, 0.45, 0.72, 0.92];
+  const TEP_TE_PAINT_MIN_SAMPLES = 4;
+  /** Ours? The panel, the free-floating launcher/badge buttons that are its
+   *  siblings rather than its children, and the fullscreen map overlay (which
+   *  carries a class and no id). Tested in JS rather than as a selector because
+   *  [class^="tep-"] matches the whole attribute, and [class*="tep-"] would
+   *  also swallow any TE class containing it - 'step-indicator', say. */
+  function tepIsOwnUi(el) {
+    const id = el && el.id;
+    if (id === 'te-panel-root' || (typeof id === 'string' && id.indexOf('tep-') === 0)) return true;
+    const cn = el && el.className;
+    return typeof cn === 'string' && /(^|\s)tep-/.test(cn);
+  }
+  function tepReadTePaintedTheme() {
+    const W = window.innerWidth || 0, H = window.innerHeight || 0;
+    if (W < 40 || H < 40) return null;
+    const lumas = [];
+    for (const fx of TEP_TE_PAINT_XS) {
+      for (const fy of TEP_TE_PAINT_YS) {
+        let el = null;
+        try { el = document.elementFromPoint(Math.round(W * fx), Math.round(H * fy)); } catch (_) { /* */ }
+        for (; el && el !== document.documentElement; el = el.parentElement) {
+          if (tepIsOwnUi(el)) { el = null; break; }   // this point is ours - drop it
+          let bg = '';
+          try { bg = getComputedStyle(el).backgroundColor || ''; } catch (_) { break; }
+          const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/i.exec(bg);
+          if (!m) continue;
+          if (m[4] != null && parseFloat(m[4]) < 0.9) continue;   // see-through: keep climbing
+          // Rec.601 luma is far more precision than a light/dark call needs.
+          lumas.push(0.299 * +m[1] + 0.587 * +m[2] + 0.114 * +m[3]);
+          break;
+        }
+      }
+    }
+    if (lumas.length < TEP_TE_PAINT_MIN_SAMPLES) return null;
+    lumas.sort((a, b) => a - b);
+    const med = lumas[Math.floor(lumas.length / 2)];
+    return { theme: med < 128 ? 'dark' : 'light', median: Math.round(med), samples: lumas.length };
+  }
+  /** Take a reading and mirror it. Cheap enough to call on a timer. */
+  function tepSyncTeTheme(why) {
+    if (tepThemeUserOverride) return false;   // they chose; stop second-guessing
+    if (tepTeThemePrior) return false;        // that is us, holding TE on 'iris'
+    const r = tepReadTePaintedTheme();
+    window.__TEP_THEME__ = {
+      at: new Date().toISOString(), why: why || '',
+      read: r ? r.theme : null, median: r ? r.median : null, samples: r ? r.samples : 0,
+      applied: tepTeThemeSeen
+    };
+    if (!r) return false;
+    if (r.theme !== tepTeThemeSeen) {
+      try { console.log('[TEP] Theme: TE reads ' + r.theme + ' (median luma ' + r.median + ' over ' + r.samples + ' samples, ' + (why || '') + ')'); } catch (_) { /* */ }
+    }
+    tepAdoptTeTheme(r.theme);
+    return true;
+  }
+  let tepTeThemeTimer = null;
+  const tepTeThemePoke = (why) => {
+    if (tepTeThemeTimer) return;
+    tepTeThemeTimer = setTimeout(() => { tepTeThemeTimer = null; tepSyncTeTheme(why || 'poke'); }, 250);
+  };
+  // TE has not painted anything at the instant the bookmarklet runs, so the
+  // first readings are spread out; after that a slow tick follows a theme
+  // change made in TE's own menu. The tick is a dozen hit-tests and skips a
+  // hidden tab, so it is far cheaper than the MutationObserver it replaces -
+  // which never fired reliably anyway, since TE re-themes without touching an
+  // attribute on <html> or <body>.
+  const TEP_THEME_FIRST_READS_MS = [0, 400, 1200, 3000];
+  for (const ms of TEP_THEME_FIRST_READS_MS) setTimeout(() => tepSyncTeTheme('boot+' + ms + 'ms'), ms);
+  const TEP_THEME_WATCH_MS = 4000;
+  try {
+    setInterval(() => { if (!document.hidden) tepSyncTeTheme('tick'); }, TEP_THEME_WATCH_MS);
+    window.addEventListener('focus', () => tepTeThemePoke('focus'));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tepTeThemePoke('visible'); });
+  } catch (e) { /* */ }
 
   // Last TEP_VERSION seen on this origin — lets a fresh load detect that
   // it's actually newer than what was here before, since the bootstrap
@@ -12846,6 +13004,26 @@
     return el && typeof el.value === 'string' ? el.value.trim().toLowerCase() : '';
   }
 
+  /** The timestamp "Sort: Modified" should order a test by.
+   *
+   *  A test nobody has edited since creating it carries no modifiedDate at all,
+   *  and comparing that empty string against everyone else's real dates buried
+   *  every brand-new test at the very BOTTOM of the default view - the exact
+   *  opposite of what "recently modified" reads as. Creating a test is a change
+   *  to it, so its creation date stands in until a real edit supplies one.
+   *  CONFIRMED via user request. */
+  function tepTestModifiedStamp(t) {
+    if (!t) return '';
+    const v = t.modifiedDate || t.lastModified || t.dateModified ||
+      t.createdDate || t.dateCreated || t.createDate || '';
+    if (v === '' || v == null) return '';
+    // Both fields come back as 'YYYY-MM-DD HH:MM:SS', so a plain string compare
+    // already orders them - but now that the two can be compared against EACH
+    // OTHER, flatten an ISO 'T'/'Z' spelling first so one field arriving in the
+    // other style cannot sort a same-day test to the wrong side.
+    return String(v).replace('T', ' ').replace(/Z$/, '');
+  }
+
   function getFilteredTests() {
     const typeEl = root.querySelector('#tep-manage-type-filter');
     const sortEl = root.querySelector('#tep-manage-sort');
@@ -12886,8 +13064,8 @@
         if (ma !== mb) return ma ? -1 : 1;
       }
       if (sortMode === 'modified') {
-        const da = a.modifiedDate || a.lastModified || a.dateModified || '';
-        const db = b.modifiedDate || b.lastModified || b.dateModified || '';
+        const da = tepTestModifiedStamp(a);
+        const db = tepTestModifiedStamp(b);
         if (da || db) return da > db ? -1 : da < db ? 1 : 0;
         // Same immediate approximation 'created' uses below — the bulk list
         // this first render comes from doesn't include modifiedDate at all
@@ -16865,8 +17043,9 @@
         if (ma !== mb) return ma ? -1 : 1;
       }
       if (sortMode === 'modified') {
-        const da = a.modifiedDate || a.lastModified || a.dateModified || '';
-        const db = b.modifiedDate || b.lastModified || b.dateModified || '';
+        // Same "a new test counts as modified" rule as Manage Tests.
+        const da = tepTestModifiedStamp(a);
+        const db = tepTestModifiedStamp(b);
         if (da || db) return da > db ? -1 : da < db ? 1 : 0;
       }
       if (sortMode === 'created') {
@@ -24553,6 +24732,41 @@
     return `<div class="tep-gcard">${head}<div class="tep-gcard-body">${rows.join('')}</div>${footer}</div>`;
   }
 
+  // ── Starlink ────────────────────────────────────────────────────────────
+  // Everything this feature needs, in three numbers. No ephemeris, no TLEs, no
+  // constellation table: a shell altitude, an inclination and a period are
+  // enough to place and label a satellite honestly, and they never go stale.
+  // Everything PER-PIXEL - a blur, a drop-shadow - costs the square of the
+  // device pixel ratio, so a board that is comfortable on an external 1920x1080
+  // at DPR 1 is painting roughly three times the device pixels on a Retina
+  // laptop, and its blurs four times the work per unit area. CONFIRMED via user
+  // report (smooth on the external monitor, not on the laptop panel).
+  //
+  // There is no way to ask a browser to rasterise DOM or SVG at a lower
+  // resolution - only a <canvas> lets you cap its own backing store - so rather
+  // than lowering the resolution we spend a fixed pixel BUDGET: past it, the
+  // effects whose cost scales with area are dropped and the geometry stays
+  // exactly as sharp as the display can show.
+  const TEP_FX_PIXEL_BUDGET = 2.6e6;   // device px; an external 1920x1080 is 2.07M
+  function tepOverPixelBudget() {
+    try {
+      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+      return (window.innerWidth || 1280) * (window.innerHeight || 800) * dpr * dpr
+        > TEP_FX_PIXEL_BUDGET;
+    } catch (e) { return false; }
+  }
+  // At or above this, a trace's latency label shows without being asked.
+  const TEP_TRACE_LABEL_MS = 50;
+  const TEP_SAT_ALT_R = 1.0863;     // 550km over a 6371km Earth, in Earth radii
+  const TEP_SAT_INC_DEG = 53;       // the shell's inclination
+  const TEP_SAT_PERIOD_MIN = 95.5;  // one orbit
+  // SpaceX announces Starlink under more than one ASN by region, and TE labels
+  // the org differently between them, so match on either.
+  const TEP_SAT_ASNS = [14593, 27277];
+  function tepIsStarlink(asn, asName) {
+    if (asn != null && TEP_SAT_ASNS.indexOf(Number(asn)) >= 0) return true;
+    return /starlink|spacex/i.test(String(asName || ''));
+  }
   /** EXPERIMENTAL (trace path nodes): given a path-vis graph's nodes/links/
    *  routes, return — for each source agent's route — the SINGLE biggest-latency-
    *  contributor hop plus that path's TOTAL latency. Keyed by UPPER source-agent
@@ -24606,6 +24820,8 @@
       let bnEntry = null, worstDelta = 0, maxLoss = 0;
       let prevCum = 0;
       const lossHops = [];
+      // Free: this loop already visits every node to find the bottleneck.
+      let satHop = null;
       for (let i = 0; i < hops.length; i++) {
         const cum = sm[i];
         const delta = cum - prevCum;
@@ -24615,6 +24831,12 @@
         const n = nodeIndex != null ? nodes[nodeIndex] : null;
         if (!n || n.destination === true) continue;
         // Loss can live on the route-hop entry OR the node it reaches.
+        // The EARLIEST Starlink hop is the one that matters: on a subscriber's
+        // path that is the link off the dish, which is what the satellite over
+        // the source agent represents.
+        if (!satHop && tepIsStarlink(n.asn, n.asName)) {
+          satHop = mkHop(n, cum, (i + 1) / hops.length, false, null);
+        }
         const loss = Math.max(tepNodeLoss(hops[i]) || 0, tepNodeLoss(n) || 0);
         if (loss > maxLoss) maxLoss = loss;
         if (loss >= LOSS_SHOW_PCT) lossHops.push(Object.assign(mkHop(n, cum, (i + 1) / hops.length, false, loss), { isLoss: true }));
@@ -24646,11 +24868,72 @@
           before: bnEntry.beforeN ? mkHop(bnEntry.beforeN, bnEntry.beforeCum, bnEntry.beforeFraction, false, null) : null,
         }) : null,
         lossNodes: lossHops,
+        // null on every ordinary path, so nothing downstream draws anything.
+        starlink: satHop,
       });
     }
     return out;
   }
 
+  /** The satellite as SVG: a body and two panels, built once per flow and then
+   *  only ever translated. */
+  function tepSatSvg() {
+    const g = document.createElementNS(TEP_SVGNS, 'g');
+    g.setAttribute('class', 'tep-sat');
+    const box = (x, y, w, h, cls) => {
+      const e = document.createElementNS(TEP_SVGNS, 'rect');
+      e.setAttribute('x', x); e.setAttribute('y', y);
+      e.setAttribute('width', w); e.setAttribute('height', h);
+      e.setAttribute('class', cls);
+      g.appendChild(e);
+    };
+    box(-3, -1.8, 6, 3.6, 'tep-sat-body');
+    box(-10.5, -0.8, 7, 1.6, 'tep-sat-wing');
+    box(3.5, -0.8, 7, 1.6, 'tep-sat-wing');
+    return g;
+  }
+  // A cloud node often carries NO city or state - the whois behind a GCP or AWS
+  // address resolves to the provider, not a place - but it does carry a region,
+  // and every major provider names regions geographically: us-west1, us-west-2,
+  // westus2. So match the geography in the NAME. Twenty coarse anchors cover all
+  // three providers and any region they add later, where a per-region table
+  // would be two hundred entries that go stale. Deliberately approximate: the
+  // pin is flagged estimated so it never claims to be the datacentre.
+  // CONFIRMED via user report (a us-west1 destination that would not pin at all).
+  const TEP_CLOUD_GEO = [
+    // Most specific FIRST: 'apsoutheast' is a prefix of nothing useful, but
+    // 'eastasia' sits inside 'southeastasia' and 'apsouth' inside 'apsoutheast',
+    // so a general pattern placed early swallows the specific one. Digits are
+    // KEPT for the same reason - ap-southeast-1 is Singapore and ap-southeast-2
+    // is Sydney, and stripping the digit makes them the same string.
+    [/apsoutheast2|apsoutheast4|australia|oceania/, -33.9, 151.2, 'Australia'],
+    [/apsoutheast|southeastasia|asiasoutheast|singapore|jakarta/, 1.35, 103.8, 'South-East Asia'],
+    [/apnortheast|asianortheast|japan|korea/,     35.7, 139.7, 'North-East Asia'],
+    [/eastasia|asiaeast|taiwan|hongkong/,         25.0, 121.5, 'East Asia'],
+    [/apsouth|asiasouth|india/,                   19.1,  72.9, 'South Asia'],
+    [/uksouth|ukwest|unitedkingdom|euwest2|london/, 51.5, -0.1, 'United Kingdom'],
+    [/euwest1|ireland|northeurope|europenorth/,   53.3,  -6.3, 'Northern Europe'],
+    [/europesouth|italy|spain/,                   45.5,   9.2, 'Southern Europe'],
+    [/euwest|europewest|westeurope|eucentral|europecentral|germany|france|switzerland|belgium|netherlands/, 50.1, 8.7, 'Western Europe'],
+    [/mecentral|middleeast|uaenorth|qatar|israel/, 25.2, 55.3, 'Middle East'],
+    [/africa/,                                   -26.2,  28.0, 'Africa'],
+    [/saeast|southamerica|brazil/,               -23.5, -46.6, 'South America'],
+    [/cacentral|canada|northamericanortheast/,    43.7, -79.4, 'Canada'],
+    [/uscentral|centralus/,                       38.0, -95.0, 'US Central'],
+    [/uswest|westus/,                             40.0, -120.0, 'US West'],
+    [/useast|eastus/,                             38.5,  -78.0, 'US East'],
+  ];
+  /** Coordinates for a path-vis node's cloud region, or null. */
+  function tepCloudRegionGeo(cloudInfo) {
+    const r = cloudInfo && cloudInfo.region;
+    if (!r) return null;
+    // Separators only - the digits carry meaning (see the note above).
+    const k = String(r).toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const [re, lat, lng, name] of TEP_CLOUD_GEO) {
+      if (re.test(k)) return { lat, lng, name };
+    }
+    return null;
+  }
   /** EXPERIMENTAL (trace path nodes): resolve a hop's reported location string
    *  to coordinates for GEOGRAPHIC marker placement. Unlike liveTestResolveDestGeo
    *  (city-only, so anycast PoPs don't collapse onto a country), a trace hop is a
@@ -25145,6 +25428,9 @@
     // markers on screen for their compositor layers to matter (see the CSS +
     // TEP_MAP_DENSE_N). Set on the wrap so it covers every marker under it.
     wrap.classList.toggle('tep-agent-map-wrap--dense', markerEls.length > TEP_MAP_DENSE_N);
+    // Re-read every render, so moving the window to another display picks up
+    // that screen's pixel ratio rather than keeping the first one seen.
+    wrap.classList.toggle('tep-agent-map-wrap--lowfx', tepOverPixelBudget());
 
     // --- LIVE TEST flow overlay: per-agent animated path to 8.8.8.8 ---------
     // Rebuildable in place (no map DOM rebuild) so refreshes never disturb zoom.
@@ -25814,7 +26100,10 @@
         if (avgLat != null || (avgLoss != null && avgLoss > 0)) {
           const hasLoss = avgLoss != null && avgLoss > 0;
           srcLabelEl = document.createElement('div');
-          srcLabelEl.className = 'tep-agent-map-marker tep-testdest-total' + (hasLoss ? ' tep-testdest-total--loss' : '');
+          // Loss always speaks for itself; a healthy, fast path does not need to.
+          const quietLbl = !hasLoss && (avgLat == null || avgLat < TEP_TRACE_LABEL_MS);
+          srcLabelEl.className = 'tep-agent-map-marker tep-testdest-total'
+            + (hasLoss ? ' tep-testdest-total--loss' : '') + (quietLbl ? ' tep-testdest-total--quiet' : '');
           const parts = [];
           if (hasLoss) parts.push('<span style="color:#fecaca;font-weight:800">' + esc(avgLoss + '% loss') + '</span>');
           if (avgLat != null) parts.push('<span>' + esc(avgLat + 'ms') + '</span>');
@@ -25832,7 +26121,30 @@
           srcCloudEl._gcard = tepCloudAgentCardHtml(wit);   // rich hover card: info + SaaS/Net health
           overlay.appendChild(srcCloudEl);
         }
+        // Starlink: the satellite hangs over the SOURCE agent, because that is
+        // where the dish is - the hop's own reported location is a router in
+        // SpaceX's network, not the spacecraft. Built only when the path really
+        // crossed it, so an ordinary trace creates nothing at all.
+        let satEl = null, satBeamEl = null, satLblEl = null;
+        if (trace && trace.starlink) {
+          satBeamEl = document.createElementNS(TEP_SVGNS, 'path');
+          satBeamEl.setAttribute('class', 'tep-sat-beam');
+          flowSvg.appendChild(satBeamEl);
+          satEl = tepSatSvg();
+          flowSvg.appendChild(satEl);
+          satLblEl = document.createElementNS(TEP_SVGNS, 'text');
+          satLblEl.setAttribute('class', 'tep-sat-lbl');
+          satLblEl.textContent = 'STARLINK \u00b7 550 km';
+          flowSvg.appendChild(satLblEl);
+        }
+        // Hovering the line shows that line's latency, and only that one.
+        if (srcLabelEl && srcLabelEl.classList.contains('tep-testdest-total--quiet')) {
+          const peek = (on) => srcLabelEl.classList.toggle('tep-testdest-total--peek', on);
+          glow.addEventListener('mouseenter', () => peek(true));
+          glow.addEventListener('mouseleave', () => peek(false));
+        }
         testDestFlowLines.push({ pathEl: path, glowEl: glow, packetEl: packet, hopEls, srcLabelEl, srcCloudEl,
+          satEl, satBeamEl, satLblEl,
           srcFx: sp.xPct / 100, srcFy: sp.yPct / 100, destFx: dp.xPct / 100, destFy: dp.yPct / 100,
           // Globe view re-projects from these; the Mercator fractions above
           // cannot be un-flattened once computed.
@@ -27187,12 +27499,50 @@
           x2 = epDashMapZoom.tx + fl.destFx * w * epDashMapZoom.s;
           y2 = epDashMapZoom.ty + fl.destFy * h * epDashMapZoom.s;
         }
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-        const dx = x2 - x1, dy = y2 - y1;
+        // ── Starlink ────────────────────────────────────────────────────
+        // The satellite sits directly over the source agent at shell altitude,
+        // through the SAME view basis the Moon and Sun use - so it is occluded
+        // by the Earth and scales with the zoom like everything else in the sky.
+        // Globe only: a flat Mercator plate has no altitude to hold it.
+        // The trace then LEAVES from the satellite rather than from the marker,
+        // with the beam standing in for the hop off the dish, which is the one
+        // hop in the path that genuinely is not on the ground.
+        let sx1 = x1, sy1 = y1;
+        if (fl.satEl) {
+          let shown = false;
+          if (gg) {
+            const sp = tepOrthoProject(fl.srcLon, fl.srcLat, tepGlobeRot.lon, tepGlobeRot.lat,
+              gg.cx, gg.cy, gg.R * TEP_SAT_ALT_R);
+            // Behind the Earth when it is on the far side AND lands inside the disc.
+            shown = sp.visible || Math.hypot(sp.x - gg.cx, sp.y - gg.cy) >= gg.R;
+            if (shown) {
+              sx1 = sp.x; sy1 = sp.y;
+              fl.satEl.setAttribute('transform', 'translate(' + sp.x.toFixed(1) + ' ' + sp.y.toFixed(1) + ')');
+              // Beam: a wedge from the satellite down onto the agent.
+              const bdx = x1 - sp.x, bdy = y1 - sp.y, bl = Math.hypot(bdx, bdy) || 1;
+              const nx = -bdy / bl * 9, ny = bdx / bl * 9;
+              fl.satBeamEl.setAttribute('d', 'M' + sp.x.toFixed(1) + ' ' + sp.y.toFixed(1)
+                + 'L' + (x1 + nx).toFixed(1) + ' ' + (y1 + ny).toFixed(1)
+                + 'L' + (x1 - nx).toFixed(1) + ' ' + (y1 - ny).toFixed(1) + 'Z');
+              if (fl.satLblEl) {
+                const right = sp.x > gg.cx;
+                fl.satLblEl.setAttribute('x', (sp.x + (right ? -14 : 14)).toFixed(1));
+                fl.satLblEl.setAttribute('y', (sp.y - 9).toFixed(1));
+                fl.satLblEl.setAttribute('text-anchor', right ? 'end' : 'start');
+              }
+            }
+          }
+          const vis = shown ? '' : 'none';
+          fl.satEl.style.display = vis;
+          if (fl.satBeamEl) fl.satBeamEl.style.display = vis;
+          if (fl.satLblEl) fl.satLblEl.style.display = vis;
+        }
+        const mx = (sx1 + x2) / 2, my = (sy1 + y2) / 2;
+        const dx = x2 - sx1, dy = y2 - sy1;
         const len = Math.hypot(dx, dy) || 1;
         const off = Math.min(90, len * 0.16);
         const cx = mx + (-dy / len) * off, cy = my + (dx / len) * off;
-        const d = `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
+        const d = `M ${sx1} ${sy1} Q ${cx} ${cy} ${x2} ${y2}`;
         fl.pathEl.setAttribute('d', d);
         if (fl.glowEl) fl.glowEl.setAttribute('d', d);
         // Hop nodes sit ON this trace line by HOP SEQUENCE (t = hopFraction) —
@@ -27200,7 +27550,7 @@
         // geography.
         const bezAt = (t) => {
           const mt = 1 - t;
-          return { x: mt * mt * x1 + 2 * mt * t * cx + t * t * x2, y: mt * mt * y1 + 2 * mt * t * cy + t * t * y2 };
+          return { x: mt * mt * sx1 + 2 * mt * t * cx + t * t * x2, y: mt * mt * sy1 + 2 * mt * t * cy + t * t * y2 };
         };
         for (const hp of (fl.hopEls || [])) {
           if (hp.hopFraction == null) continue;
@@ -27246,7 +27596,12 @@
             const q = readXY(hp.el);
             movers.push({ el: hp.el, x: q.x, y: q.y, r: radOf(hp.el, (hp.el.className.indexOf('--bottle') >= 0) ? 8 : 6) });
           }
-          if (fl.srcLabelEl) { const q = readXY(fl.srcLabelEl); movers.push({ el: fl.srcLabelEl, x: q.x, y: q.y, r: radOf(fl.srcLabelEl, 11) }); }
+          // A label nobody can see does not need separating from anything, and
+          // this pass is the expensive one.
+          if (fl.srcLabelEl && !fl.srcLabelEl.classList.contains('tep-testdest-total--quiet')) {
+            const q = readXY(fl.srcLabelEl);
+            movers.push({ el: fl.srcLabelEl, x: q.x, y: q.y, r: radOf(fl.srcLabelEl, 11) });
+          }
         }
         // Cap the O(n²) relaxation so a test with hundreds of source agents (all
         // their hop/total markers) can't freeze layoutMarkers on every pan.
@@ -32590,6 +32945,10 @@
   // fullscreen still reverts on the next load. Cosmetic + always self-reverting;
   // this is the explicit behaviour the user asked for. Best-effort throughout.
   const TEP_TE_THEME_RESTORE_KEY = 'tep-te-theme-restore';
+  // TE's three theme names are 'light', 'dark' and 'iris'; iris is a LIGHT one
+  // despite being the branded one borrowed here. CONFIRMED via user. Nothing
+  // needs to map those names any more - the panel reads what TE has PAINTED
+  // (see tepReadTePaintedTheme) - but the set is worth recording.
   const TEP_TE_FULLSCREEN_THEME = 'iris';
   let tepTeThemePrior = null;
   function tepMenuThemeHeaders() {
@@ -32601,13 +32960,6 @@
     const ver = teInitData ? (teInitData.version ?? teInitData.appVersion ?? teInitData.teVersion) : null;
     if (typeof ver === 'string' && ver) h['x-thousandeyes-version'] = ver;
     return h;
-  }
-  async function tepGetTeTheme() {
-    try {
-      const r = await ajax('/ajax/menu/settings', { method: 'GET', headers: tepMenuThemeHeaders() });
-      if (r && r.ok) { const j = await r.json().catch(() => null); if (j && typeof j.theme === 'string' && j.theme) return j.theme; }
-    } catch (_) { /* */ }
-    return null;
   }
   function tepSetTeTheme(theme) {
     try { return ajax('/ajax/menu/settings', { method: 'POST', headers: tepMenuThemeHeaders(), body: JSON.stringify({ theme: theme }) }); } catch (_) { return Promise.resolve(); }
@@ -36270,15 +36622,21 @@
       const srcLoc = (aId && destN.sourceIdToLocation) ? destN.sourceIdToLocation[aId] : null;
       const reportedLoc = srcLoc && srcLoc.locationName ? srcLoc.locationName : null;
       const locName = reportedLoc || destN.location || null;
-      const geo = locName ? tepHopGeo(locName) : null;
+      // No city or state on a cloud node is normal - fall back to its region.
+      const cloudGeo = tepCloudRegionGeo(destN.cloudInfo);
+      const geo = (locName ? tepHopGeo(locName) : null) || cloudGeo;
       log(`Test destination: ${key} — "${agentName}" (id ${aId}) → ${destN.publicIpAddress || destN.ipAddress || '?'} · reported="${reportedLoc || ''}" node.location="${destN.location || ''}" → ${geo ? locName + ' @ ' + geo.lat.toFixed(2) + ',' + geo.lng.toFixed(2) : 'UNRESOLVED (' + (locName || 'no location') + ')'}`, geo ? 'tep-log-ok' : 'tep-log-info');
       if (!geo) { if (!destByAgent.has(aId)) estimatedAgents.add(aId); continue; }
       const dnForInfo = {
-        location: locName, asName: destN.asName, asn: destN.asn,
+        location: locName || (cloudGeo ? cloudGeo.name : ''),
+        asName: destN.asName, asn: destN.asn,
         publicIpAddress: destN.publicIpAddress, ipAddress: destN.ipAddress,
         geonameId: (srcLoc && srcLoc.geonameId != null) ? srcLoc.geonameId : destN.geonameId,
       };
       const base = mkDestInfo(dnForInfo, geo);
+      // A region is a quadrant of a continent, not an address - never let it
+      // read as a confirmed location.
+      if (!locName && cloudGeo) base._cloudRegion = true;
       const dinfo = destsByKey.get(base.key) || base;
       if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
       destByAgent.set(aId, dinfo);
@@ -36289,9 +36647,11 @@
     if (!destsByKey.size) {
       for (const dn of nodes) {
         if (!dn || dn.destination !== true) continue;
-        const geo = tepHopGeo(dn.location);
+        const cg = tepCloudRegionGeo(dn.cloudInfo);
+        const geo = tepHopGeo(dn.location) || cg;
         if (!geo) continue;
-        const dinfo = mkDestInfo(dn, geo);
+        const dinfo = mkDestInfo(dn.location ? dn : Object.assign({}, dn, { location: cg.name }), geo);
+        if (!dn.location && cg) dinfo._cloudRegion = true;
         if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
       }
     }
@@ -37107,6 +37467,7 @@
 
   // Create panel listeners
   $('#tep-theme-toggle').addEventListener('click', () => {
+    tepThemeUserOverride = true;   // stop mirroring TE for the rest of the session
     applyTheme(tepTheme === 'light' ? 'dark' : 'light', true);
   });
   $('#tep-close').addEventListener('click', () => {
