@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.19';
+  const TEP_VERSION = '4.20';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -2110,11 +2110,25 @@
        existing colour toward zero and leaves hue untouched. */
     .tep-globe-night { fill: #000; pointer-events: none; }
     .tep-globe-limb { stroke: rgba(56,189,248,.45); stroke-width: 1.2; }
-    /* The flat basemap and every Mercator-space overlay step aside while the
-       globe is up: their geometry is plate-carree and would not survive the
-       projection. Markers DO follow the sphere (see layoutMarkers). */
-    .tep-globe-on .tep-agent-map-canvas,
-    .tep-globe-on .tep-agent-map-svg { display: none !important; }
+    /* The flat basemap steps aside while the globe is up - its geometry is
+       plate-carree and would not survive the projection - but it is hidden by
+       drawGlobe, with VISIBILITY, not here with display.
+       A "display: none !important" rule on .tep-agent-map-canvas and
+       .tep-agent-map-svg used to sit here, and it quietly undid two things:
+         1. The land test that keeps nudged markers out of the water asks these
+            very paths via isPointInFill, and inside a display:none subtree
+            every point answers FALSE. So on the globe no candidate position
+            was ever land, no safe angle was ever found, and every overlap fell
+            through to a blind bearing nudge - straight out to sea. Measured:
+            display:none gives 0 client rects and isPointInFill false;
+            visibility:hidden gives 1 and true. drawGlobe was already written
+            to hide the canvas with visibility for exactly this reason, and the
+            !important here overrode it.
+         2. It fired from the first frame of the morph (the class goes on at
+            t > 0.02), so the flat map vanished while the globe was 2% faded
+            in - the opposite of the cross-fade drawGlobe describes, where the
+            map stays opaque underneath until the sphere is fully drawn.
+       Markers DO follow the sphere - see layoutMarkers. */
     /* NOTE: no background change here. The wrap's background-color IS the flat
        map's ocean, so repainting it black turned the map dark the instant the
        toggle was clicked, before the globe had faded in at all - CONFIRMED via
@@ -18452,7 +18466,16 @@
         // CONFIRMED via user request.
         const whole = dashMapGlobeHook.globeFullyVisible && dashMapGlobeHook.globeFullyVisible();
         if (whole && dashMapGlobeHook.resetMapView) dashMapGlobeHook.resetMapView();
-        else dashMapGlobeHook.centreMapOn(tepGlobeRot.lon, tepGlobeRot.lat, tepGlobeZoom);
+        else {
+          // Leaving the globe by zooming IN past its stop is a continuation of
+          // the same gesture, so the map has to pick up exactly where the
+          // sphere left off - same place, same apparent size. The button is
+          // left on its existing framing; it is a jump between views, not a
+          // continuous zoom. CONFIRMED via user request.
+          const matched = (opts && opts.matchScale && dashMapGlobeHook.globeToMapScale)
+            ? dashMapGlobeHook.globeToMapScale(tepGlobeRot.lat) : null;
+          dashMapGlobeHook.centreMapOn(tepGlobeRot.lon, tepGlobeRot.lat, matched || tepGlobeZoom);
+        }
       }
     }
     tepGlobeOn = on;
@@ -18554,6 +18577,38 @@
   // the fallback for the handful of paths that have no viewport to measure.
   const TEP_GLOBE_ZOOM_MIN = 0.2747;
   const TEP_GLOBE_ZOOM_MAX = 6;
+  /** The flat map scale that frames the SAME ground, at the SAME size on
+   *  screen, as the globe shows right now at the point it is centred on.
+   *  Null if the viewport cannot be measured.
+   *
+   *  Globe zoom and map scale are different units - handing one across as the
+   *  other is how the map used to arrive at an unrelated framing - so convert
+   *  through pixels-per-ground-distance at the centre point, which both
+   *  projections can state exactly.
+   *
+   *  Orthographic: the sphere's radius IS its scale. At the centre of the disc
+   *  the projection is isotropic and one radian of great circle spans exactly R
+   *  pixels, so px per radian = R.
+   *
+   *  Web Mercator (what TEP_BASEMAP is): px per radian of longitude is w*s/(2pi)
+   *  across, and px per unit of Mercator y is h*s/(2*YTOP) down. Those are equal
+   *  only when the viewport carries the basemap's own aspect - the plate is
+   *  drawn with preserveAspectRatio="none", so in fullscreen it is stretched and
+   *  they are not. Their geometric mean is the honest "same size" answer for a
+   *  stretched plate, and collapses to the exact conformal match when it is not
+   *  stretched. Mercator then magnifies everything by 1/cos(lat), so matching
+   *  the ground scale at THIS latitude means multiplying by cos(lat).
+   *  CONFIRMED via user request that the nodes and the zoom level line up
+   *  across the handoff. */
+  function tepGlobeToMapScale(w, h, lat) {
+    if (!(w > 0) || !(h > 0)) return null;
+    const R = Math.min(w, h) * TEP_GLOBE_R_FRAC * tepGlobeZoom;
+    const clamped = Math.max(-TEP_MAP_LAT_MAX, Math.min(TEP_MAP_LAT_MAX, lat || 0));
+    const cosLat = Math.cos(clamped * Math.PI / 180);
+    const k = Math.sqrt((w / (2 * Math.PI)) * (h / (2 * TEP_MERC_YTOP)));
+    if (!(k > 0) || !(cosLat > 0)) return null;
+    return R * cosLat / k;
+  }
   /** Zoom the sphere by a factor, clamped so it can reach the pupil exactly and
    *  go no further. */
   function tepGlobeZoomBy(factor, w, h, vw, vh) {
@@ -27339,25 +27394,36 @@
               const spot = landSafeSpot(angle, p.x, p.y, sep);
               if (spot) {
                 x = spot.x; y = spot.y;
+                moved = true;
               } else if (p.movable && p.el) {
                 // No land-safe angle around this conflict for OUR marker —
-                // shift the OTHER (already-placed, movable) marker away
-                // instead, and keep ours at its true position.
+                // try shifting the OTHER (already-placed, movable) marker away
+                // instead, and keep ours at its true position. That push is
+                // land-checked too: shoving it blind was the same ocean
+                // placement, just one marker over.
                 const pushAngle = Math.atan2(p.y - trueY, p.x - trueX);
-                p.x += Math.cos(pushAngle) * sep;
-                p.y += Math.sin(pushAngle) * sep;
-                p.el.style.left = p.x + 'px';
-                p.el.style.top = p.y + 'px';
-                if (p.mapKey) markerPxByKey.set(p.mapKey, { x: p.x, y: p.y });
-                x = trueX; y = trueY;
+                const pSpot = landSafeSpot(pushAngle, trueX, trueY, sep);
+                if (pSpot) {
+                  p.x = pSpot.x; p.y = pSpot.y;
+                  p.el.style.left = p.x + 'px';
+                  p.el.style.top = p.y + 'px';
+                  if (p.mapKey) markerPxByKey.set(p.mapKey, { x: p.x, y: p.y });
+                  x = trueX; y = trueY;
+                  moved = true;
+                } else {
+                  x = trueX; y = trueY;   // nowhere for either of us — see below
+                }
               } else {
-                // Conflicting point is fixed (a G destination) with no
-                // land-safe angle available — fall back to the plain bearing
-                // nudge rather than leaving the markers stacked.
-                x = p.x + Math.cos(angle) * sep;
-                y = p.y + Math.sin(angle) * sep;
+                // Nothing on land anywhere around this conflict, at any of the
+                // search radii. STAY PUT. The old fallback nudged along the
+                // bearing regardless, which is how a marker ended up in open
+                // water with nothing to stand on. An overlap resolves itself
+                // the moment you zoom in; an invented position never does —
+                // the same trade LAND_RADIUS_STEPS above already makes.
+                // CONFIRMED via user ("willing to allow more overlap", "does
+                // not appear in ocean for any nodes").
+                x = trueX; y = trueY;
               }
-              moved = true;
             }
           }
           if (!moved) break;
@@ -27406,9 +27472,10 @@
               const blen = Math.hypot(bx, by);
               const angle = blen > 0.5 ? Math.atan2(by, bx) : -Math.PI / 2;
               const spot = landSafeSpot(angle, p.x, p.y, sep);
-              if (spot) { x = spot.x; y = spot.y; }
-              else { x = p.x + Math.cos(angle) * sep; y = p.y + Math.sin(angle) * sep; }
-              moved = true;
+              // Same rule as the agent pass: no land to move to means stay put
+              // rather than invent a spot out at sea.
+              if (spot) { x = spot.x; y = spot.y; moved = true; }
+              else { x = trueX; y = trueY; }
             }
           }
           if (!moved) break;
@@ -27727,6 +27794,22 @@
       // globe view. CONFIRMED via user report.
       if (tepGlobeMorph > 0) {
         tepGlobeStopGlide();   // an explicit zoom ends any coasting spin
+        // The sphere is already at ITS stop and the user is still asking to go
+        // in: hand over to the flat map, which carries on from there. The exact
+        // mirror of the zoom-out handoff at the map's floor below - same
+        // discrete switch at the limit, same single funnel, so the wheel, a
+        // pinch, the on-screen plus button and the keyboard all do it. The map
+        // is aimed at the globe's own centre and scaled to show it at the size
+        // the sphere was showing it, so the markers do not jump.
+        // CONFIRMED via user request.
+        // The 1.005 guard is the counterpart to the 0.995 one below: a stray
+        // one-pixel trackpad scroll arrives as a factor a hair over 1.
+        if (factor >= 1.005 && tepGlobeOn && dashMapGlobeHook
+            && tepGlobeZoom >= TEP_GLOBE_ZOOM_MAX - 1e-4) {
+          cancelZoomAnim();
+          tepSetGlobeView(false, { matchScale: true });
+          return;
+        }
         // The sphere has its OWN zoom, and must: the flat map's scale is floored
         // at MIN (1), which is 3.6x too big to ever reach the pupil.
         const zb = eyeBox();
@@ -27882,6 +27965,10 @@
         epDashMapZoom = { s: 1, tx: 0, ty: 0 };
         try { apply(); } catch (_) { /* not every render exposes it */ }
       };
+      /** The flat map scale that matches what the globe is showing right now -
+       *  see tepGlobeToMapScale. Lives on the hook because only this closure
+       *  knows the viewport the sphere is drawn into. */
+      dashMapGlobeHook.globeToMapScale = (lat) => tepGlobeToMapScale(wrap.clientWidth, wrap.clientHeight, lat);
       /** What the flat map currently has in the middle of the viewport. */
       dashMapGlobeHook.mapCentreLonLat = () => {
         const cw = wrap.clientWidth, ch = wrap.clientHeight;
