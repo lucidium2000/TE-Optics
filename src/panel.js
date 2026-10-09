@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.20';
+  const TEP_VERSION = '4.21';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4181,10 +4181,18 @@
     .tep-devtopo-node-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .tep-devtopo-node-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 148px; color: #e6ecf5; }
     .tep-devtopo-node-meta { font-family: var(--tdt-mono); font-size: 10px; color: #8496b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tep-devtopo-node-metric { margin-left: auto; padding-left: 6px; font-family: var(--tdt-mono); font-size: 10.5px; font-weight: 700; color: var(--h); white-space: nowrap; }
+    /* flex-shrink 4 + min-width 0: when the header has to give up space, the
+       metric/description yields FIRST and the device name keeps its room. The
+       name is the node's identity; a sysDescr is decoration. */
+    .tep-devtopo-node-metric { margin-left: auto; padding-left: 6px; font-family: var(--tdt-mono); font-size: 10.5px; font-weight: 700; color: var(--h); white-space: nowrap; min-width: 0; flex-shrink: 4; overflow: hidden; text-overflow: ellipsis; }
     /* Description in the metric slot (no active warning): muted, and clamped so a
        long sysDescr ellipsis-truncates instead of stretching the node. */
-    .tep-devtopo-node-metric--desc { color: #8496b0; font-weight: 600; max-width: 108px; overflow: hidden; text-overflow: ellipsis; }
+    /* 80px, not 108: the card caps at 250px, and 34px of icon + ~95px of
+       name/IP + 108px of description could not fit inside it - which is how a
+       long sysDescr ended up rendered OUTSIDE the card's own border.
+       CONFIRMED via user screenshot. Measured: 80px leaves the name and IP
+       whole and ellipsises only the description. */
+    .tep-devtopo-node-metric--desc { color: #8496b0; font-weight: 600; max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
     .tep-devtopo-node-tag { position: absolute; top: -9px; left: 10px; font-family: var(--tdt-mono); font-size: 8.5px; letter-spacing: .07em; text-transform: uppercase; color: #04101f; background: var(--h); padding: 1px 7px; border-radius: 999px; font-weight: 800; white-space: nowrap; }
     .tep-devtopo-node--crit { animation: tep-devtopo-crit 2.2s ease-in-out infinite; }
     @keyframes tep-devtopo-crit { 0%,100%{ box-shadow: 0 0 0 1px color-mix(in srgb,var(--tdt-crit) 55%,transparent), 0 10px 24px -14px rgba(0,0,0,.85);} 50%{ box-shadow: 0 0 0 1px var(--tdt-crit), 0 0 22px -2px color-mix(in srgb,var(--tdt-crit) 70%,transparent);} }
@@ -4434,10 +4442,16 @@
     /* Sections must be allowed to shrink, or their min-content width drags the
        whole node past its 250px cap and it starts colliding with its neighbours
        (the topology spacing assumes the cap holds). */
-    .tep-devtopo-node--wired .tep-devtopo-node-hd,
-    .tep-devtopo-node--faceplate .tep-devtopo-node-hd { min-width: 0; }
+
     .tep-devtopo-wired { min-width: 0; }
-    .tep-devtopo-node-hd { display: flex; align-items: center; gap: 9px; }
+    /* min-width:0 is what keeps the header INSIDE the card. It is a flex item of
+       a max-width:250px node, so without it its automatic minimum size is its
+       max-content width (every child is white-space:nowrap) and it simply
+       refuses to shrink - the content then spills straight past the card's
+       border. It used to be set only on the --wired and --faceplate variants,
+       so every other node, a plain router included, overflowed.
+       CONFIRMED via user screenshot. */
+    .tep-devtopo-node-hd { display: flex; align-items: center; gap: 9px; min-width: 0; }
     .tep-devtopo-faceplate {
       display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 9px;
       background: linear-gradient(180deg,#0a1120,#0c1424); border: 1px solid #1d2740; box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
@@ -20159,7 +20173,7 @@
       if (commit) tepTraceInFlight.delete(key);
       if (!commit && mySeq !== tepTraceLoadSeq) return false;
       if (!info) {
-        const why = dashMapTestDestFail.get(String(tid)) || 'Could not resolve this test’s destination';
+        const why = dashMapTestDestFail.get(tepTestDestKey(tid)) || 'Could not resolve this test’s destination';
         tepMapToast('Can’t trace ' + (ds.testName || 'test') + ':\n' + why, 'err');
         return false;
       }
@@ -20234,8 +20248,15 @@
   // per-test via path-vis and memoized in dashMapTestDestCache so repeat
   // selections and re-renders never refetch.
   let dashMapSelectedTestDest = null;    // resolved dest info { testId, location, lat, lng, asName, asn, ip } | null
-  const dashMapTestDestCache = new Map(); // testId(string) -> resolved dest | null (null = tried, unresolvable)
-  const dashMapTestDestFail = new Map();  // testId(string) -> human reason a pin couldn't be placed (for on-screen msg)
+  const dashMapTestDestCache = new Map(); // destCacheKey -> resolved dest | null (null = tried, unresolvable)
+  const dashMapTestDestFail = new Map();  // destCacheKey -> human reason a pin couldn't be placed (for on-screen msg)
+  /** Cache key for a resolved trace. Keyed on the DATA WINDOW as well as the
+   *  test, because the round a trace resolves against comes from
+   *  tepMetricsNowMs() - so the same test under a different window, or a
+   *  different "as of" instant, is a different answer. Keyed on the test alone,
+   *  a trace already on the map kept showing the round it was first pulled for
+   *  no matter what the window was changed to. CONFIRMED via user report. */
+  function tepTestDestKey(tid) { return String(tid) + '|' + tepMetricsCacheKey(); }
 
   // --- Multi-trace registry --------------------------------------------------
   // The map can now hold SEVERAL traces at once: each row in the test list has a
@@ -25013,6 +25034,268 @@
     return null;
   }
 
+  // ── Destination geolocation of last resort ───────────────────────────────
+  // These run ONLY when a test's destination node carries no location of its
+  // own - no reported location, no registration location, no cloud region - and
+  // the agent would otherwise be left to estimate. CONFIRMED via user report:
+  // an AWS us-east-1 target behind a private address pinned to Europe, while
+  // the hop immediately before it was an AWS Direct Connect interface whose
+  // own cloudInfo said us-east-1. Nothing in the panel had ever read cloudInfo
+  // off an intermediate hop.
+  //
+  // Three sources, in descending order of how much they actually know:
+  //   1. A SIBLING agent in the same payload that resolved the same target IP.
+  //   2. A nearby HOP on this agent's own route (see tepLookBackHopGeo).
+  //   3. An answer LEARNED from an earlier resolution of the same IP.
+  // Every one of them is then checked against the round trip this agent
+  // actually measured - see tepGeoFit. None of them costs a request: the
+  // routes, links and nodes are already in memory, and the geo lookups are
+  // in-process table reads.
+
+  // Speed of light in fibre, ~2/3 c. The hard bound below is physics, not a
+  // heuristic: no destination can be further away than this in the time we saw.
+  const TEP_FIBRE_KM_PER_MS = 200;
+  // A real internet route is longer than the great circle between its ends.
+  // 1.4x is the usual figure and is only used for the soft score.
+  const TEP_PATH_STRETCH = 1.4;
+  // Slack on the hard bound, for clock granularity and sub-millisecond rounding.
+  const TEP_RTT_SLACK = 1.1;
+  // How much of the measured latency a candidate must explain to be believed.
+  // Without this, walking back from a target reached over a corporate WAN finds
+  // the agent's OWN LAN gateway first and pins the destination on top of the
+  // agent - a 77ms round trip to somewhere 0km away. 0.35 is deliberately
+  // forgiving: a congested or badly-routed path genuinely can take several
+  // times longer than its distance implies, and the cost of refusing is only
+  // that we fall back to today's estimate.
+  const TEP_GEO_FIT_MIN = 0.35;
+  // How many IDENTIFIED nodes to walk back past the target. Identified, not
+  // hops: the trace that prompted this has four unresponsive nodes between the
+  // Direct Connect interface and the target, so a budget counted in hops would
+  // run out before reaching the one node that knew the answer.
+  // CONFIRMED via user request ("look back 3 identified nodes").
+  const TEP_HOP_LOOKBACK_N = 3;
+  // Two agents resolving the same IP further apart than this are reaching
+  // different PoPs - the target is anycast, and neither answer may be borrowed.
+  const TEP_ANYCAST_AGREE_KM = 500;
+
+  /** Does a candidate location explain the round trip we actually measured?
+   *  { ok, fit } - ok false means physically impossible, fit is 0..1 (or null
+   *  when there is nothing to check against, in which case nothing is blocked). */
+  function tepGeoFit(srcLat, srcLng, lat, lng, rttMs) {
+    if (!Number.isFinite(srcLat) || !Number.isFinite(srcLng)
+      || !Number.isFinite(lat) || !Number.isFinite(lng)
+      || !Number.isFinite(rttMs) || rttMs <= 0) return { ok: true, fit: null, km: null };
+    const km = tepHaversineKm(srcLat, srcLng, lat, lng);
+    if (km > TEP_FIBRE_KM_PER_MS * (rttMs / 2) * TEP_RTT_SLACK) return { ok: false, fit: 0, km };
+    const predicted = (km * TEP_PATH_STRETCH / TEP_FIBRE_KM_PER_MS) * 2;
+    return { ok: true, fit: Math.min(1, predicted / rttMs), km };
+  }
+
+  /** A route's measured round trip: the last hop that answered. Non-responding
+   *  hops carry no delay, so the reading is carried forward - the same way
+   *  tepComputeTracePathNodes reads it. */
+  function tepRouteRttMs(route) {
+    const hops = route && Array.isArray(route.route) ? route.route : null;
+    if (!hops || !hops.length) return null;
+    let last = null;
+    for (const h of hops) {
+      const d = (h && typeof h.delay === 'number' && isFinite(h.delay)) ? h.delay : null;
+      if (d != null) last = d;
+    }
+    return Number.isFinite(last) ? last : null;
+  }
+
+  /** Did the trace actually identify this node, or is it a silent hop? A silent
+   *  hop must not consume the lookback budget. */
+  function tepHopIdentified(n) {
+    return !!(n && (n.publicIpAddress || n.ipAddress || n.location || n.cloudInfo));
+  }
+
+  /** Walk back from a route's destination collecting every nearby hop that
+   *  knows where it is. Returns candidates, unranked by distance - the caller
+   *  scores them. Not every hop is equal evidence:
+   *    1. a cloud region on a hop run by the SAME provider as the target - the
+   *       cloud's own statement about where that interface lives;
+   *    2. a location on a hop in the SAME AS as the target - same operator,
+   *       very likely the same facility;
+   *    3. a cloud region from some other provider;
+   *    4. any other hop location - weak, since backbone routers are routinely
+   *       registered to their carrier's head office rather than where they are. */
+  function tepLookBackHopGeo(route, destIdx, destN, nodes, links) {
+    const out = [];
+    const hops = route && Array.isArray(route.route) ? route.route : null;
+    if (!hops || destIdx == null) return out;
+    let seen = 0;
+    for (let i = destIdx - 1; i >= 0 && seen < TEP_HOP_LOOKBACK_N; i--) {
+      const hop = hops[i];
+      const link = hop ? links[hop.link] : null;
+      const n = link && link.target != null ? nodes[link.target] : null;
+      if (!n || n === destN || !tepHopIdentified(n)) continue;
+      seen++;
+      const ip = n.publicIpAddress || n.ipAddress || '';
+      const where = ip || n.name || 'hop';
+      const region = n.cloudInfo && n.cloudInfo.region ? String(n.cloudInfo.region) : '';
+      if (region) {
+        const cg = tepCloudRegionGeo(n.cloudInfo);
+        if (cg) {
+          const dProv = destN && destN.cloudInfo ? destN.cloudInfo.cloudProvider : null;
+          const hProv = n.cloudInfo.cloudProvider;
+          // An unknown provider on either side is not evidence AGAINST a match.
+          const sameProv = !dProv || !hProv || String(dProv).toLowerCase() === String(hProv).toLowerCase();
+          out.push({ geo: cg, rank: sameProv ? 1 : 3, back: seen, name: cg.name,
+            why: `${hProv || 'cloud'} region ${region} on ${where}, ${seen} node(s) back` });
+          continue;
+        }
+      }
+      if (n.location) {
+        const g = tepHopGeo(n.location);
+        if (g) {
+          const sameAs = destN && destN.asn != null && n.asn != null && Number(destN.asn) === Number(n.asn);
+          out.push({ geo: g, rank: sameAs ? 2 : 4, back: seen, name: n.location,
+            why: `${n.location} on ${where}${sameAs ? ' (same AS ' + n.asn + ')' : ''}, ${seen} node(s) back` });
+        }
+      }
+    }
+    return out;
+  }
+
+  // Destinations this panel has ever managed to place, by target IP. Survives
+  // across tests and reloads, so a round where TE returns nothing still pins
+  // where the last good round did. Only the ANSWER is kept (a few dozen bytes)
+  // - path-vis payloads are never retained. Entries are replayed through the
+  // same latency check as anything else, so a stale or anycast one cannot
+  // quietly place a pin that the measurement contradicts.
+  const TEP_DEST_GEO_MEMO_KEY = 'tep-dest-geo';
+  const TEP_DEST_GEO_MEMO_MAX = 300;
+  let tepDestGeoMemo = null;
+  let tepDestGeoSaveTimer = null;
+  function tepDestGeoStore() {
+    if (tepDestGeoMemo) return tepDestGeoMemo;
+    tepDestGeoMemo = new Map();
+    try {
+      const arr = JSON.parse(localStorage.getItem(TEP_DEST_GEO_MEMO_KEY) || '[]');
+      if (Array.isArray(arr)) {
+        for (const e of arr) {
+          if (e && e.ip && Number.isFinite(e.lat) && Number.isFinite(e.lng)) tepDestGeoMemo.set(String(e.ip), e);
+        }
+      }
+    } catch (_) { /* */ }
+    return tepDestGeoMemo;
+  }
+  function tepDestGeoSaveSoon() {
+    if (tepDestGeoSaveTimer) return;
+    // Debounced: a single test resolves dozens of agents, and each confirmed
+    // one records an entry. One write per burst, not one per agent.
+    tepDestGeoSaveTimer = setTimeout(() => {
+      tepDestGeoSaveTimer = null;
+      try { localStorage.setItem(TEP_DEST_GEO_MEMO_KEY, JSON.stringify(Array.from(tepDestGeoStore().values()))); } catch (_) { /* */ }
+    }, 1500);
+  }
+  function tepDestGeoRemember(ip, geo, kind, location) {
+    if (!ip || !geo || !Number.isFinite(geo.lat) || !Number.isFinite(geo.lng)) return;
+    const m = tepDestGeoStore();
+    const k = String(ip);
+    m.delete(k);                        // re-insert so Map order is least-recent-first
+    m.set(k, { ip: k, lat: geo.lat, lng: geo.lng, location: location || '', kind: kind || '', at: Date.now() });
+    while (m.size > TEP_DEST_GEO_MEMO_MAX) m.delete(m.keys().next().value);
+    tepDestGeoSaveSoon();
+  }
+  function tepDestGeoRecall(ip) {
+    if (!ip) return null;
+    return tepDestGeoStore().get(String(ip)) || null;
+  }
+
+  /** Second pass over the destinations pass 1 could not place.
+   *
+   *  Runs once the whole payload has been walked, deliberately: the strongest
+   *  evidence available is often a SIBLING agent that resolved the same target,
+   *  and that sibling may come later in routes[] than the agent that failed.
+   *  Mutates destByAgent / destsByKey / estimatedAgents in place. */
+  function tepResolveUnplacedDests(ctx) {
+    const { key, unplaced, confirmedByIp, agentGeo, nodes, links,
+      destByAgent, destsByKey, estimatedAgents, mkDestInfo } = ctx;
+    if (!unplaced || !unplaced.length) return;
+    let placed = 0, rejected = 0;
+    for (const u of unplaced) {
+      if (destByAgent.has(u.aId)) continue;     // a later route already placed it
+      const destN = u.destN;
+      const destIp = destN ? (destN.publicIpAddress || destN.ipAddress || '') : '';
+      const cands = [];
+
+      // 1. A sibling in this payload that reached the SAME target IP.
+      //    Guarded against anycast by MEASUREMENT rather than by refusing
+      //    outright: if the agents that did resolve all agree on where the
+      //    target is, it is one place and may be shared; if they scatter, the
+      //    IP is a different PoP per agent and nobody's answer transfers.
+      const sib = destIp ? confirmedByIp.get(destIp) : null;
+      if (sib && sib.length) {
+        let spread = 0;
+        for (let i = 0; i < sib.length; i++) {
+          for (let j = i + 1; j < sib.length; j++) {
+            spread = Math.max(spread, tepHaversineKm(sib[i].lat, sib[i].lng, sib[j].lat, sib[j].lng));
+          }
+        }
+        if (spread <= TEP_ANYCAST_AGREE_KM) {
+          cands.push({ geo: sib[0], rank: 0, back: 0, name: sib[0].location || '',
+            why: `${sib.length} sibling agent(s) resolved ${destIp} to the same place` });
+        } else {
+          log(`Test destination: ${key} — "${u.agentName}": ${sib.length} sibling(s) resolved ${destIp} but they are ${Math.round(spread)}km apart — treating the target as anycast and borrowing nothing`, 'tep-log-info');
+        }
+      }
+
+      // 2. This agent's own route: the nearest hops that know where they are.
+      for (const c of tepLookBackHopGeo(u.route, u.destIdx, destN, nodes, links)) cands.push(c);
+
+      // 3. Anything learned about this IP on an earlier round or test.
+      const memo = destIp ? tepDestGeoRecall(destIp) : null;
+      if (memo) {
+        cands.push({ geo: memo, rank: memo.kind === 'confirmed' ? 1.5 : 3.5, back: 0, name: memo.location || '',
+          why: `remembered ${memo.location || destIp}${memo.kind ? ' (' + memo.kind + ')' : ''} from an earlier resolution` });
+      }
+      if (!cands.length) continue;
+
+      // Every candidate, whatever its source, has to survive the latency this
+      // agent actually measured. That one rule is what stops the lookback
+      // pinning a target on top of the agent's own LAN gateway.
+      const src = agentGeo(u.aId);
+      const keep = [];
+      for (const c of cands) {
+        const f = tepGeoFit(src && src.lat, src && src.lng, c.geo.lat, c.geo.lng, u.rttMs);
+        if (!f.ok) { rejected++; continue; }
+        if (f.fit != null && f.fit < TEP_GEO_FIT_MIN) { rejected++; continue; }
+        keep.push(Object.assign({}, c, { fit: f.fit, km: f.km }));
+      }
+      if (!keep.length) {
+        log(`Test destination: ${key} — "${u.agentName}": ${cands.length} candidate location(s) for ${destIp || 'the target'}, none consistent with the measured ${u.rttMs != null ? Math.round(u.rttMs) + 'ms' : 'latency'} — left to estimate`, 'tep-log-info');
+        continue;
+      }
+      // Best evidence first; among equals, whichever best explains the latency,
+      // then whichever is nearest the target along the path.
+      keep.sort((a, b) => (a.rank - b.rank) || ((b.fit || 0) - (a.fit || 0)) || (a.back - b.back));
+      const win = keep[0];
+      const label = win.name || (destN && destN.location) || 'estimated from path';
+      const dn = {
+        location: label,
+        asName: destN ? destN.asName : '', asn: destN && destN.asn != null ? destN.asn : null,
+        publicIpAddress: destIp, ipAddress: destN ? destN.ipAddress : '', geonameId: null,
+      };
+      const base = mkDestInfo(dn, win.geo);
+      base._inferred = win.why;
+      base._approx = true;    // never draw an inference as a confirmed location
+      const dinfo = destsByKey.get(base.key) || base;
+      if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
+      destByAgent.set(u.aId, dinfo);
+      estimatedAgents.delete(u.aId);
+      placed++;
+      log(`Test destination: ${key} — "${u.agentName}": ${destIp || 'target'} had no location of its own → ${label} @ ${win.geo.lat.toFixed(2)},${win.geo.lng.toFixed(2)} — ${win.why}`
+        + (win.fit != null ? ` · explains ${Math.round(win.fit * 100)}% of the ${Math.round(u.rttMs)}ms round trip over ${Math.round(win.km)}km` : ''), 'tep-log-ok');
+      if (destIp) tepDestGeoRemember(destIp, win.geo, win.rank === 0 ? 'sibling' : 'hop', label);
+    }
+    if (placed || rejected) {
+      log(`Test destination: ${key} — path-evidence pass: placed ${placed} of ${unplaced.length} unresolved agent(s)${rejected ? `, rejected ${rejected} candidate(s) the latency ruled out` : ''}`, placed ? 'tep-log-ok' : 'tep-log-info');
+    }
+  }
+
   /** EXPERIMENTAL (trace loss): read a loss value off a path-vis node or route,
    *  trying the field names TE uses for forwarding/packet loss. Returns loss as
    *  a PERCENT (0..100) or null. Values <=1 are treated as a fraction (×100). */
@@ -25909,7 +26192,11 @@
           // lands in its own dest bucket, so the implausible one gets the
           // continent anchor without dragging the honest one along.
           if (est) dst = tepEstContinentDest(dst, g.lat, g.lng, mm.t && mm.t.totalMs);
-          if (dst && dst._countryFallback) est = true;   // coarse country-centroid pin → draw amber, not solid
+          // Coarse or inferred pins draw amber, not solid: a country centroid, a
+          // cloud REGION (a quadrant of a continent, not an address) and a
+          // location borrowed from the path are all approximations. _cloudRegion
+          // was being set for this purpose and read by nothing.
+          if (dst && (dst._countryFallback || dst._approx || dst._cloudRegion)) est = true;
           if (!dst || dst.lat == null || dst.lng == null) continue;
           const dk = dst.key != null ? String(dst.key) : (dst.lat.toFixed(3) + ',' + dst.lng.toFixed(3));
           let bucket = byDest.get(dk);
@@ -25956,7 +26243,10 @@
         // scores use. NOT the agent's overall Network score — this is the test's
         // health as these agents measure it. Estimation is shown by the DASH
         // PATTERN below, never by colour.
-        const healthScore = tepNetworkTestScore(avgLat, avgLoss).score;
+        // An intercontinental trace is forgiven the crossing itself: this line
+        // knows both ends, so it is one of the few places that CAN tell.
+        const xcRelief = tepCrossContinentReliefMs(g.lat, g.lng, myDest.lat, myDest.lng);
+        const healthScore = tepNetworkTestScore(avgLat, avgLoss, xcRelief).score;
         const healthColor = tepColorFromScore(healthScore).fill;
         // The GLOW must be the line's OWN health colour, not the old hardcoded
         // blue drop-shadow (that mismatch is why it read as under-glowing / wrong-
@@ -28961,7 +29251,7 @@
     // always a 20-point dent, no matter how far past that it goes.
     const scored = aggs.map((g) => {
       const latSevRaw = tepIspLatencySeverity(g.avgLatency);
-      const latSevLenient = latSevRaw * 0.8;
+      const latSevLenient = latSevRaw * 0.8 * TEP_LAT_SEV_RELIEF;
       const latencyScore = (1 - latSevLenient) * 100;
       const lossPenalty = g.avgLoss != null ? Math.min(100, g.avgLoss * 2) : 0;
       // Excellent latency (<=15ms) earns an automatic perfect score, unless
@@ -29008,6 +29298,14 @@
     const agentIsp = new Map();   // agentId -> ISP fallback from the loaded agents list
     if (Array.isArray(agents)) for (const a of agents) { if (a && a.agentId != null && a.isp) agentIsp.set(String(a.agentId), a.isp); }
     const groups = new Map();
+    // liveTestAgentOwnCoords scans the agent arrays, so memoise it - this loop
+    // can run over hundreds of agents across several drawn traces.
+    const geoMemo = new Map();
+    const agentCoords = (aid) => {
+      const k = String(aid);
+      if (!geoMemo.has(k)) geoMemo.set(k, liveTestAgentOwnCoords(k) || null);
+      return geoMemo.get(k);
+    };
     for (const info of list) {
       const ispBy = info.ispByAgent instanceof Map ? info.ispByAgent : new Map();
       const paths = info.pathNodesByAgent instanceof Map ? info.pathNodesByAgent : new Map();
@@ -29019,13 +29317,24 @@
         const lat = t && t.totalMs != null ? t.totalMs : null;
         const loss = t && t.lossPct != null ? t.lossPct : null;
         let g = groups.get(isp);
-        if (!g) { g = { isp, agents: new Set(), tests: new Set(), latSum: 0, latN: 0, lossSum: 0, lossN: 0 }; groups.set(isp, g); }
+        if (!g) { g = { isp, agents: new Set(), tests: new Set(), latSum: 0, latN: 0, latScoreSum: 0, latScoreN: 0, lossSum: 0, lossN: 0 }; groups.set(isp, g); }
         // An agent running three of the traced tests is still ONE agent on this
         // ISP, but it contributes three latency samples - hence a set for the
         // count and averages taken over every sample.
         g.agents.add(String(aid));
         if (info.testId != null) g.tests.add(String(info.testId));
-        if (lat != null) { g.latSum += lat; g.latN++; }
+        if (lat != null) {
+          g.latSum += lat; g.latN++;
+          // Scored latency is accumulated SEPARATELY from the displayed one:
+          // the card still reports the real "Nms to dest", while the health
+          // score forgives an ocean crossing. Per agent, not per ISP - one
+          // ISP's agents can sit on different continents from the target.
+          const src = agentCoords(aid);
+          const dst = info.destByAgent instanceof Map ? info.destByAgent.get(String(aid)) : null;
+          const relief = (src && dst)
+            ? tepCrossContinentReliefMs(src.lat, src.lng, dst.lat, dst.lng) : 0;
+          g.latScoreSum += tepScoredLatencyMs(lat, relief); g.latScoreN++;
+        }
         if (loss != null) { g.lossSum += loss; g.lossN++; }
       }
     }
@@ -29033,6 +29342,7 @@
     for (const g of groups.values()) out.push({
       isp: g.isp, count: g.agents.size, tests: g.tests.size,
       avgLat: g.latN ? Math.round(g.latSum / g.latN) : null,
+      avgLatScore: g.latScoreN ? Math.round(g.latScoreSum / g.latScoreN) : null,
       avgLoss: g.lossN ? Math.round((g.lossSum / g.lossN) * 10) / 10 : null,
     });
     // Worst first — loss dominates the ordering, then latency.
@@ -29072,7 +29382,13 @@
       // latency baseline (end-to-end agent→dest reads far higher than last-mile,
       // so a 0…350ms scale) minus a hard, proportional loss penalty (2 pts/1%).
       // Shown as the big number instead of a raw latency; loss called out too.
-      const latSev = g.avgLat != null ? Math.max(0, Math.min(1, g.avgLat / 350)) : 0.4;
+      // The 0.4 stand-in for "no reading" is left alone - relief is for latency
+      // we actually measured, not for latency we never saw. avgLatScore is the
+      // same average with any intercontinental crossing already forgiven (see
+      // tepTraceIspAggregates); avgLat, the real measurement, is what the card
+      // goes on to print.
+      const scoreLat = g.avgLatScore != null ? g.avgLatScore : g.avgLat;
+      const latSev = scoreLat != null ? Math.max(0, Math.min(1, scoreLat / 350)) * TEP_LAT_SEV_RELIEF : 0.4;
       const latencyScore = (1 - latSev) * 100;
       const lossPenalty = g.avgLoss != null ? Math.min(100, g.avgLoss * 2) : 0;
       const score = Math.max(0, Math.round(latencyScore - lossPenalty));
@@ -29252,7 +29568,40 @@
   // The instant the snapshot caches (SNMP topology, wireless) were built at, so
   // a plain window change doesn't needlessly throw them away.
   let tepSnapshotCachesAtMs = null;
+  /** Re-resolve every trace currently drawn on the map against the window that
+   *  is now selected, and repaint. Clearing the cache alone is not enough: a
+   *  pinned trace is already on screen, and nothing would go back for it until
+   *  the user happened to toggle it off and on again - so it sat there showing
+   *  the round it was first pulled for. CONFIRMED via user report.
+   *
+   *  The round is deliberately NOT carried over from the old info: it is tried
+   *  first by the endpoint resolver, which would hand back the very data this
+   *  is replacing. Passing nothing makes it recompute from the new instant. */
+  async function tepRepullDrawnTraces() {
+    const live = tepTraceList();   // snapshot - tepTraceAdd mutates the map below
+    if (!live.length) return;
+    log(`Data Window: re-pulling ${live.length} drawn trace(s) for ${tepMetricsWindowLabel()}${tepMetricsIsAsOf() ? ' as of ' + tepMetricsAsOfLabel() : ''}`, 'tep-log-info');
+    for (const t of live) {
+      if (!t || t.testId == null) continue;
+      try {
+        await tepShowTraceForTest(t.testId, {
+          testName: t.testName || '',
+          endpoint: t.isEndpoint ? '1' : '0',
+          onewaynet: t.isOneWayNet ? '1' : '0',
+          testScore: t.testScore, testScorelabel: t.testScoreLabel,
+          testUnit: t.testScoreUnit, testDetail: t.testDetail,
+        }, true);
+      } catch (e) { log(`Data Window: re-pull of trace ${t.testId} failed — ${e && e.message}`, 'tep-log-info'); }
+    }
+  }
   function tepApplyDataWindowChange() {
+    // Resolved traces are keyed by window (see tepTestDestKey), so the old
+    // entries can never be served by mistake - but they are dead weight once
+    // the window moves, and a long session switching windows would keep every
+    // one of them. Drop them and re-pull whatever is on screen.
+    dashMapTestDestCache.clear();
+    dashMapTestDestFail.clear();
+    void tepRepullDrawnTraces();
     tepHttpAvailByAgentCache = null;
     tepNetHealthByAgentCache = null;
     tepNetTestsByAgentCache = null;
@@ -30283,9 +30632,10 @@
    *  copy-paste. Lenient on latency (severity dampened 50%), unforgiving on
    *  loss ("loss is king" — every 10 points of loss is a flat 25-point
    *  score dent). */
-  function tepNetworkTestScore(avgLat, avgLoss) {
-    const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-    const latSevLenient = latSevRaw * 0.5;
+  function tepNetworkTestScore(avgLat, avgLoss, reliefMs) {
+    const scoredLat = tepScoredLatencyMs(avgLat, reliefMs);
+    const latSevRaw = avgLat != null ? tepIspLatencySeverity(scoredLat) : 0;
+    const latSevLenient = latSevRaw * 0.5 * TEP_LAT_SEV_RELIEF;
     const latencyScore = (1 - latSevLenient) * 100;
     const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
     const score = Math.max(0, Math.round(latencyScore - lossPenalty));
@@ -30472,7 +30822,7 @@
       const avgLoss = lossVals && lossVals.length ? lossVals.reduce((s, x) => s + x, 0) / lossVals.length : null;
       if (avgLat == null && avgLoss == null) continue;
       const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-      const latSevLenient = latSevRaw * 0.5; // same latency/loss balance as tepFetchAllNetworkHealth
+      const latSevLenient = latSevRaw * 0.5 * TEP_LAT_SEV_RELIEF; // same latency/loss balance as tepFetchAllNetworkHealth
       const latencyScore = (1 - latSevLenient) * 100;
       const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
       const score = Math.max(0, Math.round(latencyScore - lossPenalty));
@@ -30548,7 +30898,7 @@
         const avgLoss = loss ? loss.value : null;
         if (avgLat == null && avgLoss == null) continue;
         const latSevRaw = avgLat != null ? tepIspLatencySeverity(avgLat) : 0;
-        const latSevLenient = latSevRaw * 0.5; // same latency/loss balance as tepFetchAllNetworkHealth
+        const latSevLenient = latSevRaw * 0.5 * TEP_LAT_SEV_RELIEF; // same latency/loss balance as tepFetchAllNetworkHealth
         const latencyScore = (1 - latSevLenient) * 100;
         const lossPenalty = avgLoss != null ? Math.min(100, avgLoss * 2.5) : 0;
         const score = Math.max(0, Math.round(latencyScore - lossPenalty));
@@ -34932,6 +35282,39 @@
     if (ms <= mid) return 0.5 * ((ms - floor) / (mid - floor));
     return 0.5 + 0.5 * ((ms - mid) / (max - mid));
   }
+  /** Extra relief on how hard LATENCY pulls a health score down, applied on top
+   *  of whatever per-widget leniency each score already uses (0.8 on the ISP
+   *  tiles, 0.5 on the network-health scores, and so on - those ratios were
+   *  tuned against each other and are preserved by multiplying rather than
+   *  replacing). 0.75 = 25% relief. LOSS is deliberately untouched: a lossy
+   *  path is broken in a way a slow one is not.
+   *  CONFIRMED via user request to be "a little nicer" on latency only. */
+  const TEP_LAT_SEV_RELIEF = 0.75;
+  /** Latency forgiven outright when the two ends are on DIFFERENT continents.
+   *  An ocean crossing costs 60-150ms before anything has gone wrong - Dublin
+   *  to Virginia is ~5,500km, which is ~77ms at the speed of light in fibre
+   *  even on a perfect path. Scoring that against the same curve as a
+   *  same-continent hop marks every intercontinental link amber for doing
+   *  exactly what physics requires. Subtracted from the latency BEFORE the
+   *  severity curve, so what is left is the part of the delay that is actually
+   *  the network's fault. CONFIRMED via user request.
+   *
+   *  Only ever applied when BOTH ends are known - "known to be in different
+   *  continents" is the test, and an unknown end is not grounds for forgiveness. */
+  const TEP_XCONT_RELIEF_MS = 100;
+  function tepCrossContinentReliefMs(srcLat, srcLng, dstLat, dstLng) {
+    if (!Number.isFinite(srcLat) || !Number.isFinite(srcLng)
+      || !Number.isFinite(dstLat) || !Number.isFinite(dstLng)) return 0;
+    const a = tepContinentAt(srcLat, srcLng), b = tepContinentAt(dstLat, dstLng);
+    if (!a || !b || a.key === b.key) return 0;
+    return TEP_XCONT_RELIEF_MS;
+  }
+  /** Latency as a SCORE should read it. Never used for anything displayed -
+   *  the cards keep showing the real measurement. */
+  function tepScoredLatencyMs(ms, reliefMs) {
+    if (!Number.isFinite(ms)) return ms;
+    return Math.max(0, ms - (reliefMs || 0));
+  }
   // Any packet loss degrades health: >0 starts at amber, ≥10% → full red.
   function tepLossSeverity(loss) {
     if (!Number.isFinite(loss) || loss <= 0) return 0;
@@ -36472,9 +36855,10 @@
    *  resolved dest info or null. One heavy path-vis call per test, cached. */
   async function tepResolveTestDestination(testId, isEndpoint, isOneWayNet, endpointRound) {
     const key = String(testId);
-    if (dashMapTestDestCache.has(key)) return dashMapTestDestCache.get(key);
+    const ckey = tepTestDestKey(testId);
+    if (dashMapTestDestCache.has(ckey)) return dashMapTestDestCache.get(ckey);
     // Record WHY a pin can't be placed (surfaced on screen by the click handler).
-    const fail = (reason) => { dashMapTestDestFail.set(key, reason); dashMapTestDestCache.set(key, null); log(`Test destination: ${key} — ${reason}`, 'tep-log-info'); return null; };
+    const fail = (reason) => { dashMapTestDestFail.set(ckey, reason); dashMapTestDestCache.set(ckey, null); log(`Test destination: ${key} — ${reason}`, 'tep-log-info'); return null; };
     const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
     const headers = aid ? { 'x-thousandeyes-aid': aid } : {};
     const enc = encodeURIComponent;
@@ -36664,6 +37048,21 @@
     const destByAgent = new Map();   // String agentId -> destInfo (confirmed city/state)
     const destsByKey = new Map();    // stable key -> destInfo (unique pins)
     const estimatedAgents = new Set(); // String agentId -> dest didn't resolve
+    // Pass 2 (see below) retries whatever pass 1 could not place, using the
+    // rest of the payload. Collected rather than resolved inline because a
+    // sibling agent that resolves the SAME target may not have been reached yet
+    // when this one fails - the whole point is to use the finished picture.
+    const unplaced = [];             // { aId, agentName, destN, route, destIdx, rttMs }
+    const confirmedByIp = new Map(); // target IP -> [{ lat, lng }] confirmed this pass
+    const agentGeoCache = new Map(); // String agentId -> { lat, lng } | null
+    const agentGeo = (aid) => {
+      const k = String(aid);
+      if (agentGeoCache.has(k)) return agentGeoCache.get(k);
+      const loc = sourceLocByAgent.get(k);
+      const g = loc ? tepHopGeo(loc) : null;
+      agentGeoCache.set(k, g || null);
+      return g || null;
+    };
     for (const route of routes) {
       if (!route || route.source == null || !Array.isArray(route.route) || !route.route.length) continue;
       const srcN = nodes[route.source];
@@ -36674,18 +37073,19 @@
       // for the last hop whose target node is flagged destination:true (routes
       // can have trailing non-responding hops past the real target, so the last
       // link isn't reliable), then fall back to the last-link target.
-      let destN = null;
+      let destN = null, destIdx = null;
       for (let i = route.route.length - 1; i >= 0; i--) {
         const hop = route.route[i];
         const link = hop ? links[hop.link] : null;
         const node = link && link.target != null ? nodes[link.target] : null;
-        if (node && node.destination === true) { destN = node; break; }
+        if (node && node.destination === true) { destN = node; destIdx = i; break; }
       }
       if (!destN) {
         const lastHop = route.route[route.route.length - 1];
         const lastLink = lastHop ? links[lastHop.link] : null;
         const idx = lastLink && lastLink.target != null ? lastLink.target : route.target;
         destN = idx != null ? nodes[idx] : null;
+        if (destN) destIdx = route.route.length - 1;
       }
       if (!destN) { if (!destByAgent.has(aId)) estimatedAgents.add(aId); continue; }
       // The authoritative per-agent destination location is the "Reported by
@@ -36713,7 +37113,13 @@
       const cloudGeo = tepCloudRegionGeo(destN.cloudInfo);
       const geo = (locName ? tepHopGeo(locName) : null) || cloudGeo;
       log(`Test destination: ${key} — "${agentName}" (id ${aId}) → ${destN.publicIpAddress || destN.ipAddress || '?'} · reported="${reportedLoc || ''}" node.location="${destN.location || ''}" → ${geo ? locName + ' @ ' + geo.lat.toFixed(2) + ',' + geo.lng.toFixed(2) : 'UNRESOLVED (' + (locName || 'no location') + ')'}`, geo ? 'tep-log-ok' : 'tep-log-info');
-      if (!geo) { if (!destByAgent.has(aId)) estimatedAgents.add(aId); continue; }
+      if (!geo) {
+        if (!destByAgent.has(aId)) {
+          estimatedAgents.add(aId);
+          unplaced.push({ aId, agentName, destN, route, destIdx, rttMs: tepRouteRttMs(route) });
+        }
+        continue;
+      }
       const dnForInfo = {
         location: locName || (cloudGeo ? cloudGeo.name : ''),
         asName: destN.asName, asn: destN.asn,
@@ -36728,7 +37134,18 @@
       if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
       destByAgent.set(aId, dinfo);
       estimatedAgents.delete(aId);   // a confirmed hit wins over any earlier miss
+      // Record it for the two fallbacks below: siblings in this same payload,
+      // and any future round or test that meets this IP again.
+      const destIp = destN.publicIpAddress || destN.ipAddress || '';
+      if (destIp) {
+        let seenAt = confirmedByIp.get(destIp);
+        if (!seenAt) { seenAt = []; confirmedByIp.set(destIp, seenAt); }
+        seenAt.push({ lat: geo.lat, lng: geo.lng, location: dnForInfo.location || '' });
+        tepDestGeoRemember(destIp, geo, locName ? 'confirmed' : 'region', dnForInfo.location);
+      }
     }
+    tepResolveUnplacedDests({ key, unplaced, confirmedByIp, agentGeo, nodes, links,
+      destByAgent, destsByKey, estimatedAgents, mkDestInfo });
     // Fallback for payloads where routes gave nothing: use every
     // destination:true node as a pin (agents will estimate to the closest).
     if (!destsByKey.size) {
@@ -36761,7 +37178,7 @@
       if (destsByKey.size) log(`Test destination: ${key} — no destination geolocated; pinned to ${destsByKey.size} source-agent country centroid(s) as a last resort`, 'tep-log-info');
     }
     if (!destsByKey.size) return fail('Found the trace, but no destination location resolved to a known city/state — nothing to pin');
-    dashMapTestDestFail.delete(key);   // success — clear any prior reason
+    dashMapTestDestFail.delete(ckey);   // success — clear any prior reason
     const dests = Array.from(destsByKey.values());
     const primary = dests[0];
     // Per-source-agent KEY-HOP analysis from this SAME graph payload — no extra
@@ -36843,7 +37260,7 @@
       ispByAgent,                // UPPER agentName -> its access ISP (for the trace ISP stack)
       pathNodesByAgent,
     };
-    dashMapTestDestCache.set(key, info);
+    dashMapTestDestCache.set(ckey, info);
     log(`Test destination: ${key} → ${dests.length} destination(s) · ${destByAgent.size} mapped + ${estimatedAgents.size} estimated of ${sourceNames.size} agent(s) · ${hopTotal} bottleneck(s)`, 'tep-log-ok');
     return info;
   }
