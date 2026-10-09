@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.21';
+  const TEP_VERSION = '4.22';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -25205,6 +25205,22 @@
     return tepDestGeoStore().get(String(ip)) || null;
   }
 
+  /** Where a destination node sits when the node IS an agent - the far end of
+   *  an Agent-to-Agent test. TE's own agent roster already states this, so it
+   *  needs no inference and beats anything the path graph can be made to say.
+   *  Returns { lat, lng, name } or null. */
+  function tepDestAgentGeo(n) {
+    if (!n || n.agentId == null) return null;
+    const g = liveTestAgentOwnCoords(n.agentId);
+    if (!g || !Number.isFinite(g.lat) || !Number.isFinite(g.lng)) return null;
+    let label = '';
+    try {
+      const ent = Array.isArray(agents) ? agents.find((x) => x && String(x.agentId) === String(n.agentId)) : null;
+      label = (ent && ent.location) || '';
+    } catch (_) { /* */ }
+    return { lat: g.lat, lng: g.lng, name: label || n.agent || '' };
+  }
+
   /** Second pass over the destinations pass 1 could not place.
    *
    *  Runs once the whole payload has been walked, deliberately: the strongest
@@ -25262,7 +25278,13 @@
       for (const c of cands) {
         const f = tepGeoFit(src && src.lat, src && src.lng, c.geo.lat, c.geo.lng, u.rttMs);
         if (!f.ok) { rejected++; continue; }
-        if (f.fit != null && f.fit < TEP_GEO_FIT_MIN) { rejected++; continue; }
+        // fit null means there was nothing to check against - no agent
+        // coordinates, or no usable round trip. Strong evidence (a sibling that
+        // resolved the same IP, a cloud region from the target's own provider,
+        // a same-AS hop) can stand on its own. A bare hop location cannot: an
+        // unverifiable guess from whatever router happened to be nearby is
+        // exactly what this gate is here to stop.
+        if (f.fit == null ? c.rank >= 3 : f.fit < TEP_GEO_FIT_MIN) { rejected++; continue; }
         keep.push(Object.assign({}, c, { fit: f.fit, km: f.km }));
       }
       if (!keep.length) {
@@ -37110,8 +37132,17 @@
       const reportedLoc = srcLoc && srcLoc.locationName ? srcLoc.locationName : null;
       const locName = reportedLoc || destN.location || null;
       // No city or state on a cloud node is normal - fall back to its region.
+      // An Agent-to-Agent test ENDS at another agent, and TE's roster already
+      // says where that agent is - no inference needed. Without this, the
+      // BIDIRECTIONAL A2A graph resolved only the REVERSE direction, whose
+      // destination is the near-end agent and does carry a location. The
+      // forward direction found nothing, fell through to "estimate to the
+      // nearest detected destination" - and the nearest one was that very same
+      // near-end pin. The agent ended up drawing a 172ms flow to itself.
+      // CONFIRMED via user report (Madrid → AWS West, pinned on Madrid).
+      const destAgentGeo = tepDestAgentGeo(destN);
       const cloudGeo = tepCloudRegionGeo(destN.cloudInfo);
-      const geo = (locName ? tepHopGeo(locName) : null) || cloudGeo;
+      const geo = (locName ? tepHopGeo(locName) : null) || destAgentGeo || cloudGeo;
       log(`Test destination: ${key} — "${agentName}" (id ${aId}) → ${destN.publicIpAddress || destN.ipAddress || '?'} · reported="${reportedLoc || ''}" node.location="${destN.location || ''}" → ${geo ? locName + ' @ ' + geo.lat.toFixed(2) + ',' + geo.lng.toFixed(2) : 'UNRESOLVED (' + (locName || 'no location') + ')'}`, geo ? 'tep-log-ok' : 'tep-log-info');
       if (!geo) {
         if (!destByAgent.has(aId)) {
@@ -37121,7 +37152,7 @@
         continue;
       }
       const dnForInfo = {
-        location: locName || (cloudGeo ? cloudGeo.name : ''),
+        location: locName || (destAgentGeo ? destAgentGeo.name : '') || (cloudGeo ? cloudGeo.name : ''),
         asName: destN.asName, asn: destN.asn,
         publicIpAddress: destN.publicIpAddress, ipAddress: destN.ipAddress,
         geonameId: (srcLoc && srcLoc.geonameId != null) ? srcLoc.geonameId : destN.geonameId,
@@ -37129,7 +37160,7 @@
       const base = mkDestInfo(dnForInfo, geo);
       // A region is a quadrant of a continent, not an address - never let it
       // read as a confirmed location.
-      if (!locName && cloudGeo) base._cloudRegion = true;
+      if (!locName && !destAgentGeo && cloudGeo) base._cloudRegion = true;
       const dinfo = destsByKey.get(base.key) || base;
       if (!destsByKey.has(dinfo.key)) destsByKey.set(dinfo.key, dinfo);
       destByAgent.set(aId, dinfo);
