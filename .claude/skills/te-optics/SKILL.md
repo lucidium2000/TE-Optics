@@ -4,13 +4,14 @@ description: >-
   Working playbook for the TE-Optics project — a ThousandEyes browser panel
   delivered as a bookmarklet (repo at /Users/chunt2/TE-Optics, source in
   src/panel.js). Use this whenever the task touches TE-Optics in any way:
-  editing src/panel.js, the panel.js loader, panel.min.js, index.html or
+  editing src/panel.js, the panel.js loader, panel.build.js/panel.min.js, index.html or
   mirror.html; anything about "the panel", "the bookmarklet", the ThousandEyes
   dashboard map / trace overlay / device topology / SNMP devices / endpoint
   agents view; bumping TEP_VERSION; building, committing, shipping, or flushing
   the CDN; or any perf/geocoding/UX work on the map. It captures the
-  three-file build architecture, the exact ship-and-flush procedure (with the
-  jsDelivr staleness gotcha), the conventions that will bite you, the security
+  four-file build architecture, the exact ship-and-flush procedure (with the
+  jsDelivr auto-minify trap that has taken the panel down), the conventions
+  that will bite you, the security
   rule for user-supplied curl captures, and a map of the codebase. Reach for it
   even when the user doesn't say "TE-Optics" explicitly but is clearly in this
   repo or talking about this panel — the build/ship rules are easy to get wrong
@@ -32,23 +33,32 @@ The user (repo owner: `lucidium2000` on GitHub) ships small, frequent, versioned
 changes and tests them live in the real TE dashboard via the bookmarklet — so a
 change isn't "done" until it's built, pushed, **and the CDN is flushed**.
 
-## The one rule that matters most: three files, one purpose
+## The one rule that matters most: four files, one purpose
 
 ```
-src/panel.js   ← THE SOURCE OF TRUTH. Edit ONLY this. ~30k lines, all logic + CSS.
-panel.min.js   ← generated build (esbuild, whitespace-only strip). Never hand-edit.
-panel.js       ← tiny loader shim (~2 KB). Injects panel.min.js. Never put logic here.
+src/panel.js    ← THE SOURCE OF TRUTH. Edit ONLY this. ~37k lines, all logic + CSS.
+panel.build.js  ← generated build, THE ONE THE LOADER FETCHES. Never hand-edit.
+panel.min.js    ← the SAME bytes under the old name, kept as the loader's fallback.
+panel.js        ← the loader shim (~40 KB). Injects the build. Never put logic here.
 ```
+
+**`npm run build` writes `panel.build.js` and `panel.min.js` with identical
+bytes.** Commit both. The duplication is not cosmetic — see the trap below.
 
 - **`src/panel.js`** is the commented source. Every code/CSS/behavior change goes here.
-- **`panel.min.js`** is produced by `npm run build` (`scripts/build-min.js` → esbuild
+- **`panel.build.js` / `panel.min.js`** are produced by `npm run build` (`scripts/build-min.js` → esbuild
   `minifyWhitespace:true`, `minifyIdentifiers:false`, `minifySyntax:false`,
   `legalComments:'none'`, license banner preserved verbatim). It's semantically
   identical to the source, just smaller (~-33%). **Regenerate it after every
   source change; never edit it by hand.**
 - **`panel.js`** exists ONLY because everyone's installed bookmark already points
-  at the `…/panel.js` URL. It's a fixed loader that injects
-  `panel.min.js?<Date.now()>`. Leave it alone unless the loader itself changes.
+  at the `…/panel.js` URL. It injects the build with a `?<Date.now()>` cache
+  buster, trying `@main/panel.build.js` first and falling back to
+  `@main/panel.min.js`. Leave it alone unless the loader itself changes.
+  **The bookmarklet URL can never change** — too many people have it installed —
+  but the loader's CONTENTS are freely updatable, and that is the lever for any
+  delivery change. Changing how the panel is fetched never requires anyone to
+  reinstall anything.
 
 The installer bookmarklets in `index.html` / `mirror.html` also point at
 `…/panel.js`, so old and new installs share one canonical URL and always pull the
@@ -65,20 +75,28 @@ change will be on GitHub but users keep getting the old code.
    `const TEP_VERSION = '3.90';`) and update the displayed version in
    `index.html`: `<span class="install-version" aria-label="Build">3.90</span>`.
    (`mirror.html` shows the build number live — no manual edit there.)
-3. `npm run build` (regenerates `panel.min.js`).
-4. Syntax-check all three: `node -c src/panel.js && node -c panel.min.js && node -c panel.js`.
-   (The min file is one giant line, so `node -c` is your real correctness gate —
+3. `npm run build` (regenerates `panel.build.js` AND `panel.min.js`).
+4. Syntax-check all four: `node -c src/panel.js && node -c panel.build.js && node -c panel.min.js && node -c panel.js`.
+   (The build is one giant line, so `node -c` is your real correctness gate —
    there's no linter step.)
-5. Commit `src/panel.js`, `panel.min.js`, `index.html` (and `mirror.html` if touched).
-   End commit messages with the Co-Authored-By trailer the repo uses.
-6. `git push origin main` (the build `panel.min.js` is served from `@main`).
-7. **Flush the CDN — the build:**
+5. Commit `src/panel.js`, `panel.build.js`, `panel.min.js`, `index.html` (and
+   `mirror.html` if touched). End commit messages with the Co-Authored-By
+   trailer the repo uses.
+6. `git push origin main` (the build is served from `@main`).
+7. **Flush the CDN — the build. Purge BOTH names:**
    ```bash
-   curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js" -o /dev/null -w "%{http_code}\n"
+   curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.build.js" -o /dev/null -w "%{http_code}\n"
+   curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js"   -o /dev/null -w "%{http_code}\n"
    ```
-8. **Verify the rollover** by fetching and confirming the new version is served:
+8. **Verify the rollover** on the name the loader actually fetches:
    ```bash
-   curl -s "https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js" | grep -o 'TEP_VERSION="3.90"' | head -1
+   curl -s "https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.build.js" | grep -o 'TEP_VERSION="3.90"' | head -1
+   ```
+   Check the SIZE too, not just the version string — a few hundred KB where you
+   expected ~1.4 MB means jsDelivr served something it generated rather than
+   your build (see the trap below).
+   ```bash
+   curl -s -o /tmp/b "https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.build.js"; wc -c < /tmp/b   # vs: wc -c < panel.build.js
    ```
    Seeing `TEP_VERSION="3.90"` in the served file is the proof. (esbuild converts
    the source's single quotes to double quotes, so grep for `TEP_VERSION="X.YZ"`.)
@@ -86,8 +104,10 @@ change will be on GitHub but users keep getting the old code.
    schedule, and a file purge does NOT force it — so `@main` can serve the
    previous commit's build for a while after a push. This is a *version-lag*, not
    a broken deploy; the panel still loads. If a release must go live instantly,
-   pin/verify via the pushed SHA (`@<sha>/panel.min.js`, immutable) and know that
-   `@main` will catch up.
+   pin/verify via the pushed SHA (`@<sha>/panel.build.js`, immutable) and know
+   that `@main` will catch up. That same stale-metadata machinery is what caused
+   the 13 Oct 2026 outage — a *version*-lag is harmless, but when it convinces
+   jsDelivr a file is missing it stops being harmless. See the trap below.
 9. **Only if you changed the LOADER** (`panel.js`) or the bookmarklet: also mirror
    the loader onto the `refs` branch and purge it — see the delivery model below.
 
@@ -103,23 +123,81 @@ bookmarks still work — do not delete it.
 
 The chain, end to end:
 - `@refs/heads/main/panel.js` → ref `refs`, file `heads/main/panel.js` → the loader.
-- The loader injects **`@main/panel.min.js`** → main-branch root `panel.min.js` → the build.
+- The loader injects **`@main/panel.build.js`** → main-branch root `panel.build.js`
+  → the build. `@main/panel.min.js` is its fallback only.
 
 Consequences:
-- **`panel.min.js` lives on `main`** and is delivered via `@main` (a *real* file,
-  so jsDelivr serves it directly). The normal ship steps above cover it.
-- **NEVER point anything at `@refs/heads/main/panel.min.js`.** It parses to
-  `heads/main/panel.min.js` on the `refs` branch, and when that's absent jsDelivr
-  *auto-minifies* `heads/main/panel.js` into a wrong ~500-byte stub. That trap is
-  why the loader pulls from `@main`, not `@refs/heads/main`.
+- **The build lives on `main`** under both names and is delivered via `@main`
+  (real files, so jsDelivr serves them directly). The ship steps above cover both.
+- **THE AUTO-MINIFY TRAP — the single worst failure this project has had.**
+  When jsDelivr is asked for an `X.min.js` it believes is absent, it does not
+  404. It runs Terser over `X.js` and serves THAT, with a banner saying so:
+
+  ```
+  /**
+   * Minified by jsDelivr using Terser v5.48.0.
+   * Original file: /gh/lucidium2000/TE-Optics@main/panel.js
+   */
+  ```
+
+  Since `panel.js` is the LOADER, the result is a bookmarklet that injects a
+  minified copy of itself. Nothing boots, and a purge does not fix it.
+
+  It bit twice:
+  - `@refs/heads/main/panel.min.js` parses to `heads/main/panel.min.js` on the
+    `refs` branch, which does not exist → a wrong ~500-byte stub. **Never point
+    anything there.**
+  - **13 Oct 2026 — a live outage on `@main/panel.min.js` itself.** jsDelivr's
+    *metadata* for the branch went a month stale (its listing reported
+    `panel.js` at 1872 bytes and `panel.min.js` at 1321235 — the sizes from
+    commit `6824a3b`, v4.06, 11 Sep) and it synthesised the file. The file was
+    never missing: `git ls-tree origin/main` had it, and `@<sha>/panel.min.js`
+    served it perfectly throughout.
+
+  **This is why the loader asks for `panel.build.js` first.** A name that is not
+  `<something>.min.js` cannot be synthesised from anything — jsDelivr either
+  serves the real file or 404s, and a 404 falls through to the next source.
+  Never make the primary delivery name end in `.min.js` again.
+
+  **Diagnosing it:** content and metadata are different layers and fail
+  independently. `@main/index.html` and `@main/src/panel.js` kept serving the
+  CURRENT files while `panel.min.js` was poisoned, so "other files look fine"
+  proves nothing. Compare jsDelivr's own listing against git:
+
+  ```bash
+  curl -s "https://data.jsdelivr.com/v1/packages/gh/lucidium2000/TE-Optics@main?structure=flat" \
+    | python3 -c "import json,sys; [print(f['name'], f['size']) for f in json.load(sys.stdin)['files'] if 'panel' in f['name']]"
+  git ls-tree -l origin/main panel.js panel.build.js panel.min.js
+  ```
+
+  Sizes that match an OLD commit mean the metadata is stale. A SHA-pinned URL
+  (`@<sha>/…`, immutable) is the ground truth and the escape hatch.
 - The **loader rarely changes.** When it does, update it in BOTH places and purge
-  both: `main`'s `panel.js` AND the `refs` branch's `heads/main/panel.js`
-  (`git checkout refs`, copy `panel.js` → `heads/main/panel.js`, commit, push,
-  `git checkout main`), then
-  `curl -s https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js`.
+  both: `main`'s `panel.js` AND the `refs` branch's `heads/main/panel.js`.
+
+  **Mirror with `git show`, NEVER with `cp`.** `git checkout refs` replaces the
+  working tree with the `refs` branch, which has its OWN 1,872-byte root
+  `panel.js` stub. `cp panel.js heads/main/panel.js` therefore copies that stub
+  over the real loader and pushes it to the URL every bookmarklet fetches —
+  which has already broken the live URL once.
+
+  ```bash
+  git checkout refs
+  git show main:panel.js > heads/main/panel.js        # NOT cp
+  git show main:panel.js > /tmp/lm; cmp -s heads/main/panel.js /tmp/lm && echo "identical? YES" || echo "identical? NO - STOP"
+  git diff --stat                                      # expect a small edit, NOT "3 insertions, 291 deletions"
+  git add heads/main/panel.js && git commit && git push origin refs
+  git checkout main
+  curl -s "https://purge.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js" -o /dev/null -w "%{http_code}\n"
+  ```
+
+  The `identical?` check and the `--stat` line are the two guards that catch a
+  bad mirror before it ships. Run both, every time. A purge of this URL can
+  need a second attempt — the first often returns `x-cache: HIT` on one tier.
 - Verify the loader with:
   `curl -s https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@refs/heads/main/panel.js`
-  — expect HTTP 200, `application/javascript`, and body injecting `@main/panel.min.js`.
+  — expect HTTP 200, `application/javascript`, a body injecting
+  `@main/panel.build.js`, and a byte count matching `wc -c < panel.js`.
 
 ## Conventions that will bite you if you don't know them
 
@@ -138,7 +216,7 @@ Consequences:
   `TEP_TRACE_LITE_N`, `TEP_MAP_DENSE_N`, `TEP_TRACE_HOVER_DELAY_MS`,
   `CLUSTER_MI`, `MAX_ENDPOINT_AGENTS`). When you add a magic number that a user
   might want to tune, make it a named const with a one-line rationale.
-- **No test suite / linter.** `node -c` on all three files is the check. For UI
+- **No test suite / linter.** `node -c` on all four files is the check. For UI
   correctness the user tests live in the real dashboard after you ship, or you
   build a throwaway harness (extract funcs + CSS, inject captured JSON, serve on
   localhost, screenshot) for rendering-heavy work.
