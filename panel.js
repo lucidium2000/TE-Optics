@@ -48,11 +48,30 @@
   // once, automatically, which is exactly the thing that makes it work when a
   // user clicks the bookmarklet a second time. CONFIRMED via user report
   // ("getting this a lot today, sometimes it works").
+  // Where the build is fetched from, in order of preference.
+  //
+  // The first name is deliberately NOT "*.min.js". jsDelivr generates a missing
+  // X.min.js by running Terser over X.js, and on 13 Oct 2026 its file metadata
+  // for the main branch went a month stale: it decided panel.min.js was absent
+  // and served a minified copy of THIS LOADER in its place. Every bookmarklet
+  // then injected a script that was itself the loader, and nothing booted.
+  // jsDelivr's CONTENT layer was fine throughout — @main/src/panel.js served
+  // the current file the whole time — so only the synthesised name was poisoned.
+  // "panel.build.js" cannot be synthesised from anything: it either serves the
+  // real build or 404s, and a 404 falls through to the next entry here.
+  //
+  // The retry now also changes URL rather than asking the same one twice, so a
+  // single bad path degrades to a slower load instead of an outage.
+  var SOURCES = [
+    'https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.build.js',
+    'https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js'
+  ];
   var tries = 0;
   function inject() {
+    var url = SOURCES[tries < SOURCES.length ? tries : SOURCES.length - 1];
     tries++;
     var s = D.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/gh/lucidium2000/TE-Optics@main/panel.min.js?' + Date.now();
+    s.src = url + '?' + Date.now();
     s.onload = function () { loaded = true; paintStatus(); };
     s.onerror = function () { again('Could not reach the CDN'); };
     (D.body || D.documentElement).appendChild(s);
