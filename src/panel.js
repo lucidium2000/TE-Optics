@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.22';
+  const TEP_VERSION = '4.23';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -33133,34 +33133,48 @@
     dashMapEntSaasScoreByName = saasByName;
     dashMapEpSaasScoreByAgentId = epSaasByAgent || new Map();
     dashMapEntNetScoreByName = entNetByAgent || new Map();
-    // ENDPOINT_TEST_APPLICATION_SCORE (what epNetByAgent comes from, despite
-    // its name — see tepFetchAllEndpointAgentNetScores) doesn't reliably
-    // cover every agent that genuinely has Network test data — CONFIRMED
-    // via user screenshot: an agent whose own Tests popover showed real
-    // NETWORK rows (100% latency/loss, from the exact per-test source
-    // Network Health uses) still had no "Net" badge on its hover card at
-    // all, because that one blended metric simply had nothing for it. Fill
-    // the gap from the per-test latency/loss breakdown instead of leaving
-    // it blank — same tepNetworkTestScore formula every other Network
-    // number in this file uses, so it's at least self-consistent with what
-    // the popover for that same agent already shows. The "official"
-    // blended metric still wins wherever it actually has data; this only
-    // fills agents it's missing entirely.
-    const epNet = new Map(epNetByAgent || []);
-    if (epNetLatByTest || epNetLossByTest) {
-      const fallbackAgentIds = new Set([
-        ...(epNetLatByTest ? epNetLatByTest.byAgent.keys() : []),
-        ...(epNetLossByTest ? epNetLossByTest.byAgent.keys() : []),
-      ]);
-      for (const agentId of fallbackAgentIds) {
-        if (epNet.has(agentId)) continue;
-        const latRows = epNetLatByTest && epNetLatByTest.byAgent.get(agentId);
-        const lossRows = epNetLossByTest && epNetLossByTest.byAgent.get(agentId);
-        const avgLat = latRows && latRows.length ? latRows.reduce((s, r) => s + r.value, 0) / latRows.length : null;
-        const avgLoss = lossRows && lossRows.length ? lossRows.reduce((s, r) => s + r.value, 0) / lossRows.length : null;
-        if (avgLat == null && avgLoss == null) continue;
-        epNet.set(agentId, tepNetworkTestScore(avgLat, avgLoss).score);
+    // PER-TEST FIRST, blended metric only as the fallback.
+    //
+    // epNetByAgent is ENDPOINT_TEST_APPLICATION_SCORE despite being used as a
+    // network score (see tepFetchAllEndpointAgentNetScores). It emits a flat 0
+    // for agents it has nothing for, and 0 is indistinguishable from "totally
+    // broken" — so the hover card read "Net 0.0%" for an agent whose own
+    // NETWORK list, printed directly underneath it, was 92-99%.
+    // CONFIRMED via user screenshot. The old precedence let that 0 win,
+    // because the gap-fill below was guarded by `has(agentId)` and a stored 0
+    // is present, not missing.
+    //
+    // The per-test latency/loss breakdown is the source the Tests popover and
+    // Network Health already use, scored through the same tepNetworkTestScore
+    // as every other Network number in this file — so preferring it makes the
+    // card agree with the list it sits above instead of contradicting it. The
+    // blended metric stays on for agents the breakdown doesn't cover, so no
+    // agent loses a "Net" badge it used to have.
+    const epNet = new Map();
+    const epNetBlended = epNetByAgent || new Map();
+    const epNetIds = new Set(epNetBlended.keys());
+    if (epNetLatByTest) for (const k of epNetLatByTest.byAgent.keys()) epNetIds.add(k);
+    if (epNetLossByTest) for (const k of epNetLossByTest.byAgent.keys()) epNetIds.add(k);
+    let epNetFromTests = 0, epNetDisagreed = 0;
+    for (const agentId of epNetIds) {
+      const latRows = epNetLatByTest && epNetLatByTest.byAgent.get(agentId);
+      const lossRows = epNetLossByTest && epNetLossByTest.byAgent.get(agentId);
+      const avgLat = latRows && latRows.length ? latRows.reduce((s, r) => s + r.value, 0) / latRows.length : null;
+      const avgLoss = lossRows && lossRows.length ? lossRows.reduce((s, r) => s + r.value, 0) / lossRows.length : null;
+      const perTest = (avgLat == null && avgLoss == null) ? null : tepNetworkTestScore(avgLat, avgLoss).score;
+      const blended = epNetBlended.has(agentId) ? epNetBlended.get(agentId) : null;
+      if (perTest != null) {
+        epNet.set(agentId, perTest);
+        epNetFromTests++;
+        // Worth knowing about: a large gap means the two sources genuinely
+        // disagree, not that one is slightly staler than the other.
+        if (blended != null && Math.abs(blended - perTest) >= 25) epNetDisagreed++;
+      } else if (blended != null) {
+        epNet.set(agentId, blended);
       }
+    }
+    if (epNetDisagreed) {
+      log(`Endpoint network score: ${epNetDisagreed} of ${epNetFromTests} agent(s) differ by 25+ points between the per-test breakdown (used) and ENDPOINT_TEST_APPLICATION_SCORE (ignored)`, 'tep-log-info');
     }
     dashMapEpNetScoreByAgentId = epNet;
   }
