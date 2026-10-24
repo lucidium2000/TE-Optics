@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.23';
+  const TEP_VERSION = '4.24';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -5482,6 +5482,11 @@
   // display:none); if the two drift apart, either the element vanishes
   // before its transition visually finishes, or sits idle after finishing.
   const TEP_TOGGLE_ANIM_MS = 300;
+  // How long the hand-off from the loading skeleton to the real panel takes
+  // when the skeleton is already settled in place. Shorter than a slide on
+  // purpose: a dissolve between two things in the SAME position reads as
+  // instant-but-soft, and anything longer starts to feel like a wait of its own.
+  const TEP_BOOT_FADE_MS = 190;
   // Also exposed like _tepToggleFullscreenMap above, for the same reason —
   // the toggle button's own click handler below uses these directly, but a
   // fresh bookmarklet re-click (a separate script execution) can only reach
@@ -6715,6 +6720,7 @@
   const bootEl = document.getElementById('tep-boot');
   let bootOffsetPx = null;
   let bootMs = 0;
+  let bootSettled = false;
   if (bootEl) {
     const bootW = bootEl.getBoundingClientRect().width || panelWidth;
     let tx = 0;
@@ -6729,18 +6735,49 @@
     }
     bootOffsetPx = Math.max(0, Math.min(tx, bootW));
     bootMs = Math.round(TEP_TOGGLE_ANIM_MS * (bootOffsetPx / bootW));
-    // Dropped NOW rather than left to the shim's own observer-and-fade: the
-    // panel sits one z-index above the skeleton, so if the two ever disagree on
-    // width (the shim only clamps a minimum, while applyWidth also clamps to
-    // the viewport) the skeleton's edge would show out from under the panel for
-    // the whole fade. The shim's observer then no-ops on an already-detached
-    // node, which it handles.
-    bootEl.remove();
-    const bootCss = document.getElementById('tep-boot-css');
-    if (bootCss) bootCss.remove();
+    // SETTLED: the skeleton finished its slide long before the build arrived, so
+    // something is already sitting in that exact spot, fully in view. Sliding
+    // the panel in from the right now replays a journey the user has already
+    // watched — the "it swipes in twice" complaint. Nor should it hard-cut: the
+    // skeleton vanishing and the panel appearing on the same frame is the
+    // clunk. Cross-fade instead. CONFIRMED via user request ("if the first
+    // portion loaded fully, then the main one will just fade in").
+    bootSettled = bootOffsetPx <= bootW * 0.02;
+    if (bootSettled) {
+      // Both are on screen together for the length of the dissolve, so the
+      // widths have to agree or the skeleton's edge shows past the panel (the
+      // shim clamps only a minimum; applyWidth also clamps to the viewport).
+      // Matching it for the fade costs nothing and removes the seam.
+      bootEl.style.width = (root.getBoundingClientRect().width || panelWidth) + 'px';
+      bootEl.style.transition = `opacity ${TEP_BOOT_FADE_MS}ms ease`;
+      // One frame later, so the starting opacity paints before it changes.
+      requestAnimationFrame(() => {
+        bootEl.style.opacity = '0';
+        setTimeout(() => {
+          try { bootEl.remove(); } catch (_) { /* */ }
+          const cssNow = document.getElementById('tep-boot-css');
+          if (cssNow) cssNow.remove();
+        }, TEP_BOOT_FADE_MS + 40);
+      });
+    } else {
+      // Dropped NOW rather than left to the shim's own observer-and-fade: the
+      // panel sits one z-index above the skeleton, so if the two ever disagree
+      // on width the skeleton's edge would show out from under the panel for
+      // the whole fade. The shim's observer then no-ops on an already-detached
+      // node, which it handles.
+      bootEl.remove();
+      const bootCss = document.getElementById('tep-boot-css');
+      if (bootCss) bootCss.remove();
+    }
   }
   if (bootOffsetPx == null) {
     root.classList.add('tep-offscreen');
+  } else if (bootSettled) {
+    // No movement at all — the panel materialises exactly where the skeleton
+    // already is, so the two read as one object changing state rather than two
+    // objects swapping places.
+    root.style.opacity = '0';
+    root.style.transition = `opacity ${TEP_BOOT_FADE_MS}ms ease`;
   } else if (bootMs > 0) {
     // Inline, because .tep-offscreen is a fixed translateX(100%) and would jump
     // the panel backwards to the far edge before sliding. The shortened duration
@@ -6761,7 +6798,12 @@
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       root.classList.remove('tep-offscreen');
-      if (bootMs > 0) {
+      if (bootSettled) {
+        root.style.opacity = '';
+        // Hand the stylesheet's own transition back (it also covers width) once
+        // the dissolve is done, so later applyWidth calls still animate.
+        setTimeout(() => { root.style.transition = ''; }, TEP_BOOT_FADE_MS + 60);
+      } else if (bootMs > 0) {
         root.style.transform = '';
         // Restore the stylesheet's own transition (which also covers width) once
         // the handoff slide is done, so later applyWidth calls still animate.
