@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.24';
+  const TEP_VERSION = '4.25';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -5259,18 +5259,42 @@
     .tep-test-actions .tep-test-play:hover { color: #fff; background: #14532d; border-color: #166534; }
     .tep-test-actions .tep-test-play--on { color: var(--tep-red); border-color: #991b1b; background: #450a0a; }
     .tep-test-actions .tep-test-play--on:hover { color: #fff; background: #7f1d1d; border-color: #991b1b; }
-    /* Speed slider, revealed under the card header only while that card is
-       playing. Left padding lines it up under the actions, not the checkbox. */
-    .tep-test-playback {
-      display: flex; align-items: center; gap: 8px;
-      padding: 2px 8px 6px 30px; font-size: 11px; color: var(--tep-slate-400);
+    /* Triage snapshot ("brain"). Violet so it reads as neither of playback's
+       two states — this button has no on/off, it is a one-shot copy. Like
+       playback it renders on the ACTIVE card only: a snapshot of a test the
+       user isn't looking at has no time window to anchor itself to. */
+    .tep-test-actions .tep-test-brain { color: #a78bfa; }
+    .tep-test-actions .tep-test-brain:hover { color: #fff; background: #2e1065; border-color: #5b21b6; }
+    .tep-test-actions .tep-test-brain--busy { color: var(--tep-slate-500); cursor: progress; }
+    /* Playback lives in the Manage bar, not on a card. A shared test can be the
+       one on screen without its card being rendered at all (filtered out, or
+       sorted away), and the old per-card button then had no owner — so it both
+       couldn't be started and, once started, auto-stopped itself. One control
+       in the bar is always present, so neither happens. */
+    .tep-manage-playback { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+    .tep-manage-playback .tep-bar-play {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 4px 6px; min-width: 28px; min-height: 28px; line-height: 0;
+      background: var(--tep-slate-700); border: 1px solid var(--tep-slate-600);
+      color: var(--tep-green); border-radius: 4px; cursor: pointer; transition: all .15s;
     }
-    .tep-test-playback[hidden] { display: none; }
-    /* Opening the settings panel takes the card over; the playback control and
-       its speed row hide until it is closed again (playback itself is stopped
-       in toggleEditForm, so a hidden button never leaves a timer running). */
-    .tep-test-card.is-editing .tep-test-play,
-    .tep-test-card.is-editing .tep-test-playback { display: none !important; }
+    .tep-manage-playback .tep-bar-play svg { display: block; flex-shrink: 0; }
+    .tep-manage-playback .tep-bar-play:hover { color: #fff; background: #14532d; border-color: #166534; }
+    .tep-manage-playback .tep-bar-play--on { color: var(--tep-red); border-color: #991b1b; background: #450a0a; }
+    .tep-manage-playback .tep-bar-play--on:hover { color: #fff; background: #7f1d1d; border-color: #991b1b; }
+    .tep-manage-playback-speed { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--tep-slate-400); }
+    .tep-manage-playback-speed[hidden] { display: none; }
+    /* Slider bits are shared with the Manage-bar control above; the per-card
+       speed row they used to sit in is gone along with the card play button. */
+    /* The action row gets crowded with Clone/Convert/Delete while a card is in
+       settings mode, so the brain steps aside for the duration. (Playback used
+       to hide here too; it now lives in the Manage bar instead.) */
+    .tep-test-card.is-editing .tep-test-brain { display: none !important; }
+    /* Delete is destructive and used to sit one mis-click from a live test, so
+       it now rides the gear: hidden until that card is in settings mode, where
+       Clone and Convert already live. */
+    .tep-test-actions .tep-test-delete { display: none; }
+    .tep-test-card.is-editing .tep-test-actions .tep-test-delete { display: inline-flex; }
     .tep-test-playback-range { width: 92px; accent-color: var(--tep-green); cursor: pointer; }
     .tep-test-playback-val { font-variant-numeric: tabular-nums; color: var(--tep-slate-200); min-width: 20px; }
     .tep-test-actions button:hover { background: var(--tep-slate-600); color: var(--tep-slate-200); }
@@ -5304,6 +5328,11 @@
        file (many call sites — save/cancel/toggle) without needing to touch
        any of them individually. */
     #tep-panel-manage-body:has(.tep-test-card.is-editing) .tep-manage-toolbar { display: none; }
+    /* ...but not when playback is live. Hiding the toolbar would take the stop
+       button with it and leave playback stepping the page with no visible
+       owner, so the row survives in settings mode showing the control alone. */
+    #tep-panel-manage-body:has(.tep-test-card.is-editing) .tep-manage-toolbar.tep-manage-toolbar--playing { display: flex; }
+    #tep-panel-manage-body:has(.tep-test-card.is-editing) .tep-manage-toolbar.tep-manage-toolbar--playing > *:not(.tep-manage-playback) { display: none; }
     .tep-manage-toolbar select, .tep-manage-toolbar input {
       padding: 6px 8px; background: var(--tep-slate-800); border: 1px solid var(--tep-slate-700);
       border-radius: 6px; color: var(--tep-slate-200); font-size: 12px; outline: none;
@@ -13310,6 +13339,12 @@
     return tepPlaybackTid != null && String(tepPlaybackTid) === String(tid);
   }
 
+  /** The honest signal for a GLOBAL control: is the timer stepping at all,
+   *  regardless of which test id is recorded against it. */
+  function tepPlaybackIsRunning() {
+    return tepPlaybackTimer != null;
+  }
+
   /**
    * Fire one Shift+Right Arrow at the TE page. Dispatched on document.body so
    * it bubbles to any document/window-level shortcut listener, which is where
@@ -13369,23 +13404,23 @@
    *  above. Cheap enough to call on any state change, and it keeps cards
    *  consistent after a list re-render. */
   function tepPlaybackSyncUi() {
-    const cards = document.querySelectorAll('.tep-test-card[data-test-id]');
-    for (const card of cards) {
-      const tid = card.dataset.testId;
-      const on = tepPlaybackIsOn(tid);
-      const btn = card.querySelector('.tep-test-play');
+    const on = tepPlaybackIsRunning();
+    for (const wrap of root.querySelectorAll('.tep-manage-playback')) {
+      const btn = wrap.querySelector('.tep-bar-play');
       if (btn) {
-        btn.classList.toggle('tep-test-play--on', on);
+        btn.classList.toggle('tep-bar-play--on', on);
         btn.innerHTML = on ? TEP_PLAYBACK_STOP_SVG : TEP_PLAYBACK_PLAY_SVG;
         btn.title = on ? 'Stop playback' : 'Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward';
         btn.setAttribute('aria-label', on ? 'Stop playback' : 'Start playback');
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       }
-      const bar = card.querySelector('.tep-test-playback');
-      if (bar) {
-        bar.hidden = !on;
-        const range = bar.querySelector('.tep-test-playback-range');
-        const val = bar.querySelector('.tep-test-playback-val');
+      const bar = wrap.closest('.tep-manage-toolbar');
+      if (bar) bar.classList.toggle('tep-manage-toolbar--playing', on);
+      const speed = wrap.querySelector('.tep-manage-playback-speed');
+      if (speed) {
+        speed.hidden = !on;
+        const range = speed.querySelector('.tep-test-playback-range');
+        const val = speed.querySelector('.tep-test-playback-val');
         if (range) range.value = String(tepPlaybackSec);
         if (val) val.textContent = tepPlaybackSpeedLabel(tepPlaybackSec);
       }
@@ -13394,6 +13429,12 @@
 
   const TEP_PLAYBACK_PLAY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.4-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14Z"/></svg>';
   const TEP_PLAYBACK_STOP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  // Two-hemisphere brain outline. Stroke-based (not filled) so it stays legible
+  // at 16px next to the solid play triangle instead of reading as a blob.
+  const TEP_BRAIN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M9.5 4A2.5 2.5 0 0 0 7 6.5v.3A2.5 2.5 0 0 0 5 9.2a2.5 2.5 0 0 0 .8 1.8A2.5 2.5 0 0 0 5 13a2.5 2.5 0 0 0 1.6 2.3A2.5 2.5 0 0 0 9 18.5h.5A2.5 2.5 0 0 0 12 16V6.5A2.5 2.5 0 0 0 9.5 4Z"/>'
+    + '<path d="M14.5 4A2.5 2.5 0 0 1 17 6.5v.3A2.5 2.5 0 0 1 19 9.2a2.5 2.5 0 0 1-.8 1.8A2.5 2.5 0 0 1 19 13a2.5 2.5 0 0 1-1.6 2.3A2.5 2.5 0 0 1 15 18.5h-.5A2.5 2.5 0 0 1 12 16V6.5A2.5 2.5 0 0 1 14.5 4Z"/>'
+    + '</svg>';
 
   /** True when the ThousandEyes page in view is an ENDPOINT view
    *  (/endpoint/views/?…testId=…) rather than an enterprise test view
@@ -13404,54 +13445,1410 @@
   function tepIsEndpointViewPage() {
     try { return /^\/endpoint(\/|$)/i.test(window.location.pathname || ''); } catch (_) { return false; }
   }
-  /** The green play / red stop button for a card's action row. Rendered only
-   *  on the ACTIVE test — playback steps the timeline of the page the user is
-   *  actually looking at, so it is meaningless on any other row. Shared by the
-   *  enterprise (renderTests) and endpoint (renderEndpointTests) lists so the
-   *  two can't drift. */
-  function tepPlaybackBtnHtml(tid) {
-    const on = tepPlaybackIsOn(tid);
-    return `<button type="button" class="tep-test-action-icon tep-test-play${on ? ' tep-test-play--on' : ''}"`
-      + ` data-action="playback" aria-pressed="${on ? 'true' : 'false'}"`
-      + ` title="${on ? 'Stop playback' : 'Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward'}"`
-      + ` aria-label="${on ? 'Stop playback' : 'Start playback'}">${on ? TEP_PLAYBACK_STOP_SVG : TEP_PLAYBACK_PLAY_SVG}</button>`;
+  /** Mounts the Manage-bar playback control once per list, and wires it.
+   *  Built at RUNTIME rather than inlined in the panel's static markup,
+   *  because that markup is inserted during module init — before the playback
+   *  consts further down are initialised — so naming them up there would hit a
+   *  temporal-dead-zone error. Idempotent: re-render calls are no-ops. */
+  function tepEnsureManagePlayback() {
+    const mounts = [
+      { body: 'tep-panel-manage-body', label: 'tests' },
+      { body: 'tep-ep-expand-manage', label: 'endpoint tests' },
+    ];
+    for (const m of mounts) {
+      const body = root.querySelector('#' + m.body);
+      if (!body) continue;
+      const bar = body.querySelector('.tep-manage-toolbar');
+      if (!bar || bar.querySelector('.tep-manage-playback')) continue;
+      const wrap = document.createElement('span');
+      wrap.className = 'tep-manage-playback';
+      wrap.innerHTML = `<button type="button" class="tep-bar-play" aria-pressed="false"`
+        + ` title="Play: repeat Shift+Right Arrow to step the ThousandEyes timeline forward"`
+        + ` aria-label="Start playback">${TEP_PLAYBACK_PLAY_SVG}</button>`
+        + `<span class="tep-manage-playback-speed" hidden><span>Speed</span>`
+        + `<input type="range" class="tep-test-playback-range" min="${TEP_PLAYBACK_MIN_S}"`
+        + ` max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackSec}"`
+        + ` aria-label="Playback speed in seconds between steps">`
+        + `<span class="tep-test-playback-val">${tepPlaybackSpeedLabel(tepPlaybackSec)}</span></span>`;
+      bar.appendChild(wrap);
+      const btn = wrap.querySelector('.tep-bar-play');
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (tepPlaybackIsRunning()) tepPlaybackStop();
+        else tepPlaybackStart(tepPlaybackBarTid());
+        // Focus would otherwise leave a ring on the bar over the page the user
+        // is now watching — same reasoning as the old card button.
+        try { btn.blur(); } catch (_) { /* non-fatal */ }
+      });
+      const range = wrap.querySelector('.tep-test-playback-range');
+      range.addEventListener('input', (e) => { e.stopPropagation(); tepPlaybackSetSpeed(e.target.value); });
+      range.addEventListener('click', (e) => e.stopPropagation());
+    }
+    tepPlaybackSyncUi();
   }
-  /** The speed row that slides in under the card while playback runs. */
-  function tepPlaybackBarHtml(tid) {
-    return `<div class="tep-test-playback"${tepPlaybackIsOn(tid) ? '' : ' hidden'}>
-          <span>Speed</span>
-          <input type="range" class="tep-test-playback-range" min="${TEP_PLAYBACK_MIN_S}" max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackSec}" aria-label="Playback speed in seconds between steps">
-          <span class="tep-test-playback-val">${tepPlaybackSpeedLabel(tepPlaybackSec)}</span>
-        </div>`;
+
+  /** Which test the bar's playback is nominally for. Playback drives the PAGE
+   *  timeline with synthetic Shift+Right keys, so this id is bookkeeping for
+   *  the UI rather than a target — which is exactly why the control no longer
+   *  needs the test's card to be on screen. Falls back to a sentinel when the
+   *  URL carries no testId at all. */
+  const TEP_PLAYBACK_BAR_TID = '__tep-bar__';
+  function tepPlaybackBarTid() {
+    try {
+      const u = getUrlQueryTestIdFocus();
+      if (u) return String(u);
+    } catch (_) { /* fall through */ }
+    return TEP_PLAYBACK_BAR_TID;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Triage snapshot — the "brain" button
+  // ---------------------------------------------------------------------------
+  /* Bundles what the panel ALREADY holds about one test into a paste-ready
+     brief for whatever external model the user prefers. No new request shapes:
+     the test x agent matrix behind tepFetchNasMetricRaw already carries this
+     test, every sibling test AND every agent in one cached response, so the
+     cross-references below are a local join rather than extra round trips.
+
+     Two sizing rules, both measured against the live API rather than guessed:
+       - Aggregates only, never raw per-round series. One metric for one test
+         over 6h measured ~30 KB of CSV to convey the single fact "this one
+         agent is lossy, the others are not" — which costs ~40 bytes as an
+         aggregate. Raw samples are a later, opt-in layer.
+       - Healthy siblings are included ON PURPOSE and marked with a tick.
+         Without known-good comparators a model cannot separate "one target
+         died" from "that whole site is broken", so the controls are what make
+         the breadth question answerable at all. They are the cheapest
+         high-value bytes in the bundle.
+
+     NOT YET INCLUDED, deliberately: the before/during/now temporal profile per
+     agent. That needs the timeSpanConfig.now anchor override confirmed against
+     the live app first (every existing NAS fetch here anchors at "now" and
+     passes isToAggregateOnTime:true). Until then the bundle carries the
+     current Data Window only and says so in its own header, rather than
+     implying a time range it did not actually measure. */
+  const TEP_BRAIN_MAX_SIBLINGS = 8;    // correlated siblings listed per flagged agent
+  const TEP_BRAIN_MAX_CONTROLS = 3;    // known-healthy comparators per flagged agent
+  const TEP_BRAIN_LOSS_FLAG = 2;       // % loss at which an agent counts as flagged
+  const TEP_BRAIN_LAT_FLAG_MS = 250;   // latency (ms) at which an agent counts as flagged
+  const TEP_BRAIN_AVAIL_FLAG = 100;    // HTTP availability BELOW this is flagged (TE: 2xx/3xx = 100)
+  const TEP_BRAIN_TTFB_FLAG_MS = 1000; // time-to-first-byte (ms) at which an agent counts as flagged
+  /* Clipboard budget. Raised once hop-by-hop traces went in: two rounds of a
+     long path can legitimately run to several KB, and silently truncating the
+     correlation tables to fit them would be the worst of both. Still ~7K
+     tokens, which any chat window takes comfortably. */
+  const TEP_BRAIN_MAX_BYTES = 24000;
+
+  /** The brain button for a card's action row. Active test only, same rule as
+   *  playback, and shared by the enterprise and endpoint lists so the two
+   *  can't drift. */
+  function tepBrainBtnHtml(tid) {
+    return `<button type="button" class="tep-test-action-icon tep-test-brain"`
+      + ` data-action="brain"`
+      + ` title="Copy a triage brief for this test to the clipboard, ready to paste into an AI chat"`
+      + ` aria-label="Copy triage brief to clipboard">${TEP_BRAIN_SVG}</button>`;
+  }
+
+  /* Metric ids here are NAS-PREFIXED. The bare NET_LOSS / NET_LATENCY names
+     belong to the public v7 API; this panel's self-service widget shape wants
+     NAS-NET_LOSS etc, and passing the unprefixed name yields no points at all
+     (which read as "no metric data for this test"). Agent-to-agent and other
+     one-way tests report under the ONE_WAY_* metric INSTEAD of the plain one,
+     so each logical metric is a list and the first id with a value for a given
+     cell wins — same union the Network Health widget does. */
+  const TEP_BRAIN_LOSS_METRICS = ['NAS-NET_LOSS', 'NAS-ONE_WAY_NET_LOSS_TO_TARGET'];
+  const TEP_BRAIN_LAT_METRICS = ['NAS-NET_LATENCY', 'NAS-ONE_WAY_NET_LATENCY_TO_TARGET'];
+  /* WEB-LAYER metrics. These matter enormously: a web test can read 0% loss and
+     1ms latency at the network layer while failing outright at the HTTP layer,
+     so a network-only brief invites a model to call a broken site healthy.
+     NAS-WEB_AVAILABILITY is proven (the SaaS Health widget uses it); the other
+     two are extrapolated from the public metric list and are therefore
+     TOLERATED, not relied on — an id the endpoint rejects is retired for the
+     session by tepBrainDeadMetrics and simply drops out of the brief. */
+  /* Panel testType values (TYPE_LABELS) that carry a web layer at all. */
+  const TEP_BRAIN_WEB_TYPES = new Set(['Http', 'Page', 'WebTransaction', 'Api', 'Ftp']);
+  const tepBrainDeadMetrics = new Set();
+
+  /** Which metric families a given test type actually produces.
+   *
+   *  This exists because of a real miss: a brief carrying only loss/latency/
+   *  availability reported an obvious DNS failure as "no data". Two things
+   *  were wrong. First, no DNS metric was ever fetched. Second — and worse —
+   *  a round that dies during name resolution never goes on to measure TTFB,
+   *  availability or a path trace, so the metrics that WERE fetched came back
+   *  empty; the brief then presented the symptom as missing data, and the
+   *  model correctly declined to conclude anything from a gap.
+   *
+   *  The per-phase error counts are the fix: WEB_DNS_ERROR_COUNT against
+   *  WEB_TOTAL_ERROR_COUNT localises the failure to a phase even when every
+   *  downstream measurement is absent. A null family is simply not fetched,
+   *  which also keeps a pure network test down to two requests. */
+  function tepBrainMetricPlan(typeKey) {
+    const web = TEP_BRAIN_WEB_TYPES.has(typeKey);
+    const oneWay = typeKey === 'OneWayNetwork';
+    const dnsSrv = typeKey === 'DnsServer';
+    const dnsTrace = typeKey === 'DnsTrace';
+    return {
+      loss: oneWay ? ['NAS-ONE_WAY_NET_LOSS_TO_TARGET'] : ['NAS-NET_LOSS'],
+      lat: oneWay ? ['NAS-ONE_WAY_NET_LATENCY_TO_TARGET'] : ['NAS-NET_LATENCY'],
+      avail: web ? ['NAS-WEB_AVAILABILITY']
+        : dnsSrv ? ['NAS-DNS_SERVER_AVAILABILITY']
+          : dnsTrace ? ['NAS-DNS_TRACE_AVAILABILITY']
+            : typeKey === 'Dnssec' ? ['NAS-DNSSEC_VALIDITY'] : null,
+      ttfb: web ? ['NAS-WEB_TTFB'] : null,
+      // DNS timing: resolution time inside a web test, or the query time that
+      // IS the measurement for a dedicated DNS test.
+      dns: web ? ['NAS-WEB_DNS']
+        : dnsSrv ? ['NAS-DNS_SERVER_TIME']
+          : dnsTrace ? ['NAS-DNS_TRACE_QUERY_TIME'] : null,
+      errDns: web ? ['NAS-WEB_DNS_ERROR_COUNT'] : null,
+      errConn: web ? ['NAS-WEB_CONNECT_ERROR_COUNT'] : null,
+      errSsl: web ? ['NAS-WEB_SSL_ERROR_COUNT'] : null,
+      errHttp: web ? ['NAS-WEB_HTTP_ERROR_COUNT'] : null,
+      errTotal: web ? ['NAS-WEB_TOTAL_ERROR_COUNT'] : null,
+    };
+  }
+  /* Phase-error families, in the order a round executes them — so the brief
+     lists them the way the failure actually unfolds. */
+  const TEP_BRAIN_ERR_PHASES = [
+    ['errDns', 'dns'], ['errConn', 'conn'], ['errSsl', 'ssl'], ['errHttp', 'http'],
+  ];
+
+  /** The instant and span the TE page's own timeline is parked on.
+   *
+   *  This is the difference between answering the user's question and a
+   *  different one. The test view carries its timeline in the query string
+   *  (startTime = the focused round in epoch SECONDS, timelineWindow =
+   *  "start,end"), and a user investigating an incident scrolls back to it —
+   *  but the panel's Data Window stays live, so a brief built from the live
+   *  window reported a two-week-old outage as "Healthy, confidence High".
+   *  Returns null when the page is effectively live, so normal use is
+   *  unaffected. */
+  const TEP_BRAIN_LIVE_SLACK_MS = 10 * 60 * 1000;
+  /* The anchor is the END of the window, so a window anchored exactly ON the
+     focused round stops just short of it. Push the anchor past the round so it
+     falls INSIDE. This cost a real diagnosis: a DNS timeout at 12:05:07Z sat
+     one second outside a 4h window ending 12:05:00Z. */
+  const TEP_BRAIN_ROUND_PAD_MS = 90 * 1000;
+  /* How many agents to pull per-round error text for (one request each). */
+  const TEP_BRAIN_MAX_ERR_DETAIL = 6;
+  function tepPageTimeSelection() {
+    let q;
+    try { q = new URLSearchParams(window.location.search || ''); } catch (_) { return null; }
+    const sec = (k) => {
+      const v = Number(q.get(k));
+      // Guard against a millisecond value showing up where seconds belong.
+      return Number.isFinite(v) && v > 1e8 && v < 1e11 ? v : null;
+    };
+    let from = null;
+    let to = null;
+    const tw = String(q.get('timelineWindow') || '');
+    if (tw.indexOf(',') > 0) {
+      const parts = tw.split(',').map((x) => Number(x));
+      if (parts.length === 2 && parts.every((x) => Number.isFinite(x) && x > 1e8 && x < 1e11)) {
+        from = parts[0]; to = parts[1];
+      }
+    }
+    const focus = sec('startTime') || sec('roundId') || sec('endTime');
+    if (from == null && focus == null) return null;
+    // Anchor on the focused round when there is one; the timeline window is
+    // context around it, not the measurement the user is looking at.
+    const atMs = (focus != null ? focus : to) * 1000;
+    if (!Number.isFinite(atMs) || atMs <= 0) return null;
+    if (Date.now() - atMs < TEP_BRAIN_LIVE_SLACK_MS) return null;   // effectively live
+    const spanSec = (from != null && to != null && to > from) ? (to - from) : null;
+    return { atMs, spanSec, focusSec: focus };
+    /* NOTE on sizing, decided the hard way: timelineWindow is the CHART'S ZOOM,
+       not the user's selection. Sizing the brief from it averaged a single
+       failed round into 4h of healthy ones and reported "no issue". When a
+       focused round exists, that round is the question — so the brief uses the
+       narrowest window around it and reports the surrounding span separately
+       as context. */
+  }
+
+  /* Per-round timelines and layer error text.
+   *
+   *  The panel's PROVEN timeline shape is
+   *    /ajax/agent/view/timeline/{layer}/{metric}?testId=&binSize=&metricId=&agentId=
+   *  returning { values: [...], chunks: [{ startRoundId, intervalLength }] },
+   *  i.e. one value per bin — exactly the round-by-round strip that makes a
+   *  single failure legible ("100 100 100 0 100 100" says more than any mean).
+   *  The web-layer variants below follow that same pattern but have NOT been
+   *  seen in a live capture, so each is tried once and a failure retires it for
+   *  the session; the strip then falls back to the proven net/loss timeline so
+   *  the section never silently disappears.
+   *
+   *  Likewise the error text: /ajax/bbot/view/round/{round}/web-transaction/
+   *  datapoints reads the BROWSER layer, which is why it came back empty for a
+   *  Page Load test whose browser layer succeeded while its HTTP-server layer
+   *  timed out on DNS. The alternates try the other layers of the same test. */
+  const TEP_BRAIN_AVAIL_TIMELINES = [
+    { layer: 'web', metric: 'availability', metricId: 'webAvailability', label: 'availability %' },
+    { layer: 'http', metric: 'availability', metricId: 'availability', label: 'availability %' },
+  ];
+  const TEP_BRAIN_LOSS_TIMELINE = { layer: 'net', metric: 'loss', metricId: 'netLoss', label: 'packet loss %' };
+  /* Latency is fetched as its own strip, not as a fallback: it is what decides
+     WHICH rounds are worth tracing. The proven endpoint shape. */
+  const TEP_BRAIN_LAT_TIMELINE = { layer: 'net', metric: 'latency', metricId: 'netLatency', label: 'latency ms' };
+  const TEP_BRAIN_TRACE_ROUNDS = 6;     // rounds traced per brief
+  const TEP_BRAIN_SIBLING_STRIPS = 3;   // sibling tests given their own strip
+  const TEP_BRAIN_ERR_LAYERS = ['web-transaction', 'http-server', 'http'];
+  const tepBrainDeadPaths = new Set();
+  const TEP_BRAIN_STRIP_SPAN = 6;   // bins either side of the focused round
+
+  /** Pull one value per bin out of a timeline response, tolerating the several
+   *  shapes the panel has seen (bare numbers, or objects keyed various ways). */
+  function tepBrainStripValues(data) {
+    let pts = null;
+    if (Array.isArray(data)) pts = data;
+    else if (data && typeof data === 'object') {
+      pts = data.values || data.timeline || data.points || data.data || data.series || null;
+      if (!Array.isArray(pts)) {
+        for (const k of Object.keys(data)) { if (Array.isArray(data[k]) && k !== 'chunks') { pts = data[k]; break; } }
+      }
+    }
+    if (!Array.isArray(pts)) return [];
+    return pts.map((p) => {
+      if (p == null) return null;
+      if (typeof p === 'number') return Number.isFinite(p) ? p : null;
+      const v = p.value != null ? p.value
+        : (p.availability != null ? p.availability
+          : (p.loss != null ? p.loss : (p.avg != null ? p.avg : (p.y != null ? p.y : null))));
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    });
+  }
+
+  async function tepBrainTimeline(testId, agentId, spec, binSec) {
+    const enc = encodeURIComponent;
+    const path = `/ajax/agent/view/timeline/${spec.layer}/${spec.metric}`;
+    if (tepBrainDeadPaths.has(path)) return null;
+    const bin = Number(binSec) > 0 ? Math.round(Number(binSec)) : 300;
+    const url = `${path}?testId=${enc(String(testId))}&binSize=${enc(String(bin))}`
+      + `&metricId=${enc(spec.metricId)}`
+      + (agentId != null && agentId !== '' ? `&agentId=${enc(String(agentId))}` : '');
+    let data = null;
+    try {
+      const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+      const r = await ajax(url, { method: 'GET', headers: aid ? { 'x-thousandeyes-aid': aid } : {} });
+      if (!r || !r.ok) { tepBrainDeadPaths.add(path); return null; }
+      data = await r.json().catch(() => null);
+    } catch (_) { tepBrainDeadPaths.add(path); return null; }
+    const values = tepBrainStripValues(data);
+    if (!values.length) return null;
+    const chunks = (data && Array.isArray(data.chunks)) ? data.chunks : [];
+    const first = chunks.length ? chunks[0] : null;
+    const startRound = first && first.startRoundId != null ? Number(first.startRoundId) : null;
+    const step = first && first.intervalLength != null ? Number(first.intervalLength) : bin;
+    return { values, startRound, step, label: spec.label };
+  }
+
+  /** The literal failure string for a round, across the test's layers. */
+  async function tepBrainErrorText(testId, agentId, roundId) {
+    if (testId == null || agentId == null || roundId == null) return null;
+    const enc = encodeURIComponent;
+    const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+    for (const layer of TEP_BRAIN_ERR_LAYERS) {
+      const path = `/ajax/bbot/view/round/${enc(String(roundId))}/${layer}/datapoints`;
+      const key = 'dp:' + layer;
+      if (tepBrainDeadPaths.has(key)) continue;
+      try {
+        const url = `${path}?testId=${enc(String(testId))}&agentId=${enc(String(agentId))}`;
+        const r = await ajax(url, { method: 'GET', headers: aid ? { 'x-thousandeyes-aid': aid } : {} });
+        if (!r || !r.ok) { tepBrainDeadPaths.add(key); continue; }
+        const text = await r.text().catch(() => '');
+        if (!text.trim()) continue;
+        const rows = JSON.parse(text);
+        if (!Array.isArray(rows)) continue;
+        for (const row of rows) {
+          const pd = row && row.meta && (row.meta.probDetail || row.meta.errorDetail || row.meta.error);
+          if (pd) return { layer, text: String(pd) };
+        }
+      } catch (_) { tepBrainDeadPaths.add(key); }
+    }
+    return null;
+  }
+
+  /** Path-visualisation presence for one round.
+   *
+   *  Deliberately NOT a full hop dump — the useful signal for triage is
+   *  whether a path exists at all, plus the destination it reached. Confirmed
+   *  against the same data through the ThousandEyes API: on a healthy round
+   *  this test resolved to 64.233.180.102 over 8 hops; on the failing round
+   *  the record carried NO server IP and NO traces, because name resolution
+   *  never produced an address to trace to. That contrast between a round and
+   *  its neighbour IS the DNS signature, and it is far cheaper than hops. */
+  const TEP_BRAIN_MAX_HOPS = 40;        // per trace, before truncating
+  const TEP_BRAIN_MAX_TRACE_AGENTS = 6; // agents' traces emitted per round
+
+  /** FULL hop-by-hop path for one round.
+   *
+   *  Returns the real traceroute, not a summary: every hop's IP, ASN/network,
+   *  location and cumulative latency, exactly as the panel's own map trace
+   *  draws them. The graph shape is the one tepComputeTracePathNodes already
+   *  walks — route.route[i].link indexes links[], whose .target indexes
+   *  nodes[] — so this reuses a traversal that is already proven against live
+   *  data rather than inventing one.
+   *
+   *  The ABSENCE of a trace is also a result worth having: a round whose name
+   *  resolution failed has no destination IP, so there is nothing to trace to,
+   *  and the contrast with a neighbouring round that DID trace is positive
+   *  evidence of a DNS failure. */
+  async function tepBrainPathProbe(testId, roundId, binSize) {
+    if (testId == null || roundId == null) return null;
+    const enc = encodeURIComponent;
+    const bin = Number(binSize) > 0 ? Math.round(Number(binSize)) : 300;
+    const url = `/ajax/topology/path-vis/graph/multi?testIds=${enc(String(testId))}`
+      + `&startBin=${enc(String(Math.floor(roundId)))}&binSize=${enc(String(bin))}&serverIds=`;
+    let data = null;
+    try {
+      const aid = teInitData && teInitData._currentAid != null ? String(teInitData._currentAid) : '';
+      const r = await ajax(url, { method: 'GET', headers: aid ? { 'x-thousandeyes-aid': aid } : {} });
+      if (!r || !r.ok) return null;
+      data = await r.json().catch(() => null);
+    } catch (_) { return null; }
+    if (!data) return null;
+    const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    const links = Array.isArray(data.links) ? data.links : [];
+    const routes = Array.isArray(data.routes) ? data.routes : [];
+    const traces = [];
+    for (const route of routes) {
+      if (!route || !Array.isArray(route.route) || !route.route.length) continue;
+      const src = nodes[route.source] || null;
+      const agentId = src && src.agentId != null ? String(src.agentId) : '';
+      const hops = [];
+      let lastDelay = 0;
+      for (let i = 0; i < route.route.length && hops.length < TEP_BRAIN_MAX_HOPS; i++) {
+        const h = route.route[i];
+        if (!h) continue;
+        if (typeof h.delay === 'number' && isFinite(h.delay)) lastDelay = h.delay;
+        // A hop reaches the TARGET of its link — same mapping the map trace uses.
+        const link = links[h.link];
+        const idx = link && link.target != null ? link.target : (h.node != null ? h.node : null);
+        const n = idx != null ? nodes[idx] : null;
+        hops.push({
+          n: hops.length + 1,
+          ip: n ? (n.publicIpAddress || n.ipAddress || '') : '',
+          asn: n && n.asn != null ? n.asn : null,
+          asName: n ? (n.asName || '') : '',
+          location: n ? (n.location || '') : '',
+          prefix: n ? (n.prefix || '') : '',
+          ms: Math.round(lastDelay),
+          dest: !!(n && n.destination === true),
+          lossPct: (h.lossPct != null && Number.isFinite(Number(h.lossPct))) ? Number(h.lossPct)
+            : ((n && n.lossPct != null && Number.isFinite(Number(n.lossPct))) ? Number(n.lossPct) : null),
+        });
+      }
+      if (!hops.length) continue;
+      const lastHop = hops[hops.length - 1];
+      traces.push({
+        agentId,
+        agentName: src && src.name ? src.name : '',
+        dest: lastHop.ip || '',
+        totalMs: lastHop.ms,
+        truncated: route.route.length > hops.length,
+        hops,
+      });
+      if (traces.length >= TEP_BRAIN_MAX_TRACE_AGENTS) break;
+    }
+    return { nodes: nodes.length, routes: routes.length, traces, hops: traces.length ? traces[0].hops.length : 0 };
+  }
+
+  /** Nearest Data Window preset to a requested span (the NAS widget only
+   *  accepts the presets, so an arbitrary span is snapped to one). */
+  function tepBrainWindowIdx(spanSec) {
+    if (!Number.isFinite(spanSec) || spanSec <= 0) return dashMetricsWindowIdx;
+    let best = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < DASH_METRICS_WINDOWS.length; i++) {
+      const d = Math.abs(DASH_METRICS_WINDOWS[i].sec - spanSec);
+      if (d < bestDiff) { bestDiff = d; best = i; }
+    }
+    return best;
+  }
+
+  /** metricIds -> { byTest: Map<testId, Map<agentId, value>>, names... },
+   *  merged across the given ids and built from the already-cached NAS matrix.
+   *  Each response covers every test and agent in the account, which is what
+   *  makes the sibling cross-references free. */
+  async function tepBrainMatrix(metricIds) {
+    const ids = (Array.isArray(metricIds) ? metricIds : [metricIds])
+      .filter((m) => !tepBrainDeadMetrics.has(m));
+    if (!ids.length) return null;
+    const raws = await Promise.all(ids.map((m) => tepFetchNasMetricRaw(m).catch(() => null)));
+    // A null means the request itself failed or returned non-JSON, i.e. the id
+    // is not one this endpoint serves — retire it. An EMPTY result is left
+    // alone: a quiet window legitimately has no points.
+    ids.forEach((m, i) => { if (raws[i] == null) tepBrainDeadMetrics.add(m); });
+    const live = raws.filter(Boolean);
+    if (!live.length) return null;
+    const byTest = new Map();
+    const testNames = {};
+    const agentNames = {};
+    for (const raw of live) {
+      Object.assign(testNames, raw.testNames || {});
+      Object.assign(agentNames, raw.agentNames || {});
+      for (const p of raw.points) {
+        if (!p || !p.aggIds) continue;
+        const tid = p.aggIds['NAS-TEST'];
+        const aid = p.aggIds['NAS-AGENT'];
+        const v = Number(p.v);
+        if (tid == null || aid == null || !Number.isFinite(v)) continue;
+        const k = String(tid);
+        if (!byTest.has(k)) byTest.set(k, new Map());
+        const cell = byTest.get(k);
+        const ak = String(aid);
+        if (!cell.has(ak)) cell.set(ak, v);   // earlier id in the list wins
+      }
+    }
+    return { byTest, testNames, agentNames, windowSec: live[0].windowSec };
+  }
+
+  /** Agent display name + location. Name comes free in the matrix response;
+   *  location needs the loaded agent roster, which may not be populated yet. */
+  function tepBrainAgentMeta(agentId, agentNames) {
+    const id = String(agentId);
+    let name = (agentNames && agentNames[id]) || '';
+    let loc = '';
+    if (Array.isArray(agents)) {
+      for (const a of agents) {
+        if (!a || String(a.agentId) !== id) continue;
+        name = name || a.agentName || '';
+        loc = a.location || '';
+        break;
+      }
+    }
+    return { id, name: name || ('agent ' + id), loc };
+  }
+
+  /** One decimal for loss, whole numbers for latency, "-" when absent. */
+  function tepBrainNum(v, dp) {
+    if (v == null || !Number.isFinite(Number(v))) return '-';
+    const n = Number(v);
+    return dp === 0 ? String(Math.round(n)) : String(Math.round(n * 10) / 10);
+  }
+
+  /* Unit goes on the NUMBER, not the label: a missing value must read "loss -",
+     never "loss -%", which looks like a measured negative percentage. */
+  function tepBrainLoss(v) {
+    const n = tepBrainNum(v, 1);
+    return 'loss ' + (n === '-' ? '-' : n + '%');
+  }
+  function tepBrainLat(v) {
+    const n = tepBrainNum(v, 0);
+    return 'lat ' + (n === '-' ? '-' : n + 'ms');
+  }
+  /** Web columns, emitted only when the metric was actually fetched — an empty
+   *  string here keeps a network test's rows from carrying blank web fields. */
+  function tepBrainWeb(r) {
+    const out = [];
+    const a = tepBrainNum(r.avail, 1);
+    const d = tepBrainNum(r.dns, 0);
+    const t = tepBrainNum(r.ttfb, 0);
+    if (a !== '-') out.push('avail ' + a + '%');
+    if (d !== '-') out.push('dns ' + d + 'ms');
+    if (t !== '-') out.push('ttfb ' + t + 'ms');
+    // Only NON-ZERO phases are printed, so a DNS failure reads as "errs dns:3"
+    // instead of hiding inside a row of zeros.
+    if (r.errs && r.errs.length) out.push('errs ' + r.errs.map((e) => e.name + ':' + e.n).join(' '));
+    else if (Number.isFinite(r.errTotal) && r.errTotal > 0) out.push('errs total:' + r.errTotal);
+    return out.length ? '  ' + out.join('  ') : '';
+  }
+
+  /** Bare host for target-side correlation. Derived from the panel's own
+   *  getTarget() rather than reading t.url/t.server directly: SEVERAL test
+   *  types carry those fields as OBJECTS, and stringifying one yields the
+   *  literal "[object Object]" — which then compared equal to every other
+   *  test with the same problem and filed unrelated SaaS targets under "same
+   *  host". getTarget already unwraps every one of those shapes.
+   *  Returns '' when nothing host-like resolves; callers MUST treat '' as
+   *  "do not correlate" rather than as a grouping key. */
+  function tepBrainHost(t) {
+    let raw = '';
+    try { raw = getTarget(t) || ''; } catch (_) { raw = ''; }
+    raw = String(raw).trim();
+    if (!raw || raw.indexOf('[object') === 0) return '';
+    let h = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    h = h.split(/[/?#]/)[0];
+    h = h.replace(/\s+(ICMP|TCP|UDP)\b.*$/i, '');
+    h = h.replace(/:\d+$/, '').trim();
+    if (!h) return '';
+    // Lowercase only what actually looks like a host or IP. An agent-to-agent
+    // test's "target" is an AGENT NAME ("UCG-ESX (VLAN1)"), and flattening its
+    // case makes the brief read as if it were a hostname.
+    return /^[a-z0-9._:-]+$/i.test(h) ? h.toLowerCase() : h;
+  }
+
+  /** Is a host string specific enough to correlate on? An agent name, a bare
+   *  label or an unparsed target must never become a grouping key — that is
+   *  precisely how disparate tests got reported as sharing a host. */
+  function tepBrainHostIsReal(h) {
+    if (!h) return false;
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true;              // IPv4
+    if (h.indexOf(':') >= 0 && /^[0-9a-f:]+$/i.test(h)) return true;  // IPv6
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(h);                    // dotted host
+  }
+
+  function tepBrainTestName(testId, t, testNames) {
+    if (t && t.name) return t.name;
+    const n = testNames && testNames[String(testId)];
+    return n || ('test ' + testId);
+  }
+
+  /** Assembles the brief. Returns { text, meta:{bytes, truncated, sections} }. */
+  async function tepBuildTriageBundle(tid) {
+    const testId = String(tid);
+    const list = Array.isArray(allTests) ? allTests : [];
+    const subject = list.find((x) => String(x && (x.testId != null ? x.testId : x.id)) === testId) || null;
+
+    const typeKey = subject && subject.testType ? String(subject.testType) : '';
+    const isWebTest = TEP_BRAIN_WEB_TYPES.has(typeKey);
+
+    // Fetch exactly the families this test type produces (see tepBrainMetricPlan),
+    // anchored at whatever instant the TE page itself is showing.
+    const plan = tepBrainMetricPlan(typeKey);
+    const keys = Object.keys(plan).filter((k) => plan[k]);
+    const pageTime = tepPageTimeSelection();
+    const onRound = !!(pageTime && pageTime.focusSec != null);
+    const NARROW_IDX = DASH_METRICS_WINDOWS.length - 1;          // the shortest preset
+    const ctxIdx = tepBrainWindowIdx(pageTime && pageTime.spanSec);
+    const prevAtMs = dashMetricsAtMs;
+    const prevWinIdx = dashMetricsWindowIdx;
+    let pending;
+    let ctxPending = null;
+    try {
+      if (pageTime) {
+        dashMetricsAtMs = pageTime.atMs + TEP_BRAIN_ROUND_PAD_MS;
+        dashMetricsWindowIdx = onRound ? NARROW_IDX : ctxIdx;
+      }
+      // Every fetch reads these globals SYNCHRONOUSLY — tepFetchNasMetricRaw
+      // resolves the window, the cache key and the whole request body before
+      // its first await — so starting them all here and restoring immediately
+      // below is race-free, and no other panel work sees the override.
+      pending = keys.map((k) => tepBrainMatrix(plan[k]));
+      /* A SECOND read over the surrounding window. Both are needed and they
+         answer different questions: the round says what happened at the
+         moment under investigation, the window says whether it is a blip or a
+         pattern AND gives the sibling tests something meaningful to be
+         compared over — a 5-minute window leaves most siblings with one round
+         or none, which is why they were coming out as a wall of 0ms. Only
+         loss/lat/avail are re-read, to keep the request count sane. */
+      if (onRound) {
+        dashMetricsWindowIdx = ctxIdx;
+        ctxPending = {
+          loss: tepBrainMatrix(plan.loss),
+          lat: tepBrainMatrix(plan.lat),
+          avail: plan.avail ? tepBrainMatrix(plan.avail) : null,
+        };
+      }
+    } finally {
+      dashMetricsAtMs = prevAtMs;
+      dashMetricsWindowIdx = prevWinIdx;
+    }
+    const fetched = await Promise.all(pending);
+    const CTX = { loss: null, lat: null, avail: null };
+    if (ctxPending) {
+      const ck = Object.keys(ctxPending).filter((k) => ctxPending[k]);
+      const cv = await Promise.all(ck.map((k) => ctxPending[k].catch(() => null)));
+      ck.forEach((k, i) => { CTX[k] = cv[i]; });
+    }
+    const ctxAvail = CTX.avail;
+    const M = {};
+    keys.forEach((k, i) => { M[k] = fetched[i]; });
+    const loss = M.loss || null;
+    const lat = M.lat || null;
+    const avail = M.avail || null;
+    const ttfb = M.ttfb || null;
+
+    // tepFetchAlertsSummary RETURNS its data, it does not assign tepAlertsData
+    // — awaiting it without capturing the result left the brief still saying
+    // "alert list not loaded", which reads to a model as "no alerts".
+    let alertsData = tepAlertsData;
+    if (!alertsData || !Array.isArray(alertsData.rows) || !alertsData.rows.length) {
+      try { alertsData = (await tepFetchAlertsSummary()) || alertsData; } catch (_) { /* brief still useful */ }
+    }
+    if (!keys.some((k) => M[k])) return null;
+
+    const base = keys.map((k) => M[k]).find(Boolean);
+    const agentNames = base.agentNames;
+    const testNames = base.testNames;
+    const rowOf = (mx) => (mx ? mx.byTest.get(testId) : null);
+    const R = {};
+    for (const k of keys) R[k] = rowOf(M[k]);
+    const lossRow = R.loss || null;
+    const latRow = R.lat || null;
+
+    // Union of agents reporting on this test in ANY fetched metric.
+    const agentIds = new Set();
+    for (const k of keys) { const r = R[k]; if (r) for (const a of r.keys()) agentIds.add(a); }
+
+    const val = (k, aid) => (R[k] ? R[k].get(aid) : null);
+    const rows = [...agentIds].map((aid) => {
+      const m = tepBrainAgentMeta(aid, agentNames);
+      const o = {
+        ...m,
+        loss: val('loss', aid), lat: val('lat', aid),
+        avail: val('avail', aid), ttfb: val('ttfb', aid), dns: val('dns', aid),
+        errTotal: val('errTotal', aid),
+      };
+      o.errs = TEP_BRAIN_ERR_PHASES
+        .map(([k, name]) => ({ name, n: val(k, aid) }))
+        .filter((e) => Number.isFinite(e.n) && e.n > 0);
+      o.flagged = (Number.isFinite(o.loss) && o.loss >= TEP_BRAIN_LOSS_FLAG)
+        || (Number.isFinite(o.lat) && o.lat >= TEP_BRAIN_LAT_FLAG_MS)
+        || (Number.isFinite(o.avail) && o.avail < TEP_BRAIN_AVAIL_FLAG)
+        || (Number.isFinite(o.ttfb) && o.ttfb >= TEP_BRAIN_TTFB_FLAG_MS)
+        || (Number.isFinite(o.errTotal) && o.errTotal > 0)
+        || o.errs.length > 0;
+      return o;
+    });
+    // Worst first, so the interesting rows survive any truncation. Availability
+    // leads the ordering for a web test, loss for a network one.
+    rows.sort((a, b) => ((a.avail == null ? 101 : a.avail) - (b.avail == null ? 101 : b.avail))
+      || ((b.loss || 0) - (a.loss || 0)) || ((b.lat || 0) - (a.lat || 0)));
+
+    /* The literal failure string for the focused round — "DNS: Timeout while
+       contacting DNS servers (12)" and the like. This is what the TE UI puts
+       under Errors and Warnings, and it is strictly better evidence than any
+       metric: it names the phase AND the reason. Only fetched when the page is
+       parked on a round (that is the roundId this endpoint needs) and only for
+       browser-ish test types that produce datapoints. */
+    const errDetail = [];
+    if (onRound && (typeKey === 'Page' || typeKey === 'Http' || typeKey === 'WebTransaction')) {
+      let probeIds = rows.map((r) => r.id);
+      if (!probeIds.length) {
+        try { probeIds = subject && subject._agentsLoaded ? getTestAgentIds(subject).map(String) : []; } catch (_) { probeIds = []; }
+      }
+      const picked = probeIds.slice(0, TEP_BRAIN_MAX_ERR_DETAIL);
+      const texts = await Promise.all(picked.map((aid) =>
+        tepBrainErrorText(testId, aid, pageTime.focusSec).catch(() => null)));
+      picked.forEach((aid, i) => {
+        if (texts[i]) {
+          errDetail.push({
+            id: aid, name: tepBrainAgentMeta(aid, agentNames).name,
+            text: texts[i].text, layer: texts[i].layer,
+          });
+        }
+      });
+    }
+
+    let strip = null;
+    const stripAgent = rows.length ? rows[0].id
+      : (() => { try { return subject && subject._agentsLoaded ? String(getTestAgentIds(subject)[0] || '') : ''; } catch (_) { return ''; } })();
+    const ivl = Number(subject && subject.interval) > 0 ? Number(subject.interval) : 300;
+    /* Fetched for EVERY brief, not only a focused round: besides the strip
+       itself, the response's last chunk is the only thing that tells a live
+       brief which round id to trace at. Without it there were no path traces
+       at all unless the user happened to be parked on a round. */
+    for (const spec of TEP_BRAIN_AVAIL_TIMELINES.concat([TEP_BRAIN_LOSS_TIMELINE])) {
+      // eslint-disable-next-line no-await-in-loop -- candidates are tried in
+      // order and the first that answers wins; a dead one is never retried.
+      strip = await tepBrainTimeline(testId, stripAgent, spec, ivl).catch(() => null);
+      if (strip) { strip.agent = stripAgent; break; }
+    }
+    /* Latency strip, always. Two jobs: it shows the shape of the degradation
+       alongside availability, and it decides WHICH rounds get traced — the
+       point of a trace is to see what the path looked like when latency was
+       up, so tracing only the focused round throws away the comparison. */
+    const latStrip = await tepBrainTimeline(testId, stripAgent, TEP_BRAIN_LAT_TIMELINE, ivl)
+      .catch(() => null);
+    if (latStrip) latStrip.agent = stripAgent;
+
+    /* SAME AGENT, SAME MINUTES.
+       The decisive correlation question is not "is this agent bad on average
+       elsewhere" but "did its other tests move at the SAME MOMENT". A mean
+       cannot answer that; aligned per-round strips can. Pick the siblings most
+       worth looking at from the matrix we already hold, then pull each one's
+       latency timeline over the same bins. */
+    const sibStrips = [];
+    if (stripAgent) {
+      const cand = new Map();
+      for (const mx of [CTX.loss || loss, CTX.lat || lat]) {
+        if (!mx) continue;
+        for (const [oid, byAgent] of mx.byTest) {
+          if (oid === testId || !byAgent.has(stripAgent)) continue;
+          const v = Number(byAgent.get(stripAgent));
+          if (!Number.isFinite(v)) continue;
+          cand.set(oid, Math.max(cand.get(oid) || 0, v));
+        }
+      }
+      const ranked = [...cand.entries()].sort((a, b) => b[1] - a[1])
+        .slice(0, TEP_BRAIN_SIBLING_STRIPS).map((e) => e[0]);
+      const pulled = await Promise.all(ranked.map((oid) => {
+        const ot = list.find((x) => String(x && (x.testId != null ? x.testId : x.id)) === oid) || null;
+        const oIvl = Number(ot && ot.interval) > 0 ? Number(ot.interval) : ivl;
+        return tepBrainTimeline(oid, stripAgent, TEP_BRAIN_LAT_TIMELINE, oIvl).catch(() => null);
+      }));
+      ranked.forEach((oid, i) => {
+        if (!pulled[i] || !pulled[i].values.length) return;
+        const ot = list.find((x) => String(x && (x.testId != null ? x.testId : x.id)) === oid) || null;
+        sibStrips.push({ id: oid, name: tepBrainTestName(oid, ot, testNames), strip: pulled[i] });
+      });
+    }
+
+    /* Path presence at the failing round vs the round before it. */
+    /* WHICH ROUNDS TO TRACE.
+       Not just the focused one. The useful comparison is the focused round
+       against every round whose latency is elevated relative to it, plus one
+       demonstrably clean round as a baseline — that is what lets a reader see
+       the path change rather than merely read one path. */
+    const traceRounds = [];
+    const roundAt = (idx) => {
+      const base = latStrip && latStrip.startRound != null ? latStrip
+        : (strip && strip.startRound != null ? strip : null);
+      if (!base || !(base.step > 0)) return null;
+      return base.startRound + idx * base.step;
+    };
+    const tStep = (latStrip && latStrip.step > 0) ? latStrip.step
+      : ((strip && strip.step > 0) ? strip.step : ivl);
+    let focusRound = onRound ? pageTime.focusSec : null;
+    if (focusRound == null && strip && strip.startRound != null && strip.step > 0) {
+      focusRound = strip.startRound + (strip.values.length - 1) * strip.step;
+    }
+    if (focusRound != null) traceRounds.push({ t: focusRound, why: 'the round under investigation' });
+    if (latStrip && latStrip.values.length) {
+      const vals = latStrip.values;
+      let focusIdx = -1;
+      if (latStrip.startRound != null && latStrip.step > 0 && focusRound != null) {
+        const i = Math.round((focusRound - latStrip.startRound) / latStrip.step);
+        if (i >= 0 && i < vals.length) focusIdx = i;
+      }
+      const finite = vals.filter((v) => v != null && Number.isFinite(v));
+      const sorted = finite.slice().sort((a, b) => a - b);
+      const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+      const focusVal = focusIdx >= 0 ? vals[focusIdx] : null;
+      // "Above the highlighted spot" when there is one, else above the median.
+      const bar = (focusVal != null && Number.isFinite(focusVal)) ? focusVal
+        : (median != null ? median * 1.5 : null);
+      if (bar != null) {
+        const cands = [];
+        for (let i = 0; i < vals.length; i++) {
+          if (i === focusIdx) continue;
+          const v = vals[i];
+          if (v == null || !Number.isFinite(v)) continue;
+          if (v > bar) cands.push({ i, v });
+        }
+        cands.sort((a, b) => b.v - a.v);
+        for (const c of cands) {
+          if (traceRounds.length >= TEP_BRAIN_TRACE_ROUNDS - 1) break;
+          const t = roundAt(c.i);
+          if (t != null) traceRounds.push({ t, why: 'latency ' + Math.round(c.v) + 'ms, above the focus round' });
+        }
+      }
+      // One clean baseline so the elevated paths have something to differ from.
+      if (sorted.length) {
+        let bestIdx = -1;
+        let bestVal = Infinity;
+        for (let i = 0; i < vals.length; i++) {
+          const v = vals[i];
+          if (v == null || !Number.isFinite(v) || i === focusIdx) continue;
+          if (v < bestVal) { bestVal = v; bestIdx = i; }
+        }
+        const t = bestIdx >= 0 ? roundAt(bestIdx) : null;
+        if (t != null && !traceRounds.some((r) => r.t === t)) {
+          traceRounds.push({ t, why: 'cleanest round in the window, ' + Math.round(bestVal) + 'ms - baseline' });
+        }
+      }
+    }
+    if (!traceRounds.length && focusRound != null) traceRounds.push({ t: focusRound, why: 'current round' });
+    const traced = await Promise.all(traceRounds.slice(0, TEP_BRAIN_TRACE_ROUNDS).map(async (r) => ({
+      ...r, path: await tepBrainPathProbe(testId, r.t, tStep).catch(() => null),
+    })));
+
+
+    /* The round-by-round strip. One value per bin either side of the focused
+       round, which turns "97.9% mean" into something a reader can count. */
+    const flaggedRows = rows.filter((r) => r.flagged);
+    const subjHost = tepBrainHost(subject);
+    const hostUsable = tepBrainHostIsReal(subjHost);
+    const typeLabel = (typeof TYPE_LABELS === 'object' && TYPE_LABELS[typeKey]) || typeKey || '?';
+    const L = [];
+    const omitted = [];
+
+    L.push('### HOW TO READ THIS');
+    L.push('A ThousandEyes triage snapshot from the TE-Optics panel. One test is the');
+    L.push('subject; every other row exists so you can compare against it.');
+    L.push('');
+    L.push('Metrics, as ThousandEyes defines them:');
+    L.push('  loss   percent of probes sent that got no reply');
+    L.push('  lat    average round-trip time, ms');
+    L.push('  avail  100% when that round returned HTTP 2xx/3xx, 0% otherwise');
+    L.push('  ttfb   request start (including DNS) to first response byte, ms');
+    L.push('  dns    name-resolution time for the round, ms');
+    L.push('  errs   COUNT of rounds that failed AT THAT PHASE, by phase name');
+    L.push('         (dns / conn / ssl / http). Only non-zero phases are shown.');
+    L.push('         A non-zero phase names the layer that broke, and is the');
+    L.push('         strongest single signal in this brief.');
+    L.push('THE LAYERS ARE INDEPENDENT. A test can show 0% loss and 1ms latency at');
+    L.push('the network layer while the web layer is failing completely, and the');
+    L.push('reverse. Never infer one layer from the other.');
+    L.push('Reference: https://docs.thousandeyes.com/product-documentation/tests/'
+      + 'thousandeyes-metrics-what-do-your-results-mean');
+    L.push('');
+    L.push('"!!" marks a row past a flag threshold. "[ok]" marks a known-healthy');
+    L.push('comparator, included on purpose so breadth is judgeable.');
+    L.push('');
+    L.push('### HOW TO TRIAGE   (how to WORK IT OUT, not how to lay out the answer)');
+    L.push(' 1 BREADTH    how many agents on the subject test are bad?');
+    L.push('              all -> the target or its provider · exactly one -> that');
+    L.push('              agent\'s own network · several sharing an ISP or region ->');
+    L.push('              transit between them and the target.');
+    L.push('              A SINGLE reporting agent means breadth is UNKNOWN, not good.');
+    L.push(' 2 AGENT      is a flagged agent also bad on its other tests? if yes the');
+    L.push('              agent or its uplink is the suspect, not this target.');
+    L.push(' 3 TARGET     are other tests to the SAME host also bad?');
+    L.push(' 4 EXTERNAL   does a listed alert already explain it? Then look OUTSIDE');
+    L.push('              this brief: if you can browse, check the status page and');
+    L.push('              recent news of every provider named here — the target\'s');
+    L.push('              operator and each ASN in the path traces (Cloudflare, AWS,');
+    L.push('              Azure, Google, Akamai, the ISPs) — for an incident whose');
+    L.push('              timing overlaps the window in CAPTURE. A provider-side');
+    L.push('              outage explains far more than any local theory, so rule it');
+    L.push('              in or out before blaming the customer network.');
+    L.push('These are your reasoning steps. Do NOT make them the headings of your');
+    L.push('reply — see HOW TO ANSWER at the end.');
+    L.push('');
+    L.push('RULES');
+    L.push(' - Read COVERAGE first. Anything it lists as absent is UNKNOWN, never');
+    L.push('   "fine". Do not call a test healthy on the strength of a layer that');
+    L.push('   was never measured.');
+    L.push(' - MISSING MEASUREMENTS ARE THEMSELVES EVIDENCE. A round that fails');
+    L.push('   early — name resolution above all — never reaches the later');
+    L.push('   measurements, so loss, latency, TTFB and path data come back empty.');
+    L.push('   If agents are assigned but nothing reported, treat "no data" as a');
+    L.push('   failing test and look at errs and the alert text, not as a gap.');
+    L.push(' - Answer "insufficient data" where that is honest, and say what you');
+    L.push('   would need to settle it.');
+    L.push(' - Use only what is written below for the MEASUREMENTS. Do not invent');
+    L.push('   agents, tests, hosts or numbers that are not here.');
+    L.push(' - Provider status is the one thing you SHOULD look up outside this');
+    L.push('   brief, because the brief cannot see it. But report only what you');
+    L.push('   actually found: cite the status page or article and its timestamp,');
+    L.push('   and if you could not check, say "I could not check provider status"');
+    L.push('   and name which providers are worth checking. Never assert or imply');
+    L.push('   an outage you did not verify — a confidently invented AWS incident');
+    L.push('   is worse than no answer at all.');
+    L.push('');
+    /* Output shape. Put this LAST, immediately before the data: it is the
+       instruction models follow most reliably from that position, and the
+       register it asks for is the opposite of what they produce by default. */
+    L.push('### HOW TO ANSWER   (follow this shape)');
+    L.push('');
+    L.push('FIRST, two or three sentences of plain English. Write it the way you');
+    L.push('would answer a colleague who leaned over and asked "what happened?".');
+    L.push('Say what broke, where, when, and whether it is still broken. That is');
+    L.push('all. No headings, no bullets, no numbered steps, no metric names, no');
+    L.push('confidence score, no restating the question, no preamble. If you do');
+    L.push('not know, say so in one sentence and say what you would look at next.');
+    L.push('');
+    L.push('Like this:');
+    L.push('  "DNS broke for about five minutes on the 16th. The Raleigh agent');
+    L.push('   couldn\'t look up google.com at 12:05, so the page never loaded —');
+    L.push('   one bad round and it recovered on its own. Nothing else that');
+    L.push('   agent runs was affected, so this was name resolution, not the');
+    L.push('   network or Google."');
+    L.push('');
+    L.push('NOT like this:');
+    L.push('  "1. BREADTH — Finding: Insufficient data. Evidence: Agents');
+    L.push('   reporting: 1. Per the triage rule, a single reporting agent..."');
+    L.push('');
+    L.push('THEN a line "---" and a section headed "Detail", where you may be as');
+    L.push('analytical as you like: walk the four questions above, quote the rows');
+    L.push('you used, give a confidence level, and list anything you would need to');
+    L.push('be sure. Everything technical belongs down there, not up top.');
+    L.push('');
+
+    L.push('### CAPTURE');
+    L.push('Test     ' + testId + ' · ' + tepBrainTestName(testId, subject, testNames)
+      + (subject ? ' · ' + typeLabel : ''));
+    if (subject) {
+      const bits = [];
+      if (subjHost) bits.push('target ' + subjHost);
+      if (subject.interval) bits.push(subject.interval + 's interval');
+      bits.push(subject.alertsConfigured ? 'alerts configured' : 'no alert rules');
+      L.push('Config   ' + bits.join(' · '));
+    }
+    if (pageTime) {
+      const at = new Date(pageTime.atMs);
+      const stamp = at.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+      if (onRound) {
+        L.push('Window   THE SINGLE ROUND at ' + stamp
+          + ' (' + DASH_METRICS_WINDOWS[NARROW_IDX].label + ' around it)');
+        L.push('         ANCHORED to the exact round the ThousandEyes page is showing.');
+        L.push('         These numbers describe that one measurement, not an average'
+          + ' — a value here IS that round\'s value.');
+      } else {
+        L.push('Window   ' + DASH_METRICS_WINDOWS[ctxIdx].label + ' ending ' + stamp);
+        L.push('         ANCHORED to the time the ThousandEyes page is showing, not to now.');
+      }
+      L.push('         Roughly ' + Math.round((Date.now() - pageTime.atMs) / 3600000)
+        + 'h before the capture time below.');
+    } else {
+      L.push('Window   ' + tepMetricsWindowPhrase() + ' (panel Data Window, live)'
+        + (tepMetricsIsAsOf() ? ' · as of ' + tepMetricsAsOfLabel() : ''));
+    }
+    L.push('Taken    ' + new Date().toISOString().replace('T', ' ').slice(0, 19) + 'Z'
+      + ' · TE-Optics v' + TEP_VERSION);
+    L.push('');
+
+    /* COVERAGE is the antidote to a confident "looks healthy" drawn from data
+       that was never in the brief. It names the layers present AND absent, so
+       absence reads as unknown instead of good. */
+    const FAM_LABEL = {
+      loss: 'loss', lat: 'lat', avail: 'avail', ttfb: 'ttfb', dns: 'dns',
+      errDns: 'dns-errors', errConn: 'connect-errors', errSsl: 'ssl-errors',
+      errHttp: 'http-errors', errTotal: 'total-errors',
+    };
+    L.push('### COVERAGE   (read before concluding)');
+    L.push('In this snapshot      ' + (keys.filter((k) => M[k]).map((k) => FAM_LABEL[k] || k).join(', ') || 'nothing'));
+    const absent = keys.filter((k) => !M[k]).map((k) => FAM_LABEL[k] || k);
+    if (!isWebTest) absent.push('web layer (not a web test type)');
+    if (!errDetail.length) {
+      absent.push(onRound ? 'per-agent error text for this round (none returned)'
+        : 'per-agent error text (only available on a specific round)');
+    }
+    if (!strip) absent.push('per-round strip (no timeline endpoint answered)');
+    if (!latStrip) absent.push('per-round latency');
+    if (!sibStrips.length) absent.push('per-round strips for sibling tests');
+    if (!traced.some((r) => r.path && r.path.traces.length)) absent.push('path visualisation (no round returned a route)');
+    absent.push('BGP reachability', 'provider/Internet outage feed');
+    if (!onRound) absent.push('per-round detail - these are WINDOW AVERAGES, and a single failed round can average away to nothing here');
+    L.push('NOT in this snapshot  ' + absent.join(' · '));
+    L.push('Time basis            ' + (onRound
+      ? 'ONE ROUND at ' + new Date(pageTime.atMs).toISOString().replace('T', ' ').slice(0, 19)
+        + 'Z for section 1 (not an average, so a single failure cannot be hidden)'
+        + '; the surrounding ' + DASH_METRICS_WINDOWS[ctxIdx].label
+        + ' for the context block and for sections 2 and 3'
+      : 'single aggregate over '
+        + (pageTime
+          ? DASH_METRICS_WINDOWS[ctxIdx].label + ' ending '
+            + new Date(pageTime.atMs).toISOString().replace('T', ' ').slice(0, 16) + 'Z'
+          : tepMetricsWindowPhrase())
+        + '; nothing here shows when within it a change began'));
+    let assignedCount = null;
+    try {
+      if (subject && subject._agentsLoaded) assignedCount = getTestAgentIds(subject).length;
+    } catch (_) { assignedCount = null; }
+    L.push('Agents assigned       ' + (assignedCount == null ? 'unknown (config not loaded)' : assignedCount));
+    L.push('Agents reporting      ' + rows.length
+      + (rows.length === 1 ? '  <- BREADTH CANNOT BE ASSESSED from one agent' : ''));
+    L.push('');
+
+    /* Zero reports is a FINDING, not a gap — see the rule in HOW TO READ THIS.
+       Spelling the reasoning out here, next to the evidence, because this is
+       exactly the case the brief used to mishandle. */
+    if (!rows.length) {
+      L.push('### !! NOTHING REPORTED - READ THIS BEFORE CONCLUDING');
+      L.push('No agent returned a single metric for this test in this window'
+        + (assignedCount ? ', though ' + assignedCount + ' agent(s) are assigned to it' : '') + '.');
+      L.push('That is not an empty window; it is a test that is not completing.');
+      L.push('The usual causes, most likely first:');
+      L.push('  1 the round fails at NAME RESOLUTION, so nothing downstream is');
+      L.push('    ever measured and every metric above comes back blank;');
+      L.push('  2 the round fails at connect/TLS for the same reason;');
+      L.push('  3 the test is disabled, or its agents are offline/unassigned;');
+      L.push('  4 the target itself is unreachable from every vantage point.');
+      L.push('Distinguish them with the ACTIVE ALERTS text below (an error-present');
+      L.push('rule carries the actual failure string), the test\'s enabled state,');
+      L.push('and whether sibling tests from the same agents DID report.');
+      L.push('Do NOT report this test healthy, and do NOT report it as merely');
+      L.push('lacking data without naming the above as the likely cause.');
+      L.push('');
+    }
+
+    L.push('### WHAT STANDS OUT');
+    if (!rows.length) {
+      L.push('No network metrics reported for this test in the current window.');
+    } else if (!flaggedRows.length) {
+      L.push('No flagged agent: all ' + rows.length + ' reporting agent(s) are within'
+        + ' thresholds on the metrics listed in COVERAGE'
+        + (rows.length === 1 ? ', but that is ONE agent and one window — it rules out very little.' : '.'));
+    } else {
+      L.push(flaggedRows.length + ' of ' + rows.length + ' agent(s) flagged: '
+        + flaggedRows.slice(0, 4).map((r) => r.name
+          + ' (' + tepBrainLoss(r.loss) + ', ' + tepBrainLat(r.lat)
+          + tepBrainWeb(r).replace(/^ {2}/, ', ').replace(/ {2}/g, ', ') + ')').join('; ')
+        + (flaggedRows.length > 4 ? '; and ' + (flaggedRows.length - 4) + ' more' : ''));
+    }
+    L.push('');
+
+    if (errDetail.length) {
+      L.push('### !! ERROR TEXT REPORTED BY THE AGENTS FOR THIS ROUND');
+      L.push('ThousandEyes\' own failure string. This is the most direct evidence in');
+      L.push('the brief — it names both the phase and the reason. Lead with it.');
+      for (const e of errDetail) {
+        L.push('  ' + e.name + ' [' + e.layer + ' layer]: ' + e.text);
+      }
+      L.push('  NOTE: a test can have several layers and they can disagree —');
+      L.push('  a Page Load test\'s browser layer may succeed while its HTTP');
+      L.push('  Server layer fails. The layer is named above; use it.');
+      L.push('');
+    }
+
+    if (ctxAvail) {
+      const ctxRow = ctxAvail.byTest.get(testId);
+      if (ctxRow && ctxRow.size) {
+        let sum = 0; let n = 0;
+        for (const v of ctxRow.values()) { if (Number.isFinite(v)) { sum += v; n++; } }
+        if (n) {
+          const mean = Math.round((sum / n) * 10) / 10;
+          const winSec = DASH_METRICS_WINDOWS[ctxIdx].sec;
+          const ivl = Number(subject && subject.interval) > 0 ? Number(subject.interval) : null;
+          // A MEAN cannot be read as a verdict: 97.9% over 4h of 5-minute
+          // rounds is ONE bad round out of 48, i.e. perfectly isolated. Convert
+          // it to a round count, which is what the number actually means.
+          const totalRounds = ivl ? Math.max(1, Math.round(winSec / ivl)) : null;
+          const badRounds = totalRounds != null
+            ? Math.round(totalRounds * (100 - mean) / 100) : null;
+          L.push('### SURROUNDING ' + DASH_METRICS_WINDOWS[ctxIdx].label.toUpperCase()
+            + '   (is this a blip or a pattern?)');
+          L.push('  mean availability over the surrounding window: ' + mean + '%');
+          /* When the per-round strip is present it is strictly better evidence
+             than a mean, and the two must never be allowed to contradict each
+             other in the same brief — a reader cannot adjudicate that. The
+             strip owns the verdict; this block stays as supporting context. */
+          if (strip && strip.values.length) {
+            L.push('  (see the PER-ROUND STRIP below for what actually failed and when —');
+            L.push('   it, not this mean, is the basis for judging blip vs pattern.)');
+          } else if (totalRounds != null) {
+            L.push('  that is about ' + badRounds + ' failed round(s) out of ~' + totalRounds
+              + ' at this test\'s ' + ivl + 's interval.');
+            L.push(badRounds <= 1
+              ? '  -> ISOLATED: a single bad round, not a standing fault.'
+              : (badRounds <= Math.max(2, totalRounds * 0.1)
+                ? '  -> INTERMITTENT: a handful of failures across the window.'
+                : '  -> SUSTAINED: the failure recurs through much of the window.'));
+          }
+          L.push('');
+        }
+      }
+    }
+
+    if (strip && strip.values.length) {
+      const meta = tepBrainAgentMeta(strip.agent, agentNames);
+      // Locate the focused round in the series when the response dated itself.
+      let focusIdx = -1;
+      if (onRound && strip.startRound != null && strip.step > 0) {
+        focusIdx = Math.round((pageTime.focusSec - strip.startRound) / strip.step);
+        if (focusIdx < 0 || focusIdx >= strip.values.length) focusIdx = -1;
+      }
+      const from = focusIdx >= 0 ? Math.max(0, focusIdx - TEP_BRAIN_STRIP_SPAN) : Math.max(0, strip.values.length - (TEP_BRAIN_STRIP_SPAN * 2 + 1));
+      const to = focusIdx >= 0 ? Math.min(strip.values.length, focusIdx + TEP_BRAIN_STRIP_SPAN + 1) : strip.values.length;
+      const slice = strip.values.slice(from, to);
+      const cells = slice.map((v) => (v == null ? '-' : String(Math.round(v * 10) / 10)));
+      L.push('### PER-ROUND STRIP   (round by round, oldest first)');
+      L.push('  ' + meta.name + ' · ' + strip.label + ' · one value per '
+        + strip.step + 's round'
+        + (strip.startRound != null
+          ? ' · from ' + new Date((strip.startRound + from * strip.step) * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z'
+          : ' · timestamps unavailable'));
+      L.push('  ' + cells.join(' '));
+      if (focusIdx >= 0) {
+        const pad = cells.slice(0, focusIdx - from).reduce((n, c) => n + c.length + 1, 0);
+        L.push('  ' + ' '.repeat(pad) + '^ the round under investigation');
+      }
+      const bad = slice.filter((v) => v != null && (strip.label.indexOf('availability') >= 0 ? v < 100 : v > 0)).length;
+      L.push('  ' + bad + ' of ' + slice.length + ' round(s) in this strip are not clean'
+        + (bad === 1 ? ' — a single isolated failure.' : (bad === 0 ? '.' : ' — the failure repeats.')));
+      // Latency over the SAME bins, so the two strips read as one time axis.
+      if (latStrip && latStrip.values.length) {
+        const lslice = latStrip.values.slice(from, to);
+        if (lslice.length) {
+          L.push('  ' + latStrip.label + ':');
+          L.push('  ' + lslice.map((v) => (v == null ? '-' : String(Math.round(v)))).join(' '));
+        }
+      }
+      L.push('');
+    }
+
+    if (sibStrips.length && strip) {
+      L.push('### SAME AGENT, SAME MINUTES   (did its other tests move too?)');
+      L.push('Latency per round for other tests this agent runs, over the same');
+      L.push('window. If they all step together the agent or its uplink is the');
+      L.push('suspect; if only the subject moves, the problem is specific to that');
+      L.push('target or its path.');
+      for (const ss of sibStrips) {
+        const v = ss.strip.values.slice(-TEP_BRAIN_STRIP_SPAN * 2 - 1);
+        L.push('  ' + ss.name + ' (' + ss.strip.step + 's bins): '
+          + v.map((x) => (x == null ? '-' : String(Math.round(x)))).join(' '));
+      }
+      L.push('');
+    }
+
+    if (traced.length) {
+      L.push('### PATH TRACES   (hop by hop, every agent, for each round below)');
+      L.push('Rounds were chosen to make the path COMPARABLE: the round under');
+      L.push('investigation, every round whose latency sits above it, and one clean');
+      L.push('round as a baseline. Diff the hop lists against each other — a hop that');
+      L.push('appears, vanishes, or gains latency between them is the thing to chase.');
+      L.push('');
+      for (const r of traced) {
+        const when = new Date(r.t * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+        L.push('  --- ' + when + '  (' + r.why + ')');
+        if (!r.path) { L.push('      path data unavailable for this round'); continue; }
+        if (!r.path.traces.length) {
+          L.push('      NO PATH RECORDED - no route and no destination IP for this round');
+          continue;
+        }
+        for (const t of r.path.traces) {
+          L.push('      ' + (t.agentName || ('agent ' + t.agentId))
+            + ' -> ' + (t.dest || 'destination')
+            + '  (' + t.hops.length + ' hops, ' + t.totalMs + 'ms total)');
+          for (const h of t.hops) {
+            const net = h.asn != null ? ('AS' + h.asn + (h.asName ? ' ' + h.asName : '')) : (h.asName || '');
+            L.push('        ' + String(h.n).padStart(2, ' ') + '  '
+              + (h.ip || '*').padEnd(16, ' ') + '  '
+              + String(h.ms + 'ms').padStart(7, ' ')
+              + (h.lossPct != null && h.lossPct > 0 ? '  LOSS ' + h.lossPct + '%' : '')
+              + (net ? '  ' + net : '')
+              + (h.location ? '  ' + h.location : '')
+              + (h.dest ? '  [destination]' : ''));
+          }
+          if (t.truncated) L.push('        ... further hops omitted (capped at ' + TEP_BRAIN_MAX_HOPS + ')');
+        }
+      }
+      const focusTraced = traced[0];
+      const others = traced.slice(1).filter((r) => r.path && r.path.traces.length);
+      if (focusTraced && focusTraced.path && !focusTraced.path.traces.length && others.length) {
+        L.push('');
+        L.push('  -> Other rounds in this window traced a full path and the round under');
+        L.push('     investigation traced none. A round with no destination IP never');
+        L.push('     resolved the name, so there was nothing to trace to. That absence');
+        L.push('     is positive evidence of a NAME RESOLUTION failure, not missing data.');
+      }
+      L.push('');
+    }
+
+    L.push('### 1 · THIS TEST BY AGENT   (breadth)');
+    if (!rows.length) {
+      L.push('(none)');
+    } else {
+      for (const r of rows) {
+        L.push('  ' + (r.flagged ? '!! ' : '[ok] ') + r.name
+          + (r.loc ? '  ' + r.loc : '')
+          + '  ' + tepBrainLoss(r.loss)
+          + '  ' + tepBrainLat(r.lat)
+          + tepBrainWeb(r));
+      }
+    }
+    L.push('');
+
+    L.push('### 2 · FLAGGED AGENTS, THEIR OTHER TESTS   (correlation + controls)');
+    if (!flaggedRows.length) {
+      L.push('(no flagged agents — section skipped)');
+    } else {
+      for (const r of flaggedRows) {
+        // Sibling set is the UNION across both metrics: keying it off the loss
+        // matrix alone would hide every sibling whenever loss is unavailable
+        // but latency is, and the latency lookup must be guarded on its own
+        // matrix (lat) rather than on the SUBJECT's latency row (latRow).
+        /* Siblings are judged over the SURROUNDING window where one exists.
+           Comparing them across a single 5-minute round is near-meaningless —
+           most would show one sample or none. */
+        const sLoss = CTX.loss || loss;
+        const sLat = CTX.lat || lat;
+        const sibIds = new Set();
+        if (sLoss) for (const [oid, byAgent] of sLoss.byTest) { if (oid !== testId && byAgent.has(r.id)) sibIds.add(oid); }
+        if (sLat) for (const [oid, byAgent] of sLat.byTest) { if (oid !== testId && byAgent.has(r.id)) sibIds.add(oid); }
+        const sib = [];
+        for (const otherId of sibIds) {
+          const ot = list.find((x) => String(x && (x.testId != null ? x.testId : x.id)) === otherId) || null;
+          const lossOther = sLoss ? sLoss.byTest.get(otherId) : null;
+          const latOther = sLat ? sLat.byTest.get(otherId) : null;
+          const lo = lossOther ? lossOther.get(r.id) : null;
+          const la = latOther ? latOther.get(r.id) : null;
+          const bad = (Number.isFinite(lo) && lo >= TEP_BRAIN_LOSS_FLAG)
+            || (Number.isFinite(la) && la >= TEP_BRAIN_LAT_FLAG_MS);
+          sib.push({ id: otherId, name: tepBrainTestName(otherId, ot, testNames), loss: lo, lat: la, bad });
+        }
+        // Correlated (bad) first, worst-first; then a few explicit controls.
+        const badSibs = sib.filter((s) => s.bad)
+          .sort((a, b) => ((b.loss || 0) - (a.loss || 0)) || ((b.lat || 0) - (a.lat || 0)))
+          .slice(0, TEP_BRAIN_MAX_SIBLINGS);
+        const okSibs = sib.filter((s) => !s.bad)
+          .sort((a, b) => (a.loss || 0) - (b.loss || 0))
+          .slice(0, TEP_BRAIN_MAX_CONTROLS);
+        L.push('  ' + r.name + ' \u2014 ' + sib.length + ' other test(s) reporting'
+          + (CTX.loss || CTX.lat ? ' over the surrounding '
+            + DASH_METRICS_WINDOWS[ctxIdx].label : ' in this window') + ':');
+        if (!sib.length) L.push('    (none \u2014 no other test from this agent reported)');
+        for (const s of badSibs) {
+          L.push('    !!   ' + s.name + '  ' + tepBrainLoss(s.loss) + '  ' + tepBrainLat(s.lat));
+        }
+        for (const s of okSibs) {
+          L.push('    [ok] ' + s.name + '  ' + tepBrainLoss(s.loss) + '  ' + tepBrainLat(s.lat));
+        }
+        const shown = badSibs.length + okSibs.length;
+        if (sib.length > shown) {
+          const hiddenBad = sib.filter((s) => s.bad).length - badSibs.length;
+          L.push('    ... ' + (sib.length - shown) + ' more not shown'
+            + (hiddenBad > 0 ? ' (' + hiddenBad + ' of them also degraded)' : ' (all healthy)'));
+        }
+      }
+    }
+    L.push('');
+
+    L.push('### 3 · OTHER TESTS TO THE SAME HOST   (target corroboration)');
+    /* Correlate ONLY on a host specific enough to mean something. Without this
+       guard an unresolvable target matched every other unresolvable target and
+       the brief asserted that Zoom, M365 and internal apps shared a host —
+       actively misleading rather than merely unhelpful. */
+    const sameHost = hostUsable
+      ? list.filter((x) => {
+        const xid = String(x && (x.testId != null ? x.testId : x.id));
+        if (xid === testId) return false;
+        const xh = tepBrainHost(x);
+        return tepBrainHostIsReal(xh) && xh === subjHost;
+      })
+      : [];
+    if (!hostUsable) {
+      L.push('(skipped: this test\'s target is not a single resolvable host'
+        + (subjHost ? ' ("' + subjHost + '")' : '')
+        + ', so no same-host comparison is possible. Treat as UNKNOWN, not clean.)');
+    } else if (!sameHost.length) {
+      L.push('(no other test targets ' + subjHost + ')');
+    } else {
+      for (const x of sameHost.slice(0, 6)) {
+        const xid = String(x.testId != null ? x.testId : x.id);
+        const lr = (CTX.loss || loss) && (CTX.loss || loss).byTest.get(xid);
+        const ar = (CTX.lat || lat) && (CTX.lat || lat).byTest.get(xid);
+        const avg = (m) => {
+          if (!m || !m.size) return null;
+          let s = 0; let n = 0;
+          for (const v of m.values()) { if (Number.isFinite(v)) { s += v; n++; } }
+          return n ? s / n : null;
+        };
+        const xType = (typeof TYPE_LABELS === 'object' && TYPE_LABELS[x.testType]) || x.testType || '?';
+        L.push('  ' + (x.name || xid) + ' (' + xType + ')'
+          + '  ' + tepBrainLoss(avg(lr)) + '  ' + tepBrainLat(avg(ar))
+          + '  [mean across its agents]');
+      }
+      if (sameHost.length > 6) omitted.push((sameHost.length - 6) + ' same-host tests');
+    }
+    L.push('');
+
+    L.push('### 4 · ACTIVE ALERTS');
+    // Rows come from TE's internal alert _search, which nests the rule and test
+    // under _embedded (NOT the flat rule/test of the public v7 shape) and dates
+    // the alert via several possible fields — hence tepAlertStartMs.
+    const alertRows = (alertsData && Array.isArray(alertsData.rows)) ? alertsData.rows : [];
+    const alertTestId = (a) => {
+      const t = a && a._embedded && a._embedded.test;
+      return String((t && t.id != null ? t.id : (a && a.testId))) ;
+    };
+    const mine = alertRows.filter((a) => alertTestId(a) === testId);
+    if (!alertRows.length) {
+      L.push('(alert list not loaded in this panel session)');
+    } else if (!mine.length) {
+      L.push('(no active alert on this test; ' + alertRows.length + ' active elsewhere in the account)');
+    } else {
+      for (const a of mine) {
+        const r = (a._embedded && a._embedded.rule) || {};
+        const startMs = tepAlertStartMs(a);
+        const expr = r.expressionText || r.expression || '';
+        L.push('  ' + String(a.severity || '?').toUpperCase() + '  ' + (r.name || 'rule')
+          + (expr ? '  "' + expr + '"' : '')
+          + (startMs ? '  since ' + new Date(startMs).toISOString().replace('T', ' ').slice(0, 16) + 'Z' : '')
+          + (a.violationCount != null ? '  ' + a.violationCount + ' violation(s)' : ''));
+      }
+    }
+    L.push('');
+
+    // Path detail only when the user already drew this test's trace — the hops
+    // are then in memory, and the per-ISP rollup is the useful summary of them
+    // rather than every hop.
+    const drawn = (typeof tepTraceIsOn === 'function' && tepTraceIsOn(testId))
+      ? (dashMapTraces.get(testId) || null) : null;
+    if (drawn) {
+      L.push('### 5 · PATH BY ISP   (from the drawn trace)');
+      let isps = [];
+      try { isps = tepTraceIspAggregates([drawn]) || []; } catch (_) { isps = []; }
+      if (!isps.length) L.push('(trace drawn but no per-ISP rollup available)');
+      for (const g of isps.slice(0, 8)) {
+        L.push('  ' + g.isp + '  ' + g.count + ' agent(s)'
+          + '  ' + tepBrainLoss(g.avgLoss)
+          + '  ' + tepBrainLat(g.avgLat));
+      }
+      L.push('');
+    }
+
+    if (omitted.length) {
+      L.push('### OMITTED');
+      L.push('  ' + omitted.join(' · '));
+      L.push('');
+    }
+
+    let text = L.join('\n');
+    let truncated = false;
+    if (text.length > TEP_BRAIN_MAX_BYTES) {
+      text = text.slice(0, TEP_BRAIN_MAX_BYTES)
+        + '\n\n[truncated at ' + TEP_BRAIN_MAX_BYTES + ' characters]';
+      truncated = true;
+    }
+    return {
+      text,
+      meta: {
+        bytes: text.length, truncated, agents: rows.length, flagged: flaggedRows.length,
+        anchoredAtMs: pageTime ? pageTime.atMs : null,
+      },
+    };
+  }
+
+  /** The card click-handler branch for data-action="brain". */
+  async function tepHandleBrainAction(tid, btn, e) {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (btn && btn.classList.contains('tep-test-brain--busy')) return;
+    if (btn) btn.classList.add('tep-test-brain--busy');
+    const done = toastProcessing('Building triage brief…');
+    let bundle = null;
+    try {
+      bundle = await tepBuildTriageBundle(tid);
+    } catch (err) {
+      log(`Triage brief: build failed — ${err && err.message ? err.message : err}`, 'tep-log-info');
+    }
+    done();
+    if (btn) btn.classList.remove('tep-test-brain--busy');
+    if (!bundle || !bundle.text) {
+      toast('No metric data available for this test yet', 'err');
+      return;
+    }
+    const label = `Triage brief copied — ${(bundle.meta.bytes / 1024).toFixed(1)} KB, `
+      + `${bundle.meta.agents} agent(s), ${bundle.meta.flagged} flagged`;
+    // Same clipboard path as Copy log: the async API where available, a
+    // hidden textarea where the permission or focus state blocks it.
+    try {
+      await navigator.clipboard.writeText(bundle.text);
+      toast(label, 'ok');
+    } catch (_) {
+      const ta = document.createElement('textarea');
+      ta.value = bundle.text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        toast(label, 'ok');
+      } catch (e2) {
+        toast('Copy failed — clipboard blocked by the browser', 'err');
+      }
+      ta.remove();
+    }
+    log(`Triage brief: ${bundle.meta.bytes} chars, ${bundle.meta.agents} agents, `
+      + `${bundle.meta.flagged} flagged${bundle.meta.truncated ? ', TRUNCATED' : ''} \u2014 `
+      + (bundle.meta.anchoredAtMs
+        ? `anchored to the page's timeline at ${new Date(bundle.meta.anchoredAtMs).toLocaleString()}`
+        : 'live window (page timeline is at/near now, or carries no time in its URL)'),
+    'tep-log-info');
   }
   /** Live-update the speed label on drag and restart the interval so a change
    *  takes effect immediately, not after the current tick elapses. No-op on a
    *  card without the slider (i.e. every card but the active one). */
-  function tepWirePlaybackSlider(card) {
-    const playRange = card.querySelector('.tep-test-playback-range');
-    if (!playRange) return;
-    playRange.addEventListener('input', (e) => {
-      e.stopPropagation();
-      tepPlaybackSetSpeed(e.target.value);
-    });
-    playRange.addEventListener('click', (e) => e.stopPropagation());
-  }
-  /** The card click-handler branch for data-action="playback". */
-  function tepHandlePlaybackAction(tid, btn, e) {
-    e.stopPropagation();
-    e.preventDefault();
-    // Toggle: pressing the playing card's button stops it; pressing a
-    // different card's button hands playback over to that card.
-    if (tepPlaybackIsOn(tid)) tepPlaybackStop();
-    else tepPlaybackStart(tid);
-    // Focus sits on our button after the click, which is harmless for the
-    // synthetic events (they go to document.body) but leaves a focus ring
-    // over the page the user is now watching.
-    try { btn.blur(); } catch (_) { /* non-fatal */ }
-  }
 
   function renderTests() {
     closeConvertMenu();
+    tepEnsureManagePlayback();
     const filtered = getFilteredTests();
     testCountEl.textContent = `${filtered.length} test${filtered.length === 1 ? '' : 's'}`;
 
@@ -13521,14 +14918,14 @@
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="clone" title="Create a new test with the same settings (unsaved edits are not included)">Clone</button>
               ${canConvertTest(t) ? '<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="convert" title="Convert to another test type">Convert</button>' : ''}
             </div>
-            ${isActivePageTest ? tepPlaybackBtnHtml(tid) : ''}
+            ${isActivePageTest ? tepBrainBtnHtml(tid) : ''}
             <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
               <circle cx="12" cy="12" r="3" />
             </svg>
             </button>
-            <button type="button" class="tep-btn-danger tep-test-action-icon" data-action="delete" title="Delete" aria-label="Delete">
+            <button type="button" class="tep-btn-danger tep-test-action-icon tep-test-delete" data-action="delete" title="Delete" aria-label="Delete">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -13538,7 +14935,6 @@
             </button>`}
           </div>
         </div>
-        ${isActivePageTest ? tepPlaybackBarHtml(tid) : ''}
         <div class="tep-test-card-meta">
           <span class="tep-test-status-row"><span class="tep-enabled-dot ${enabled}"></span>${statusHtml}</span>
           <span>${target ? String(target).substring(0, 50) : '—'}</span>
@@ -13548,7 +14944,6 @@
         </div>
       `;
 
-      tepWirePlaybackSlider(card);
 
       // Checkbox handler
       card.querySelector('.tep-test-card-check').addEventListener('change', (e) => {
@@ -13562,7 +14957,7 @@
         if (!btn) return;
         const action = btn.dataset.action;
 
-        if (action === 'playback') { tepHandlePlaybackAction(tid, btn, e); return; }
+        if (action === 'brain') { void tepHandleBrainAction(tid, btn, e); return; }
         if (action === 'edit') {
           const dismissLoad = toastProcessing('Loading test…');
           try {
@@ -13589,13 +14984,10 @@
 
       testListEl.appendChild(card);
     }
-    // Playback drives the page via synthetic key events with no visible owner
-    // beyond its card's stop button. If that card is gone (filtered out, list
-    // reloaded, test deleted) the user has no way to stop it, so stop it here
-    // rather than leave it stepping the timeline invisibly.
-    if (tepPlaybackTid != null && !testListEl.querySelector(`.tep-test-card[data-test-id="${tepPlaybackTid}"] .tep-test-play`)) {
-      tepPlaybackStop();
-    }
+    // No card-gone auto-stop any more: the stop button lives in the Manage bar,
+    // which is always rendered, so playback can never be left running with no
+    // visible owner. Killing it here was in fact the bug — a shared test that
+    // filtered out of the list stopped its own playback mid-watch.
     updateManageUnitsTotal();
   }
 
@@ -13645,10 +15037,10 @@
       if (f) f.remove();
     });
     card.classList.add('is-editing');
-    // CSS hides the playback control while editing, so its stop button is no
-    // longer reachable — halt playback rather than leave it stepping the
-    // timeline with no way to switch it off.
-    if (tepPlaybackIsOn(card.dataset.testId)) tepPlaybackStop();
+    // Playback is NOT stopped here any more. It used to be, because the stop
+    // button lived on the card and edit mode hid it; the Manage bar's control
+    // stays reachable in settings mode (see the --playing rules), so opening a
+    // test's settings no longer has to interrupt what the user is watching.
 
     // The list row is a SUMMARY — API tests especially arrive with no Target,
     // Agents, or probe-mode until the full config is fetched. Load it (showing a
@@ -17215,6 +18607,7 @@
   }
 
   function renderEndpointTests() {
+    tepEnsureManagePlayback();
     const listEl = $('#tep-ep-test-list');
     const countEl = $('#tep-ep-test-count');
     if (!listEl) return;
@@ -17274,14 +18667,14 @@
           <span class="tep-type-badge ${typeCss[t.testType] || 'tep-type-other'}">${tepEscapeHtmlText(typeLabel)}</span>
           <a class="tep-test-card-name tep-test-link" href="${tepEscapeHtmlText(viewHref)}" target="_blank" rel="noopener noreferrer">${tepEscapeHtmlText(getEndpointTestName(t))}</a>
           <div class="tep-test-actions">
-            ${isActivePageTest ? tepPlaybackBtnHtml(tid) : ''}
+            ${isActivePageTest ? tepBrainBtnHtml(tid) : ''}
             <button type="button" class="tep-test-action-icon" data-action="edit" title="Settings" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
               <circle cx="12" cy="12" r="3" />
             </svg>
             </button>
-            <button type="button" class="tep-btn-danger tep-test-action-icon" data-action="delete" title="Delete" aria-label="Delete">
+            <button type="button" class="tep-btn-danger tep-test-action-icon tep-test-delete" data-action="delete" title="Delete" aria-label="Delete">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -17291,7 +18684,6 @@
             </button>
           </div>
         </div>
-        ${isActivePageTest ? tepPlaybackBarHtml(tid) : ''}
         <div class="tep-test-card-meta">
           <span class="tep-test-status-row"><span class="tep-enabled-dot ${enabled}"></span>${statusHtml}</span>
           <span title="Test category">${tepEscapeHtmlText(categoryLabel)}</span>
@@ -17300,7 +18692,6 @@
           <span title="${isDynamic ? 'Not applicable for dynamic tests' : 'networkConfig.networkProtocol (+ tcpProbeMode/tcpConnect when Prefer TCP)'}">Probe: ${tepEscapeHtmlText(probeLabel)}</span>
         </div>
       `;
-      tepWirePlaybackSlider(card);
       const cb = card.querySelector('.tep-ep-test-card-check');
       if (cb) {
         cb.addEventListener('change', (e) => {
@@ -17313,7 +18704,7 @@
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         const action = btn.dataset.action;
-        if (action === 'playback') { tepHandlePlaybackAction(tid, btn, e); return; }
+        if (action === 'brain') { void tepHandleBrainAction(tid, btn, e); return; }
         if (action === 'edit') {
           e.stopPropagation();
           e.preventDefault();
