@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.25';
+  const TEP_VERSION = '4.26';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -13534,11 +13534,13 @@
   const TEP_BRAIN_LAT_FLAG_MS = 250;   // latency (ms) at which an agent counts as flagged
   const TEP_BRAIN_AVAIL_FLAG = 100;    // HTTP availability BELOW this is flagged (TE: 2xx/3xx = 100)
   const TEP_BRAIN_TTFB_FLAG_MS = 1000; // time-to-first-byte (ms) at which an agent counts as flagged
-  /* Clipboard budget. Raised once hop-by-hop traces went in: two rounds of a
-     long path can legitimately run to several KB, and silently truncating the
-     correlation tables to fit them would be the worst of both. Still ~7K
-     tokens, which any chat window takes comfortably. */
-  const TEP_BRAIN_MAX_BYTES = 24000;
+  /* Clipboard budget. This is a BACKSTOP against a runaway brief, not a size
+     target — the clipboard itself has no such limit, and truncating real
+     evidence to save bytes is exactly the failure this whole feature exists to
+     avoid. Set high enough that a fully correlated incident (several rounds of
+     hop-by-hop traces across several agents, plus every strip) lands well
+     inside it; any truncation is still reported rather than silent. */
+  const TEP_BRAIN_MAX_BYTES = 100000;
 
   /** The brain button for a card's action row. Active test only, same rule as
    *  playback, and shared by the enterprise and endpoint lists so the two
@@ -13605,14 +13607,27 @@
       errDns: web ? ['NAS-WEB_DNS_ERROR_COUNT'] : null,
       errConn: web ? ['NAS-WEB_CONNECT_ERROR_COUNT'] : null,
       errSsl: web ? ['NAS-WEB_SSL_ERROR_COUNT'] : null,
+      // SEND / RECEIVE / CONTENT were missing, and their absence actively
+      // misled: a fleet-wide "Operation timed out with 0 bytes received" is a
+      // RECEIVE failure, but with only an http bucket to put it in, a model
+      // reported it as an HTTP-layer fault and went looking for 5xx codes that
+      // never existed. Receive-with-zero-bytes means the server accepted the
+      // connection and then said nothing — a different diagnosis entirely.
+      errSend: web ? ['NAS-WEB_SEND_ERROR_COUNT'] : null,
+      errRecv: web ? ['NAS-WEB_RECEIVE_ERROR_COUNT'] : null,
       errHttp: web ? ['NAS-WEB_HTTP_ERROR_COUNT'] : null,
+      errContent: web ? ['NAS-WEB_CONTENT_ERROR_COUNT'] : null,
       errTotal: web ? ['NAS-WEB_TOTAL_ERROR_COUNT'] : null,
     };
   }
   /* Phase-error families, in the order a round executes them — so the brief
      lists them the way the failure actually unfolds. */
+  /* In the order a round executes them, so the brief lists the phases the way
+     the failure actually unfolds and the FIRST non-zero one names the layer. */
   const TEP_BRAIN_ERR_PHASES = [
-    ['errDns', 'dns'], ['errConn', 'conn'], ['errSsl', 'ssl'], ['errHttp', 'http'],
+    ['errDns', 'dns'], ['errConn', 'conn'], ['errSsl', 'ssl'],
+    ['errSend', 'send'], ['errRecv', 'receive'], ['errHttp', 'http'],
+    ['errContent', 'content'],
   ];
 
   /** The instant and span the TE page's own timeline is parked on.
@@ -13695,7 +13710,13 @@
   const TEP_BRAIN_SIBLING_STRIPS = 3;   // sibling tests given their own strip
   const TEP_BRAIN_ERR_LAYERS = ['web-transaction', 'http-server', 'http'];
   const tepBrainDeadPaths = new Set();
-  const TEP_BRAIN_STRIP_SPAN = 6;   // bins either side of the focused round
+  /* Bins either side of the focused round. This was 6 — 13 rounds total, which
+     at a 120s interval is 26 minutes of visibility. A reader then had no way to
+     tell a genuine recovery from the strip simply running out, and a real brief
+     was read as "~18 minutes then it stabilised" when the strip's right-hand
+     edge was still failing. Wide enough now to contain most incidents, and the
+     edges are called out explicitly below either way. */
+  const TEP_BRAIN_STRIP_SPAN = 24;
 
   /** Pull one value per bin out of a timeline response, tolerating the several
    *  shapes the panel has seen (bare numbers, or objects keyed various ways). */
@@ -14040,6 +14061,7 @@
           loss: tepBrainMatrix(plan.loss),
           lat: tepBrainMatrix(plan.lat),
           avail: plan.avail ? tepBrainMatrix(plan.avail) : null,
+          errTotal: plan.errTotal ? tepBrainMatrix(plan.errTotal) : null,
         };
       }
     } finally {
@@ -14047,7 +14069,7 @@
       dashMetricsWindowIdx = prevWinIdx;
     }
     const fetched = await Promise.all(pending);
-    const CTX = { loss: null, lat: null, avail: null };
+    const CTX = { loss: null, lat: null, avail: null, errTotal: null };
     if (ctxPending) {
       const ck = Object.keys(ctxPending).filter((k) => ctxPending[k]);
       const cv = await Promise.all(ck.map((k) => ctxPending[k].catch(() => null)));
@@ -14276,8 +14298,17 @@
     L.push('  avail  100% when that round returned HTTP 2xx/3xx, 0% otherwise');
     L.push('  ttfb   request start (including DNS) to first response byte, ms');
     L.push('  dns    name-resolution time for the round, ms');
-    L.push('  errs   COUNT of rounds that failed AT THAT PHASE, by phase name');
-    L.push('         (dns / conn / ssl / http). Only non-zero phases are shown.');
+    L.push('  errs   errors at that phase, AVERAGED PER ROUND over the window —');
+    L.push('         so 0.67 is not "0.67 failures", it is a mean. Any non-zero');
+    L.push('         value means that phase failed at least once. Read it as');
+    L.push('         "which phase broke", never as an exact failure count.');
+    L.push('         Phases, by name:');
+    L.push('         (dns / conn / ssl / send / receive / http / content), in the');
+    L.push('         order a round executes them. Only non-zero phases are shown.');
+    L.push('         "receive" means the connection and request SUCCEEDED and the');
+    L.push('         server then sent nothing back before the timeout — that is a');
+    L.push('         hung or overloaded server, NOT an HTTP status error. Do not');
+    L.push('         describe a receive failure as an HTTP 5xx.');
     L.push('         A non-zero phase names the layer that broke, and is the');
     L.push('         strongest single signal in this brief.');
     L.push('THE LAYERS ARE INDEPENDENT. A test can show 0% loss and 1ms latency at');
@@ -14298,14 +14329,40 @@
     L.push(' 2 AGENT      is a flagged agent also bad on its other tests? if yes the');
     L.push('              agent or its uplink is the suspect, not this target.');
     L.push(' 3 TARGET     are other tests to the SAME host also bad?');
-    L.push(' 4 EXTERNAL   does a listed alert already explain it? Then look OUTSIDE');
-    L.push('              this brief: if you can browse, check the status page and');
-    L.push('              recent news of every provider named here — the target\'s');
-    L.push('              operator and each ASN in the path traces (Cloudflare, AWS,');
-    L.push('              Azure, Google, Akamai, the ISPs) — for an incident whose');
-    L.push('              timing overlaps the window in CAPTURE. A provider-side');
-    L.push('              outage explains far more than any local theory, so rule it');
-    L.push('              in or out before blaming the customer network.');
+    L.push(' 4 EXTERNAL   does a listed alert already explain it? Then GO AND LOOK');
+    L.push('              THIS UP — it is a task, not a suggestion. Search the status');
+    L.push('              page, incident history and recent news of every provider');
+    L.push('              listed under PROVIDERS IN THIS PATH — every one of them,');
+    L.push('              not just the target\'s brand name. The network carrying the');
+    L.push('              DESTINATION hop (a CDN such as Cloudflare, Akamai, Fastly,');
+    L.push('              or a cloud such as AWS or Azure) fronts the target and can');
+    L.push('              fail on its behalf, so it is the easiest one to overlook');
+    L.push('              and often the actual culprit.');
+    L.push('              HOW TO SEARCH, because the obvious way misses real hits:');
+    L.push('              · Search a WINDOW of at least 3 hours either side of the');
+    L.push('                time in CAPTURE, never the exact minute. Status pages are');
+    L.push('                opened when a human notices, which is minutes to hours');
+    L.push('                AFTER impact begins.');
+    L.push('              · AN INCIDENT THAT STARTS AFTER YOUR EVENT CAN STILL BE THE');
+    L.push('                CAUSE. Degradation precedes detection. An incident opened');
+    L.push('                seven minutes after your failing round is a MATCH, not a');
+    L.push('                miss — check whether its description covers your symptom.');
+    L.push('              · MATCH ON GEOGRAPHY AS WELL AS TIME. If the incident names');
+    L.push('                regions, cities or data centres, compare them with where');
+    L.push('                the failing agents are. Agent names usually carry the');
+    L.push('                location. Failures clustered in one region plus an');
+    L.push('                incident naming that region is strong corroboration.');
+    L.push('              · Check the incident HISTORY page, not just current status:');
+    L.push('                a resolved incident disappears from the front page.');
+    L.push('              Report what you found and cite the URL and timestamps.');
+    L.push('              If you find nothing, your negative must be AUDITABLE: name');
+    L.push('              the page you searched and the date range you covered, e.g.');
+    L.push('              "Cloudflare incident history for 23 Oct, 12:00-20:00 UTC');
+    L.push('              shows nothing". A bare "no incident was reported" is not');
+    L.push('              acceptable — if you only checked the exact minute, or only');
+    L.push('              the current-status page, you have not checked.');
+    L.push('              A provider-side outage explains far more than any local');
+    L.push('              theory, so settle it before blaming the customer network.');
     L.push('These are your reasoning steps. Do NOT make them the headings of your');
     L.push('reply — see HOW TO ANSWER at the end.');
     L.push('');
@@ -14322,32 +14379,61 @@
     L.push('   would need to settle it.');
     L.push(' - Use only what is written below for the MEASUREMENTS. Do not invent');
     L.push('   agents, tests, hosts or numbers that are not here.');
-    L.push(' - Provider status is the one thing you SHOULD look up outside this');
-    L.push('   brief, because the brief cannot see it. But report only what you');
-    L.push('   actually found: cite the status page or article and its timestamp,');
-    L.push('   and if you could not check, say "I could not check provider status"');
-    L.push('   and name which providers are worth checking. Never assert or imply');
-    L.push('   an outage you did not verify — a confidently invented AWS incident');
-    L.push('   is worse than no answer at all.');
+    L.push(' - DO THE PROVIDER LOOKUP YOURSELF, BEFORE YOU ANSWER. Never close with');
+    L.push('   "check the provider\'s status page" as advice to the reader: that is');
+    L.push('   the one piece of research you were asked to carry out, and handing it');
+    L.push('   back undone is the most common way this brief fails. Search it, then');
+    L.push('   report the result. Only if you genuinely cannot search from where you');
+    L.push('   are, say so in one clause and give the exact query to run.');
+    L.push(' - Report only what you actually found: cite the status page or article');
+    L.push('   and its timestamp. Never assert or imply an outage you did not');
+    L.push('   verify — a confidently invented AWS incident is worse than no answer.');
+    L.push(' - A NEGATIVE IS A CLAIM TOO, and a false one sends the reader to blame');
+    L.push('   their own network for somebody else\'s outage. Before writing that a');
+    L.push('   provider had no incident, satisfy yourself that you searched a wide');
+    L.push('   enough window, the history page rather than current status, and the');
+    L.push('   network carrying the destination — not only the brand on the URL.');
+    L.push('   If you are not confident of all three, say the check was inconclusive');
+    L.push('   instead of reporting a clean bill of health.');
     L.push('');
     /* Output shape. Put this LAST, immediately before the data: it is the
        instruction models follow most reliably from that position, and the
        register it asks for is the opposite of what they produce by default. */
     L.push('### HOW TO ANSWER   (follow this shape)');
     L.push('');
-    L.push('FIRST, two or three sentences of plain English. Write it the way you');
-    L.push('would answer a colleague who leaned over and asked "what happened?".');
-    L.push('Say what broke, where, when, and whether it is still broken. That is');
-    L.push('all. No headings, no bullets, no numbered steps, no metric names, no');
-    L.push('confidence score, no restating the question, no preamble. If you do');
-    L.push('not know, say so in one sentence and say what you would look at next.');
+    L.push('FIRST, ONE SHORT PARAGRAPH. Plain words, the way you would tell a');
+    L.push('colleague who just walked up and asked what is going on. Written as');
+    L.push('prose, not a list. It has to cover, in this order:');
+    L.push('  - what is actually broken, named simply: DNS, the site itself, the');
+    L.push('    link to that office, the provider. Not a metric name.');
+    L.push('  - whose problem it is — this network, the provider, or the target.');
+    L.push('  - whether it is still happening or already over.');
+    L.push('  - WHETHER IT CAN BE FIXED AND WHAT THAT TAKES. Say the actual next');
+    L.push('    step in one clause. If there is nothing to remediate, say "nothing');
+    L.push('    to fix" and stop — do NOT manufacture a chore for the reader, and');
+    L.push('    above all do not tell them to go and check a provider status page.');
+    L.push('    You were asked to check that yourself; report what it said.');
+    L.push('  - WHAT THE PROVIDER STATUS LOOKUP ACTUALLY SHOWED, in this first');
+    L.push('    paragraph. Either "their status page confirms an incident at <time>"');
+    L.push('    or "their status page shows nothing for that window". Both are');
+    L.push('    answers. This is the most important fact in the brief and must not');
+    L.push('    be buried in the detail below, nor left as a task for the reader.');
+    L.push('Three or four sentences. No headings, no bullets, no numbered steps,');
+    L.push('no metric names, no percentages, no agent IDs, no confidence score,');
+    L.push('no preamble, no restating the question.');
     L.push('');
     L.push('Like this:');
-    L.push('  "DNS broke for about five minutes on the 16th. The Raleigh agent');
-    L.push('   couldn\'t look up google.com at 12:05, so the page never loaded —');
-    L.push('   one bad round and it recovered on its own. Nothing else that');
-    L.push('   agent runs was affected, so this was name resolution, not the');
-    L.push('   network or Google."');
+    L.push('  "DNS fell over for one five-minute stretch on the 16th and then');
+    L.push('   fixed itself. It was the Raleigh office\'s own name resolution, not');
+    L.push('   Google and not the network — everything else that box watches kept');
+    L.push('   running fine straight through it. Nothing to fix right now; if it');
+    L.push('   happens again, give that agent a second DNS server to fall back on."');
+    L.push('');
+    L.push('Or, when it belongs to someone else:');
+    L.push('  "This one is Cloudflare, not you. They have an incident that started');
+    L.push('   14:10 UTC and it lines up with the window exactly, which is why every');
+    L.push('   location went at once. Nothing to fix on your side — watch their');
+    L.push('   status page and it should clear when they close it out."');
     L.push('');
     L.push('NOT like this:');
     L.push('  "1. BREADTH — Finding: Insufficient data. Evidence: Agents');
@@ -14358,7 +14444,6 @@
     L.push('you used, give a confidence level, and list anything you would need to');
     L.push('be sure. Everything technical belongs down there, not up top.');
     L.push('');
-
     L.push('### CAPTURE');
     L.push('Test     ' + testId + ' · ' + tepBrainTestName(testId, subject, testNames)
       + (subject ? ' · ' + typeLabel : ''));
@@ -14398,7 +14483,8 @@
     const FAM_LABEL = {
       loss: 'loss', lat: 'lat', avail: 'avail', ttfb: 'ttfb', dns: 'dns',
       errDns: 'dns-errors', errConn: 'connect-errors', errSsl: 'ssl-errors',
-      errHttp: 'http-errors', errTotal: 'total-errors',
+      errSend: 'send-errors', errRecv: 'receive-errors', errHttp: 'http-errors',
+      errContent: 'content-errors', errTotal: 'total-errors',
     };
     L.push('### COVERAGE   (read before concluding)');
     L.push('In this snapshot      ' + (keys.filter((k) => M[k]).map((k) => FAM_LABEL[k] || k).join(', ') || 'nothing'));
@@ -14548,9 +14634,26 @@
         const pad = cells.slice(0, focusIdx - from).reduce((n, c) => n + c.length + 1, 0);
         L.push('  ' + ' '.repeat(pad) + '^ the round under investigation');
       }
-      const bad = slice.filter((v) => v != null && (strip.label.indexOf('availability') >= 0 ? v < 100 : v > 0)).length;
+      const isBad = (v) => v != null && (strip.label.indexOf('availability') >= 0 ? v < 100 : v > 0);
+      const bad = slice.filter(isBad).length;
       L.push('  ' + bad + ' of ' + slice.length + ' round(s) in this strip are not clean'
         + (bad === 1 ? ' — a single isolated failure.' : (bad === 0 ? '.' : ' — the failure repeats.')));
+      /* THE EDGES ARE NOT EVIDENCE OF RECOVERY. A strip that is still failing at
+         its first or last value tells you nothing about what happened outside
+         it, and reading the edge as the end of an incident is how a bounded
+         window becomes a confident, wrong duration. */
+      const headBad = isBad(slice[0]);
+      const tailBad = isBad(slice[slice.length - 1]);
+      if (headBad || tailBad) {
+        L.push('  !! THIS STRIP IS CUT OFF MID-FAILURE'
+          + (headBad && tailBad ? ' AT BOTH ENDS' : (tailBad ? ' AT THE LATER END' : ' AT THE EARLIER END')) + '.');
+        L.push('     The incident extends beyond what is shown. Do NOT state a start');
+        L.push('     time, an end time or a duration from this strip — you can only');
+        L.push('     say it lasted AT LEAST the span shown. Say that instead.');
+      } else if (bad > 0) {
+        L.push('     The strip is clean at both ends, so the failure is fully');
+        L.push('     contained here and its duration can be read off it.');
+      }
       // Latency over the SAME bins, so the two strips read as one time axis.
       if (latStrip && latStrip.values.length) {
         const lslice = latStrip.values.slice(from, to);
@@ -14576,7 +14679,44 @@
       L.push('');
     }
 
+    /* An explicit, derived checklist of who to look up. The prompt already
+       said "each ASN in the path traces", but that asks the reader to mine a
+       few hundred hop lines and then decide who matters — and the network
+       carrying the DESTINATION is precisely the one that gets skipped. Naming
+       them, and marking which one owns the last hop, turns a judgement call
+       into a checklist. */
     if (traced.length) {
+      const prov = new Map();
+      for (const r of traced) {
+        if (!r.path) continue;
+        for (const t of r.path.traces) {
+          for (const h of t.hops) {
+            if (h.asn == null && !h.asName) continue;
+            const key = h.asn != null ? ('AS' + h.asn) : h.asName;
+            const cur = prov.get(key) || { key, name: h.asName || '', dest: false };
+            if (h.asName && !cur.name) cur.name = h.asName;
+            if (h.dest || h === t.hops[t.hops.length - 1]) cur.dest = true;
+            prov.set(key, cur);
+          }
+        }
+      }
+      if (prov.size) {
+        L.push('### PROVIDERS IN THIS PATH   (look up EVERY one of these)');
+        L.push('Derived from the hops below. Check each one\'s status page and');
+        L.push('incident history for the window in CAPTURE, and report what each');
+        L.push('one said — including the ones that showed nothing.');
+        const rows = [...prov.values()].sort((a, b) => (b.dest ? 1 : 0) - (a.dest ? 1 : 0));
+        for (const pv of rows) {
+          L.push('  ' + pv.key + (pv.name ? '  ' + pv.name : '')
+            + (pv.dest ? '   <- CARRIES THE DESTINATION. This is the target\'s own edge'
+              + ' or CDN, and the single most likely provider to explain a'
+              + ' server-side failure. Do not skip it.' : ''));
+        }
+        if (subjHost) {
+          L.push('  Plus the operator of the target itself: ' + subjHost);
+        }
+        L.push('');
+      }
       L.push('### PATH TRACES   (hop by hop, every agent, for each round below)');
       L.push('Rounds were chosen to make the path COMPARABLE: the round under');
       L.push('investigation, every round whose latency sits above it, and one clean');
@@ -14648,23 +14788,42 @@
            most would show one sample or none. */
         const sLoss = CTX.loss || loss;
         const sLat = CTX.lat || lat;
+        /* A sibling MUST be judged on the web layer too. Judging it on loss and
+           latency alone was a direct contradiction of this brief's own rule
+           that the layers are independent: the subject here failed at the
+           RECEIVE phase with 0% loss and normal latency, so a sibling failing
+           in exactly the same way scored clean network metrics and was marked
+           [ok]. The control rows were telling the reader the opposite of the
+           truth, and hiding the single most useful correlation in the brief. */
+        const sAvail = CTX.avail || avail;
+        const sErr = CTX.errTotal || M.errTotal || null;
         const sibIds = new Set();
-        if (sLoss) for (const [oid, byAgent] of sLoss.byTest) { if (oid !== testId && byAgent.has(r.id)) sibIds.add(oid); }
-        if (sLat) for (const [oid, byAgent] of sLat.byTest) { if (oid !== testId && byAgent.has(r.id)) sibIds.add(oid); }
+        for (const mx of [sLoss, sLat, sAvail, sErr]) {
+          if (!mx) continue;
+          for (const [oid, byAgent] of mx.byTest) { if (oid !== testId && byAgent.has(r.id)) sibIds.add(oid); }
+        }
         const sib = [];
         for (const otherId of sibIds) {
           const ot = list.find((x) => String(x && (x.testId != null ? x.testId : x.id)) === otherId) || null;
-          const lossOther = sLoss ? sLoss.byTest.get(otherId) : null;
-          const latOther = sLat ? sLat.byTest.get(otherId) : null;
-          const lo = lossOther ? lossOther.get(r.id) : null;
-          const la = latOther ? latOther.get(r.id) : null;
+          const pick = (mx) => { const row = mx ? mx.byTest.get(otherId) : null; return row ? row.get(r.id) : null; };
+          const lo = pick(sLoss);
+          const la = pick(sLat);
+          const av = pick(sAvail);
+          const er = pick(sErr);
           const bad = (Number.isFinite(lo) && lo >= TEP_BRAIN_LOSS_FLAG)
-            || (Number.isFinite(la) && la >= TEP_BRAIN_LAT_FLAG_MS);
-          sib.push({ id: otherId, name: tepBrainTestName(otherId, ot, testNames), loss: lo, lat: la, bad });
+            || (Number.isFinite(la) && la >= TEP_BRAIN_LAT_FLAG_MS)
+            || (Number.isFinite(av) && av < TEP_BRAIN_AVAIL_FLAG)
+            || (Number.isFinite(er) && er > 0);
+          sib.push({
+            id: otherId, name: tepBrainTestName(otherId, ot, testNames),
+            loss: lo, lat: la, avail: av, errTotal: er, bad,
+          });
         }
         // Correlated (bad) first, worst-first; then a few explicit controls.
+        const availKey = (x) => (x.avail == null ? 101 : x.avail);
         const badSibs = sib.filter((s) => s.bad)
-          .sort((a, b) => ((b.loss || 0) - (a.loss || 0)) || ((b.lat || 0) - (a.lat || 0)))
+          .sort((a, b) => (availKey(a) - availKey(b))
+            || ((b.loss || 0) - (a.loss || 0)) || ((b.lat || 0) - (a.lat || 0)))
           .slice(0, TEP_BRAIN_MAX_SIBLINGS);
         const okSibs = sib.filter((s) => !s.bad)
           .sort((a, b) => (a.loss || 0) - (b.loss || 0))
@@ -14674,10 +14833,12 @@
             + DASH_METRICS_WINDOWS[ctxIdx].label : ' in this window') + ':');
         if (!sib.length) L.push('    (none \u2014 no other test from this agent reported)');
         for (const s of badSibs) {
-          L.push('    !!   ' + s.name + '  ' + tepBrainLoss(s.loss) + '  ' + tepBrainLat(s.lat));
+          L.push('    !!   ' + s.name + '  ' + tepBrainLoss(s.loss) + '  ' + tepBrainLat(s.lat)
+            + tepBrainWeb(s));
         }
         for (const s of okSibs) {
-          L.push('    [ok] ' + s.name + '  ' + tepBrainLoss(s.loss) + '  ' + tepBrainLat(s.lat));
+          L.push('    [ok] ' + s.name + '  ' + tepBrainLoss(s.loss) + '  ' + tepBrainLat(s.lat)
+            + tepBrainWeb(s));
         }
         const shown = badSibs.length + okSibs.length;
         if (sib.length > shown) {
@@ -14713,6 +14874,9 @@
         const xid = String(x.testId != null ? x.testId : x.id);
         const lr = (CTX.loss || loss) && (CTX.loss || loss).byTest.get(xid);
         const ar = (CTX.lat || lat) && (CTX.lat || lat).byTest.get(xid);
+        // Same blind spot as the siblings above: a same-host test failing at
+        // the web layer reads perfectly clean on loss and latency.
+        const vr = (CTX.avail || avail) && (CTX.avail || avail).byTest.get(xid);
         const avg = (m) => {
           if (!m || !m.size) return null;
           let s = 0; let n = 0;
@@ -14722,6 +14886,7 @@
         const xType = (typeof TYPE_LABELS === 'object' && TYPE_LABELS[x.testType]) || x.testType || '?';
         L.push('  ' + (x.name || xid) + ' (' + xType + ')'
           + '  ' + tepBrainLoss(avg(lr)) + '  ' + tepBrainLat(avg(ar))
+          + tepBrainWeb({ avail: avg(vr) })
           + '  [mean across its agents]');
       }
       if (sameHost.length > 6) omitted.push((sameHost.length - 6) + ' same-host tests');
@@ -14813,8 +14978,11 @@
       toast('No metric data available for this test yet', 'err');
       return;
     }
-    const label = `Triage brief copied — ${(bundle.meta.bytes / 1024).toFixed(1)} KB, `
-      + `${bundle.meta.agents} agent(s), ${bundle.meta.flagged} flagged`;
+    /* The toast is a confirmation, not a report: counts of agents and flags
+       invited a read of the result before the model had even seen it, and the
+       size was never actionable. The exact figures still go to the panel log
+       below for anyone who wants them. */
+    const label = 'Brief copied. Paste into your chosen model at your discretion.';
     // Same clipboard path as Copy log: the async API where available, a
     // hidden textarea where the permission or focus state blocks it.
     try {
