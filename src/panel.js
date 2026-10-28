@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.26';
+  const TEP_VERSION = '4.27';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -14215,29 +14215,49 @@
        against every round whose latency is elevated relative to it, plus one
        demonstrably clean round as a baseline — that is what lets a reader see
        the path change rather than merely read one path. */
+    /* ONE TIME AXIS, verified.
+       The availability and latency timelines are separate requests, and the
+       latency endpoint does NOT always honour the binSize asked for — it can
+       answer on a far coarser axis spanning weeks. Round times were being
+       computed from whichever strip happened to have a startRound, so a brief
+       anchored to 12:28 today selected "comparison" rounds from three and four
+       WEEKS earlier and labelled them as if they sat either side of the
+       incident. The latency row printed under the availability strip was being
+       sliced with the availability strip's indices too, so the two rows were
+       not the same minutes despite being presented as one chart.
+
+       So: the primary strip defines the axis, the latency strip is used for
+       anything time-dependent ONLY when its axis matches exactly, and every
+       selected round is clamped inside the axis. */
+    const axis = (strip && strip.startRound != null && strip.step > 0)
+      ? { start: strip.startRound, step: strip.step, len: strip.values.length }
+      : ((latStrip && latStrip.startRound != null && latStrip.step > 0)
+        ? { start: latStrip.startRound, step: latStrip.step, len: latStrip.values.length }
+        : null);
+    const latAligned = !!(latStrip && axis
+      && latStrip.startRound === axis.start && latStrip.step === axis.step);
+    const axisEnd = axis ? axis.start + (axis.len - 1) * axis.step : null;
+    const inAxis = (t) => (axis == null ? true : (t >= axis.start && t <= axisEnd));
+
     const traceRounds = [];
     const roundAt = (idx) => {
-      const base = latStrip && latStrip.startRound != null ? latStrip
-        : (strip && strip.startRound != null ? strip : null);
-      if (!base || !(base.step > 0)) return null;
-      return base.startRound + idx * base.step;
+      if (!axis) return null;
+      return axis.start + idx * axis.step;
     };
-    const tStep = (latStrip && latStrip.step > 0) ? latStrip.step
-      : ((strip && strip.step > 0) ? strip.step : ivl);
+    const tStep = axis ? axis.step : ivl;
     let focusRound = onRound ? pageTime.focusSec : null;
-    if (focusRound == null && strip && strip.startRound != null && strip.step > 0) {
-      focusRound = strip.startRound + (strip.values.length - 1) * strip.step;
-    }
+    if (focusRound == null && axis) focusRound = axisEnd;
     if (focusRound != null) traceRounds.push({ t: focusRound, why: 'the round under investigation' });
-    if (latStrip && latStrip.values.length) {
+
+    if (latAligned && latStrip.values.length) {
       const vals = latStrip.values;
       let focusIdx = -1;
-      if (latStrip.startRound != null && latStrip.step > 0 && focusRound != null) {
-        const i = Math.round((focusRound - latStrip.startRound) / latStrip.step);
+      if (focusRound != null) {
+        const i = Math.round((focusRound - axis.start) / axis.step);
         if (i >= 0 && i < vals.length) focusIdx = i;
       }
       const finite = vals.filter((v) => v != null && Number.isFinite(v));
-      const sorted = finite.slice().sort((a, b) => a - b);
+      const sorted = finite.slice().sort((a2, b2) => a2 - b2);
       const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
       const focusVal = focusIdx >= 0 ? vals[focusIdx] : null;
       // "Above the highlighted spot" when there is one, else above the median.
@@ -14251,25 +14271,36 @@
           if (v == null || !Number.isFinite(v)) continue;
           if (v > bar) cands.push({ i, v });
         }
-        cands.sort((a, b) => b.v - a.v);
+        cands.sort((a2, b2) => b2.v - a2.v);
         for (const c of cands) {
           if (traceRounds.length >= TEP_BRAIN_TRACE_ROUNDS - 1) break;
           const t = roundAt(c.i);
-          if (t != null) traceRounds.push({ t, why: 'latency ' + Math.round(c.v) + 'ms, above the focus round' });
+          if (t != null && inAxis(t)) {
+            traceRounds.push({ t, why: 'latency ' + Math.round(c.v) + 'ms, above the focus round' });
+          }
         }
       }
       // One clean baseline so the elevated paths have something to differ from.
-      if (sorted.length) {
-        let bestIdx = -1;
-        let bestVal = Infinity;
-        for (let i = 0; i < vals.length; i++) {
-          const v = vals[i];
-          if (v == null || !Number.isFinite(v) || i === focusIdx) continue;
-          if (v < bestVal) { bestVal = v; bestIdx = i; }
-        }
-        const t = bestIdx >= 0 ? roundAt(bestIdx) : null;
-        if (t != null && !traceRounds.some((r) => r.t === t)) {
-          traceRounds.push({ t, why: 'cleanest round in the window, ' + Math.round(bestVal) + 'ms - baseline' });
+      let bestIdx = -1;
+      let bestVal = Infinity;
+      for (let i = 0; i < vals.length; i++) {
+        const v = vals[i];
+        if (v == null || !Number.isFinite(v) || i === focusIdx) continue;
+        if (v < bestVal) { bestVal = v; bestIdx = i; }
+      }
+      const t = bestIdx >= 0 ? roundAt(bestIdx) : null;
+      if (t != null && inAxis(t) && !traceRounds.some((r) => r.t === t)) {
+        traceRounds.push({ t, why: 'cleanest round in the window, ' + Math.round(bestVal) + 'ms - baseline' });
+      }
+    } else if (focusRound != null && axis) {
+      /* No usable latency axis: fall back to the rounds either side of the
+         focus. They are always genuinely adjacent, which is the whole point —
+         a comparison round from another week is worse than no comparison. */
+      for (const d of [-1, 1, -2, 2]) {
+        if (traceRounds.length >= TEP_BRAIN_TRACE_ROUNDS) break;
+        const t = focusRound + d * axis.step;
+        if (inAxis(t) && !traceRounds.some((r) => r.t === t)) {
+          traceRounds.push({ t, why: (d < 0 ? Math.abs(d) + ' round(s) before' : d + ' round(s) after') + ' the focus' });
         }
       }
     }
@@ -14496,6 +14527,7 @@
     }
     if (!strip) absent.push('per-round strip (no timeline endpoint answered)');
     if (!latStrip) absent.push('per-round latency');
+    else if (!latAligned) absent.push('per-round latency on the subject\'s time axis (the endpoint answered on a coarser one)');
     if (!sibStrips.length) absent.push('per-round strips for sibling tests');
     if (!traced.some((r) => r.path && r.path.traces.length)) absent.push('path visualisation (no round returned a route)');
     absent.push('BGP reachability', 'provider/Internet outage feed');
@@ -14654,13 +14686,20 @@
         L.push('     The strip is clean at both ends, so the failure is fully');
         L.push('     contained here and its duration can be read off it.');
       }
-      // Latency over the SAME bins, so the two strips read as one time axis.
-      if (latStrip && latStrip.values.length) {
+      // Latency over the SAME bins — printed ONLY when the latency timeline
+      // actually came back on this axis. It does not always: the endpoint can
+      // answer on a far coarser one, and slicing it with these indices then
+      // lines up numbers from different days under the same column.
+      if (latAligned && latStrip.values.length) {
         const lslice = latStrip.values.slice(from, to);
         if (lslice.length) {
-          L.push('  ' + latStrip.label + ':');
+          L.push('  ' + latStrip.label + ' (same bins):');
           L.push('  ' + lslice.map((v) => (v == null ? '-' : String(Math.round(v)))).join(' '));
         }
+      } else if (latStrip && latStrip.values.length) {
+        L.push('  (latency timeline came back on a different, coarser time axis'
+          + ' than this strip, so it is NOT shown here — it would not be the');
+        L.push('   same minutes. Judge from availability above and the traces below.)');
       }
       L.push('');
     }
@@ -14718,10 +14757,18 @@
         L.push('');
       }
       L.push('### PATH TRACES   (hop by hop, every agent, for each round below)');
-      L.push('Rounds were chosen to make the path COMPARABLE: the round under');
-      L.push('investigation, every round whose latency sits above it, and one clean');
-      L.push('round as a baseline. Diff the hop lists against each other — a hop that');
-      L.push('appears, vanishes, or gains latency between them is the thing to chase.');
+      if (latAligned) {
+        L.push('Rounds were chosen to make the path COMPARABLE: the round under');
+        L.push('investigation, every round whose latency sits above it, and one clean');
+        L.push('round as a baseline.');
+      } else {
+        L.push('Rounds here are the focus round and its immediate NEIGHBOURS. The');
+        L.push('latency timeline came back on a coarser axis, so rounds could not be');
+        L.push('picked by latency without risking a "comparison" from another week.');
+      }
+      L.push('Every round below is inside the window shown in CAPTURE. Diff the hop');
+      L.push('lists against each other — a hop that appears, vanishes, or gains');
+      L.push('latency between them is the thing to chase.');
       L.push('');
       for (const r of traced) {
         const when = new Date(r.t * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
