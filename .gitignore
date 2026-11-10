@@ -2,3 +2,6 @@
 *.bak
 node_modules/
 __pycache__/
+
+# Local-only experiments — never published, never served by jsDelivr.
+lab/
