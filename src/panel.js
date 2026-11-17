@@ -35,7 +35,7 @@
     window.location.href = 'https://app.thousandeyes.com';
     return;
   }
-  const TEP_VERSION = '4.32';
+  const TEP_VERSION = '4.34';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -5215,6 +5215,14 @@
       box-shadow: inset 3px 0 0 0 var(--tep-yellow);
     }
     .tep-test-card.tep-test-card--shared .tep-test-card-name { color: var(--tep-yellow); }
+    /* A shared test is in the list only because it is the one open on the page.
+       The tag says so, and says why nothing on it is editable. */
+    .tep-test-shared-tag {
+      font-size: 9.5px; font-weight: 800; letter-spacing: .08em; white-space: nowrap; cursor: help;
+      padding: 2px 7px; border-radius: 4px; color: var(--tep-yellow);
+      background: color-mix(in srgb, var(--tep-yellow) 14%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tep-yellow) 40%, transparent);
+    }
     .tep-dash-type-dot {
       width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
       background: var(--tep-blue-bright);
@@ -11948,6 +11956,13 @@
   // Manage Tests — state & functions
   // ---------------------------------------------------------------------------
   let allTests = [];
+  /** Shared tests — owned by another account group, shared with this one.
+   *  They ARE listed (getFilteredTests joins them in, read-only), but they are
+   *  kept in their own array so every other consumer of allTests keeps
+   *  treating them as absent: bulk delete, agent enrichment and above all the
+   *  unit totals, since their units bill to the owning account.
+   *  CONFIRMED via user request. */
+  let allSharedTests = [];
   let loadTestsInFlight = false;
   let selectedTestIds = new Set();
   /** Restore import (Create → Restore tab). */
@@ -12140,6 +12155,10 @@
 
   const NO_API_SLUGS = new Set(['api']);
   function isReadOnly(t) {
+    // A shared test is owned by another account group. It can be LOOKED at from
+    // here, but every mutation would be aimed at someone else's test, so it
+    // takes the same read-only path as the test types the panel cannot write.
+    if (isSharedTest(t)) return true;
     return NO_API_SLUGS.has((t.type || '').toLowerCase());
   }
   /**
@@ -13259,9 +13278,10 @@
       // Drop shared tests (owned by / shared from another account group): they
       // shouldn't appear in the list or count toward this account's units.
       const beforeShared = allTests.length;
+      allSharedTests = allTests.filter((t) => isSharedTest(t));
       allTests = allTests.filter((t) => !isSharedTest(t));
       const sharedDropped = beforeShared - allTests.length;
-      if (sharedDropped > 0) log(`Excluded ${sharedDropped} shared test(s) from views and unit totals.`, 'tep-log-info');
+      if (sharedDropped > 0) log(`${sharedDropped} shared test(s) listed read-only — their units bill to the owning account, so they are not in this account's total.`, 'tep-log-info');
       try {
         const typeCounts = {};
         for (const x of allTests) {
@@ -13356,7 +13376,14 @@
     const sortEl = root.querySelector('#tep-manage-sort');
     const typeF = typeEl ? typeEl.value : '';
     const searchQ = getManageSearchQuery();
-    let filtered = allTests;
+    // Shared tests are LISTED but not COUNTED. They live in their own array so
+    // that every other consumer of allTests — bulk delete, unit totals, agent
+    // enrichment — keeps treating them as absent; the list is the one place
+    // they are joined back in. Added before the type/search filters so they
+    // behave like any other row once they are there.
+    // CONFIRMED via user request ("add the shared into the list, keep it out
+    // of the unit count").
+    let filtered = allSharedTests.length ? allTests.concat(allSharedTests) : allTests;
     if (typeF) filtered = filtered.filter(t => t.testType === typeF);
     if (searchQ) {
       filtered = filtered.filter((t) => {
@@ -13490,6 +13517,10 @@
     let counted = 0;
     for (const t of filtered) {
       if (!isTestEnabledForUnits(t)) continue;
+      // Shared tests are listed, but their units bill to the account that owns
+      // them. Listing them must not change this account's total, so they are
+      // counted nowhere.
+      if (isSharedTest(t)) continue;
       const tid = String(t.testId || t.id || '');
       const isHint = !!(unitEditHint && unitEditHint.testId === tid);
       const hintTest = (isHint && unitEditHint.testOverride) ? unitEditHint.testOverride : null;
@@ -13526,7 +13557,9 @@
    * Only ONE test can play at a time — a second play button stops the first,
    * since they would otherwise both drive the same single TE timeline and race.
    */
-  const TEP_PLAYBACK_MIN_S = 1;
+  /* Playback interval, in seconds per step. MIN is the FASTEST setting.
+     0.5s was added at the fast end on request. */
+  const TEP_PLAYBACK_MIN_S = 0.5;
   const TEP_PLAYBACK_MAX_S = 3;
   const TEP_PLAYBACK_STEP_S = 0.5;
   const TEP_PLAYBACK_DEFAULT_S = 2;
@@ -13561,6 +13594,22 @@
   /** "2s" / "1.5s" — half-steps show a decimal, whole seconds do not. */
   function tepPlaybackSpeedLabel(sec) {
     return String(sec) + 's';
+  }
+
+  /** Slider position <-> interval, which run in OPPOSITE directions.
+   *
+   *  The control is labelled "Speed", so it has to read left-to-right as more
+   *  speed: slowest on the left, fastest on the right. The value it actually
+   *  sets is an interval in seconds, which runs the other way — 3s is the
+   *  slowest, 0.5s the fastest. So the slider's own value is mirrored within
+   *  the range rather than being the interval itself.
+   *
+   *  Done arithmetically instead of with `direction: rtl`, which flips the
+   *  track but not the keyboard arrows, so Left would have increased the
+   *  value. The mirror is its own inverse, so one function serves both ways.
+   *  CONFIRMED via user request. */
+  function tepPlaybackFlip(v) {
+    return (TEP_PLAYBACK_MIN_S + TEP_PLAYBACK_MAX_S) - Number(v);
   }
 
   function tepPlaybackIsOn(tid) {
@@ -13649,7 +13698,10 @@
         speed.hidden = !on;
         const range = speed.querySelector('.tep-test-playback-range');
         const val = speed.querySelector('.tep-test-playback-val');
-        if (range) range.value = String(tepPlaybackSec);
+        if (range) {
+          range.value = String(tepPlaybackFlip(tepPlaybackSec));
+          range.setAttribute('aria-valuetext', tepPlaybackSpeedLabel(tepPlaybackSec) + ' between steps');
+        }
         if (val) val.textContent = tepPlaybackSpeedLabel(tepPlaybackSec);
       }
     }
@@ -13695,8 +13747,9 @@
         + ` aria-label="Start playback">${TEP_PLAYBACK_PLAY_SVG}</button>`
         + `<span class="tep-manage-playback-speed" hidden><span>Speed</span>`
         + `<input type="range" class="tep-test-playback-range" min="${TEP_PLAYBACK_MIN_S}"`
-        + ` max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackSec}"`
-        + ` aria-label="Playback speed in seconds between steps">`
+        + ` max="${TEP_PLAYBACK_MAX_S}" step="${TEP_PLAYBACK_STEP_S}" value="${tepPlaybackFlip(tepPlaybackSec)}"`
+        + ` aria-label="Playback speed" aria-valuetext="${tepPlaybackSpeedLabel(tepPlaybackSec)} between steps"`
+        + ` title="Playback speed — slower to the left, faster to the right">`
         + `<span class="tep-test-playback-val">${tepPlaybackSpeedLabel(tepPlaybackSec)}</span></span>`;
       bar.appendChild(wrap);
       const btn = wrap.querySelector('.tep-bar-play');
@@ -13710,7 +13763,7 @@
         try { btn.blur(); } catch (_) { /* non-fatal */ }
       });
       const range = wrap.querySelector('.tep-test-playback-range');
-      range.addEventListener('input', (e) => { e.stopPropagation(); tepPlaybackSetSpeed(e.target.value); });
+      range.addEventListener('input', (e) => { e.stopPropagation(); tepPlaybackSetSpeed(tepPlaybackFlip(e.target.value)); });
       range.addEventListener('click', (e) => e.stopPropagation());
     }
     tepPlaybackSyncUi();
@@ -14248,7 +14301,12 @@
   /** Assembles the brief. Returns { text, meta:{bytes, truncated, sections} }. */
   async function tepBuildTriageBundle(tid) {
     const testId = String(tid);
-    const list = Array.isArray(allTests) ? allTests : [];
+    // Shared tests are listed too, and one of them can be the test the page has
+    // open — which is exactly when the brain button appears. Look in both, or
+    // the brief comes back with no subject and silently loses its type-aware
+    // metric plan.
+    const list = (Array.isArray(allTests) ? allTests : [])
+      .concat(Array.isArray(allSharedTests) ? allSharedTests : []);
     const subject = list.find((x) => String(x && (x.testId != null ? x.testId : x.id)) === testId) || null;
 
     const typeKey = subject && subject.testType ? String(subject.testType) : '';
@@ -15360,8 +15418,10 @@
       const showPageTestPointer = isActivePageTest && i === 0;
       const card = document.createElement('div');
       const enabled = testEnabledState(t);   // 'on' | 'off' | 'unknown'
+      const sharedTest = isSharedTest(t);
       card.className = 'tep-test-card'
         + (enabled === 'off' ? ' tep-test-card--disabled' : '')
+        + (sharedTest ? ' tep-test-card--shared' : '')
         + (isActivePageTest ? ' tep-test-card--focus' : '');
       card.dataset.testId = tid;
       const typeCss = TYPE_CSS[t.testType] || 'tep-type-other';
@@ -15385,7 +15445,9 @@
           <span class="tep-type-badge ${typeCss}">${typeLabelHtml}</span>
           <a class="tep-test-card-name tep-test-link" href="/network-app-synthetics/views/?testId=${tid}" target="_blank" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || 'Unnamed'}</a>
           <div class="tep-test-actions">
-            ${isReadOnly(t) ? '<span style="font-size:10px;color:var(--tep-slate-500);">read-only</span>' : `
+            ${sharedTest
+    ? '<span class="tep-test-shared-tag" title="Shared with your account group from another one. It cannot be edited from here, and its units bill to the account that owns it — so it is listed, but not counted in this account\'s unit total.">SHARED &middot; read-only</span>'
+    : (isReadOnly(t) ? '<span style="font-size:10px;color:var(--tep-slate-500);">read-only</span>' : `
             <div class="tep-test-actions-expanded">
               <button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="clone" title="Create a new test with the same settings (unsaved edits are not included)">Clone</button>
               ${canConvertTest(t) ? '<button type="button" class="tep-btn tep-btn-secondary tep-btn-sm tep-test-action-text" data-action="convert" title="Convert to another test type">Convert</button>' : ''}
@@ -15404,7 +15466,7 @@
               <line x1="10" y1="11" x2="10" y2="17" />
               <line x1="14" y1="11" x2="14" y2="17" />
             </svg>
-            </button>`}
+            </button>`)}
           </div>
         </div>
         <div class="tep-test-card-meta">
@@ -41716,6 +41778,2456 @@
   document.addEventListener('mouseup', () => {
     if (resizing) { resizing = false; resizeHandle.classList.remove('active'); }
   });
+
+
+  // ===========================================================================
+  // Correction
+  // ===========================================================================
+  /* Rewrites ThousandEyes' own API responses in this tab so the NATIVE TE UI
+     renders a condition you choose: a node that loses packets, a link that
+     adds delay, over a window of rounds you pick. Nothing is painted into the
+     DOM - TE parses the altered response and does all of its own maths,
+     colouring, counters and tooltips, so the picture stays self-consistent
+     wherever you click. For demos, training scenarios, and for exercising
+     this panel's own rendering without waiting for a real outage.
+
+     HOW YOU GET IN: hold shift and click a node or a link on a path
+     visualisation. A plain click still does exactly what it always did - that
+     is ThousandEyes' own selection, not ours to take over - so nothing on the
+     page behaves differently until the key is down.
+
+     WHY IT IS ITS OWN CLOSURE: it carries about sixty names of its own
+     (install, levels, palette, mk...) and this file is forty thousand lines
+     with names of its own. One nested scope is cheaper than sixty prefixes
+     and makes a collision impossible rather than unlikely.
+
+     WHAT IT COSTS WHEN UNUSED: three document listeners that return on their
+     first line unless shift is held. The response interception - the part
+     that patches XMLHttpRequest - is installed lazily, the first time the
+     window is opened, so a panel nobody has shift-clicked has not touched the
+     page's networking at all. */
+  (function tepCorrection() {
+    'use strict';
+    // ---------------------------------------------------------------- state --
+    const rules = [];           // { id, match, fn, desc }
+    const watches = [];         // url substrings to log
+    const lastByKey = new Map();// substring -> last parsed response
+    let installed = false;
+    let origFetch = null;
+    let origDescText = null;
+    let origDescResp = null;
+    let origOpen = null;
+    let hits = 0;
+
+    const log = (...a) => console.log('%c[TE Optics]', 'color:#0d6e71;font-weight:700', ...a);
+
+    // ------------------------------------------------------------ rewriting --
+    /* How many objects a rule actually changed, said out loud. This is the
+       single most useful signal when a rule "does nothing": a count of 0 means
+       the response arrived but nothing in it matched, while NO line at all means
+       the response never arrived - the app did not refetch. Those two look
+       identical on screen and have completely different fixes. */
+    /* The path visualisation colours by the metric the VIEW is currently set to
+       (it is in the page URL as `metrics=`). Forcing loss while the view is set
+       to netLatency rewrites the data correctly and changes nothing on screen,
+       which looks exactly like a broken harness. So say so. */
+    function currentMetric() {
+      try { return new URLSearchParams(location.search).get('metrics') || ''; }
+      catch (_) { return ''; }
+    }
+
+    function metricWarning(kind) {
+      const m = currentMetric();
+      if (!m) return '';
+      const showing = /loss/i.test(m) ? 'loss' : /latenc|delay/i.test(m) ? 'latency'
+        : /jitter/i.test(m) ? 'jitter' : m;
+      if (showing === kind) return '';
+      return 'This view is set to show ' + showing + ' (metrics=' + m + '), not '
+        + kind + '. The data was changed, but the path is not coloured by '
+        + kind + ' right now - switch the metric selector to ' + kind
+        + ' to see it.';
+    }
+
+    /* matched and wrote are reported SEPARATELY and deliberately. Collapsing
+       them is what cost several rounds of debugging: '@dest' matched 15 nodes
+       and wrote 0 fields, and the old message called that "matched NOTHING",
+       which sent us hunting for the wrong target when the target was fine and
+       the nodes simply carry no metrics. */
+    function applyRules(url, json) {
+      let out = json;
+      for (const r of rules) {
+        if (url.indexOf(r.match) < 0) continue;
+        try {
+          const next = r.fn(out, url);
+          if (next !== undefined) out = next;
+          hits++;
+        } catch (e) {
+          console.warn('[TE Optics] rule threw, response left untouched:', r.id, e);
+        }
+      }
+      return out;
+    }
+
+    /* The path-vis graph is ALWAYS parsed, rule or no rule: the window
+       needs to know which hops exist and what their IPs are before you have asked
+       for anything. Everything else is only touched when a rule or watch wants
+       it. */
+    const GRAPH_URL = '/path-vis/graph';
+    let lastGraph = null;
+
+    function isInteresting(url) {
+      if (!url) return false;
+      if (url.indexOf(GRAPH_URL) >= 0) return true;
+      return rules.some((r) => url.indexOf(r.match) >= 0)
+        || watches.some((w) => url.indexOf(w) >= 0);
+    }
+
+    /* lastGraph is the object the rules are about to MUTATE, so it is no use
+       for working out what a condition does end to end. Keep the untouched text
+       as well - it is a string we already hold, so this costs nothing until
+       something actually asks for it. */
+    let lastGraphText = null;
+
+    /* The round the graph was fetched for, and how long a round is. Both come
+       off the request URL, which is the only place that states them plainly. */
+    let lastBin = null;
+    let lastBinSize = 300;
+
+    function noteGraph(url, json, text) {
+      if (url.indexOf(GRAPH_URL) < 0 || !json || !Array.isArray(json.nodes)) return;
+      lastGraph = json;
+      if (typeof text === 'string') lastGraphText = text;
+      const b = /[?&]startBin=(\d+)/.exec(url);
+      if (b) lastBin = Number(b[1]);
+      const z = /[?&]binSize=(\d+)/.exec(url);
+      if (z && Number(z[1]) > 0) lastBinSize = Number(z[1]);
+    }
+
+    /** The round id a response is about, or null when it does not say. */
+    function roundOfUrl(url) {
+      if (!url) return null;
+      let m = /[?&]startBin=(\d+)/.exec(url);
+      if (m) return Number(m[1]);
+      m = /\/interval\/(\d+)\/(\d+)\//.exec(url);     // .../interval/<round>/<len>/...
+      if (m) return Number(m[1]);
+      return null;
+    }
+
+    /** The round the user is standing on right now. */
+    function currentRound() {
+      try {
+        const p = new URLSearchParams(location.search);
+        const t = Number(p.get('startTime'));
+        if (isFinite(t) && t > 0) return t;
+      } catch (e) { /* fall through */ }
+      return lastBin;
+    }
+
+    /* How many timeline responses have come back. The nudge watches this to
+       find out whether the gesture it just made actually reached the chart,
+       rather than assuming it did - which is exactly how the map came to sit
+       there red with the chart beside it still showing the real numbers. */
+    /* Keyed BY METRIC, and that detail is the whole point.
+       A bare count was the bug: flipping the metric selector away to Latency
+       makes TE fetch the LATENCY strip, which ticked the counter, so the
+       verifier below declared success and stopped - while the Loss strip on
+       screen, the one actually being looked at, had never been re-requested.
+       It then sat there showing real numbers under a red node, which is the
+       exact failure this verifier exists to catch. So a response only counts
+       towards the metric it is actually for. */
+    const timelineSeen = new Map();
+    function noteTimeline(url) {
+      if (!url || url.indexOf(TIMELINE_URL) < 0) return;
+      const kind = timelineKind(url) || '?';
+      timelineSeen.set(kind, (timelineSeen.get(kind) || 0) + 1);
+    }
+    function seenFor(kind) { return timelineSeen.get(kind) || 0; }
+
+    /** Which strip is on screen right now, in timelineKind()'s words. */
+    function shownKind() {
+      const m = currentMetric();
+      if (/loss/i.test(m)) return 'loss';
+      if (/latenc|delay/i.test(m)) return 'latency';
+      if (/jitter/i.test(m)) return 'jitter';
+      return '';
+    }
+
+    function noteWatch(url, json) {
+      for (const w of watches) {
+        if (url.indexOf(w) < 0) continue;
+        lastByKey.set(w, json);
+        log('watch', w, '<-', url.split('?')[0], json);
+      }
+    }
+
+    /** Returns a rewritten body string, or null when nothing applies. */
+    function rewriteText(url, text) {
+      if (!url || typeof text !== 'string' || !text) return null;
+      /* Counted before the gate, so the nudge can still tell whether the chart
+         refetched on a round where nothing is impaired. */
+      noteTimeline(url);
+      const interesting = isInteresting(url);
+      if (!interesting) return null;
+      let json;
+      try { json = JSON.parse(text); } catch (_) { return null; }
+      noteGraph(url, json, text);
+      noteWatch(url, json);
+      if (!rules.some((r) => url.indexOf(r.match) >= 0)) return null;
+      const out = applyRules(url, json);
+      try { return JSON.stringify(out); } catch (_) { return null; }
+    }
+
+    // ------------------------------------------------------------- patching --
+    function install() {
+      if (installed) return;
+
+      // fetch: easy — hand back a new Response carrying the rewritten body.
+      origFetch = window.fetch.bind(window);
+      window.fetch = async function (...args) {
+        const res = await origFetch(...args);
+        let url = '';
+        try { url = (typeof args[0] === 'string') ? args[0] : (args[0] && args[0].url) || ''; } catch (_) {}
+        if (!url || !res || !res.ok) return res;
+        if (!isInteresting(url)) return res;
+        let text = '';
+        try { text = await res.clone().text(); } catch (_) { return res; }
+        const next = rewriteText(url, text);
+        if (next == null) return res;
+        return new Response(next, { status: res.status, statusText: res.statusText, headers: res.headers });
+      };
+
+      /* XHR: patch the PROTOTYPE GETTERS, not a load listener. Handler order is
+         not ours to control — an app that assigned xhr.onload before calling
+         send() would run before any listener we added there and read the real
+         body. Going through the getter means every read is rewritten whenever it
+         happens. */
+      origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        try { this.__telab_url = typeof url === 'string' ? url : String(url); } catch (_) { this.__telab_url = ''; }
+        return origOpen.call(this, method, url, ...rest);
+      };
+
+      origDescText = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+      origDescResp = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
+
+      if (origDescText && origDescText.get) {
+        Object.defineProperty(XMLHttpRequest.prototype, 'responseText', {
+          configurable: true,
+          get() {
+            const raw = origDescText.get.call(this);
+            /* MEMOISE PER INSTANCE. An app reads responseText more than once,
+               and every read used to re-run the rules: a rule that ADDS (hop
+               latency) compounded on each read, so +180ms silently became +540.
+               Keyed on the raw body so a genuinely new response still rewrites. */
+            if (this.__telab_c && this.__telab_c.raw === raw) return this.__telab_c.out;
+            const next = rewriteText(this.__telab_url || '', raw);
+            const out = next == null ? raw : next;
+            try { this.__telab_c = { raw, out }; } catch (_) { /* frozen xhr */ }
+            return out;
+          },
+        });
+      }
+      if (origDescResp && origDescResp.get) {
+        Object.defineProperty(XMLHttpRequest.prototype, 'response', {
+          configurable: true,
+          get() {
+            const raw = origDescResp.get.call(this);
+            // responseType 'json' hands back an object; rewrite it in place.
+            if (raw && typeof raw === 'object' && this.responseType === 'json') {
+              const url = this.__telab_url || '';
+              noteTimeline(url);
+              if (!isInteresting(url)) return raw;
+              // Same memoisation as responseText, by object identity: a parsed
+              // body is mutated IN PLACE, so re-running an additive rule on a
+              // second read would compound it.
+              if (this.__telab_j && this.__telab_j.raw === raw) return this.__telab_j.out;
+              noteGraph(url, raw);
+              noteWatch(url, raw);
+              const out = applyRules(url, raw);
+              try { this.__telab_j = { raw, out }; } catch (_) { /* frozen xhr */ }
+              return out;
+            }
+            if (typeof raw === 'string') {
+              if (this.__telab_c && this.__telab_c.raw === raw) return this.__telab_c.out;
+              const next = rewriteText(this.__telab_url || '', raw);
+              const out = next == null ? raw : next;
+              try { this.__telab_c = { raw, out }; } catch (_) { /* frozen xhr */ }
+              return out;
+            }
+            return raw;
+          },
+        });
+      }
+
+      installed = true;
+      log('interceptor installed. Rules are inert until you add one.');
+    }
+
+    function uninstall() {
+      if (!installed) return;
+      if (origFetch) window.fetch = origFetch;
+      if (origOpen) XMLHttpRequest.prototype.open = origOpen;
+      if (origDescText) Object.defineProperty(XMLHttpRequest.prototype, 'responseText', origDescText);
+      if (origDescResp) Object.defineProperty(XMLHttpRequest.prototype, 'response', origDescResp);
+      installed = false;
+      rules.length = 0;
+      watches.length = 0;
+      if (menuOn) wire(false);
+      log('interceptor removed, rules cleared. Reload for a guaranteed-clean tab.');
+    }
+
+    // ------------------------------------------------------------- helpers --
+    function addRule(id, match, desc, fn, quiet) {
+      const i = rules.findIndex((r) => r.id === id);
+      if (i >= 0) rules.splice(i, 1);
+      rules.push({ id, match, desc, fn });
+      install();
+      /* The window re-installs its rule on every Apply, and four lines of
+         console each time would bury anything worth reading. Console callers
+         still get the full note: they have no window telling them what
+         happened. */
+      if (quiet) return TEPC;
+      log('rule +', id, '—', desc);
+      log('NOW MAKE THE APP REFETCH: nudge the timeline, switch layer/view, or');
+      log('change the agent filter. Do NOT reload the page - a full reload wipes');
+      log('this tool along with everything else injected into the tab.');
+      return TEPC;
+    }
+
+    function dropRule(id) {
+      const i = rules.findIndex((r) => r.id === id);
+      if (i >= 0) rules.splice(i, 1);
+      return TEPC;
+    }
+
+    /* Every loss key TE has been seen to use, set together. WHICH ONE the native
+       renderer binds to is exactly what this tool exists to find out, so set
+       them all and watch which figure appears on screen. */
+    /* WHAT THE LIVE RESPONSE ACTUALLY CONTAINS (measured 2026-10-29 on
+       /ajax/topology/path-vis/graph/multi, test 37785, 981 nodes / 51 routes).
+
+       THERE IS NO PER-HOP LOSS. Of 981 nodes, exactly 17 carry a `data` bag -
+       and 17 is the number of AGENTS in the test. Those are the agent nodes
+       (hop 0, carrying agentId / agent / v_agent_id), and their data.loss is the
+       agent's END-TO-END loss. Intermediate hops and the destination have no
+       loss field of any kind: 15 nodes are flagged destination:true and not one
+       of them has a data bag.
+
+           nodes[].data.loss                        agent end-to-end loss
+           nodes[].testIdToData.<id>.data.loss      per-test copy of the same
+           nodes[].data.{avgRtt,minRtt,maxRtt,meanDevRtt}
+           routes[].route[].delay                   per-hop delay (the only
+                                                    per-hop metric there is)
+
+       A non-responding hop is expressed with stars instead of a loss number:
+       nodes[].thisStar / nodes[].totalStars and routes[].numTrailingStars.
+
+       TWO MISTAKES ARE RECORDED HERE SO THEY ARE NOT REPEATED. First, this
+       harness set seven GUESSED key names (serverLoss, forwardingLoss, loss,
+       lossPercentage, packetLoss, pktLoss, lossPct) directly on the node and the
+       hop; all seven were wrong. Second, after finding `data.loss` by dumping
+       scalars, it wrote that field to whichever node the rule matched - but a
+       field path existing SOMEWHERE in a response says nothing about WHICH
+       objects carry it. Both times a rule reported success and the path never
+       changed. Count the objects you actually wrote, and report zero loudly. */
+
+    /** Every `data` bag belonging to a node: its own, plus one per test id.
+     *  Both are written, because which one the view reads is not ours to know
+     *  and they are supposed to agree with each other anyway. */
+    function nodeDataBags(node) {
+      const out = [];
+      if (!node || typeof node !== 'object') return out;
+      if (node.data && typeof node.data === 'object') out.push(node.data);
+      const byTest = node.testIdToData;
+      if (byTest && typeof byTest === 'object') {
+        for (const k of Object.keys(byTest)) {
+          const d = byTest[k] && byTest[k].data;
+          if (d && typeof d === 'object') out.push(d);
+        }
+      }
+      return out;
+    }
+
+    // ------------------------------------------------------- node targeting --
+    /* Rules are keyed by IP when you point at one specific box, because an IP is
+       the same machine wherever it appears. But an IP is NOT always the right
+       unit: see matchesTarget() below for the '@dest' / '@hop:N' / '@as:NNN'
+       tokens, which exist because a load-balanced destination answers on a
+       different address every round. */
+
+    function resolveNode(json, h) {
+      const nodes = Array.isArray(json.nodes) ? json.nodes : [];
+      const links = Array.isArray(json.links) ? json.links : [];
+      const link = links[h.link];
+      const idx = link && link.target != null ? link.target : (h.node != null ? h.node : null);
+      return idx != null ? nodes[idx] : null;
+    }
+    function nodeIp(n) { return n ? (n.publicIpAddress || n.ipAddress || '') : ''; }
+
+    /* A TARGET IS NOT ALWAYS AN IP.
+       login.microsoftonline.com is load-balanced, so the destination answers on
+       a different address every round - agent 201 saw .7, then .131, then .133
+       across three consecutive five-minute rounds. A rule keyed to the address
+       you right-clicked therefore matches nothing the moment the timeline moves,
+       which reads on screen as "the tool is broken". These tokens follow the
+       THING instead of the number:
+         '@agents'  every agent node - THE ONLY NODES THAT CARRY LOSS
+         '@dest'    whatever the destination is in this round
+         '@hop:N'   the Nth hop of every route, whoever that turns out to be
+                    (nodes are SHARED between routes, so a box marked as route
+                     A's hop 3 also shows marked where it is route B's hop 5 -
+                     that is one box with loss, not a leak)
+         '@as:NNN'  every hop belonging to that autonomous system
+       A plain address still means exactly that one box. */
+    // --------------------------------------------- selection + the window --
+    /* THE INTERACTION MODEL
+       ---------------------
+       ThousandEyes already owns the idea of "the thing you are pointing at":
+       clicking a node or a link marks it with the class "selected", and its own
+       footer says "Click a node or link". So this tool reads that selection
+       rather than inventing a second, competing one. You click in TE's UI; the
+       keys below adjust whatever TE says is selected.
+
+       SHIFT and click a node or a link, and a small window opens on it.
+       Three figures: packet loss, latency, and how many rounds either side of
+       the one in focus the event covers, plus a box that scatters the rounds
+       either side so the event is not a rectangle. Type them or step them
+       with the arrows beside each field. Apply writes them and refetches at
+       once, Clear takes them off, and the window stays where you drag it.
+
+       Held shift, because a plain click has to keep doing what it always did:
+       that is ThousandEyes' own selection, not ours to take over. Nothing on
+       the page behaves any differently until the key is down, which is what
+       makes this safe to have loaded during a demo. Shift and right-click
+       still works too, in case TE ever claims the left one.
+
+       Keys were tried first and lost the argument with the page. ThousandEyes
+       binds the arrows itself, the browser scrolls on them and + / - is a zoom
+       shortcut, so a press could land anywhere - and a key that only steps can
+       never type 37.
+
+       A menu of NAMED conditions was tried before that and lost a different
+       argument: a menu has to name its items, and the honest name for each one
+       is a whole sentence. "100% loss" and "drop all traffic" sat side by side
+       and read as the same thing when they are not - one writes a number on the
+       agent, the other kills the path and lets TE derive the number. A field
+       labelled "Packet loss  %" needs no name at all: you type the figure and
+       read the map.                                                        */
+
+    /* What one tap of a field's arrow is worth. The field still takes whatever
+       you type - these are for getting somewhere quickly, not for pinning you
+       to quarters. */
+    const LOSS_STEP = 25;        // percent of the traffic through the target
+    const LAT_STEP = 10;         // milliseconds added at the target link
+    const SPREAD_STEP = 1;       // one round either side
+    const LOSS_MAX = 100;        // percent
+    const LAT_MAX = 1000;        // ms - a whole second of delay is already absurd
+    const SPREAD_MAX = 48;       // 48 rounds either side is four hours at 5 min
+    const APPLY_DEBOUNCE_MS = 260;
+    const NUDGE_RETURN_MS = 1200;   // time to let one timeline step land
+    /* Long enough for the other layer to actually mount. Flipping back before
+       TE has finished switching lets it treat the return as "you never left",
+       and nothing is re-requested. */
+    const NUDGE_FLIP_MS = 1100;
+    const TOAST_MS = 3200;          // a transient note clears itself
+
+    /* target key -> { loss, lat } where both are integer LEVELS, not values.
+       Levels are kept rather than percentages so that repeated presses are exact
+       and reversible: four taps up then four taps down lands back on the
+       original numbers, which it would not if we rescaled a float each time. */
+    const levels = new Map();
+    let menuOn = false;
+    let applyTimer = null;
+
+    function styleEl(el, props) { for (const k of Object.keys(props)) el.style[k] = props[k]; }
+
+    /** What ThousandEyes currently says is selected. Returns null when nothing
+     *  is, which is the normal resting state and not an error. */
+    const NODE_SEL = 'circle.node.selected, .nodegroup.selected circle.node';
+    const LINK_SEL = 'path.link.selected, .linkgroup.selected path.link';
+
+    /* Clicking a link leaves the NODE marked selected as well - measured on a
+       live graph, both selectors match at once. Reading "node first" would then
+       quietly turn every link pick into a node pick. So the most recent element
+       to gain the class wins, and the selector sweep below is only the fallback
+       for when we have not seen a change (first paint, no MutationObserver). */
+    let lastSelectedEl = null;
+
+    /* Works on ANY node or link shape, selected or not: the right-click reads
+       whatever is under the pointer, which is usually but not always the thing
+       TE has highlighted. */
+    function describeShape(el) {
+      if (!el || !el.__data__) return null;
+      const d = el.__data__;
+      const cls = (el.getAttribute && el.getAttribute('class')) || '';
+      const isLink = /\blink\b/.test(cls)
+        || (d.source && d.target && typeof d.source === 'object');
+      if (isLink) {
+        const from = nodeIp(d.source), to = nodeIp(d.target);
+        if (!from || !to) return null;
+        return { kind: 'link', from, to, key: 'link:' + from + '>' + to,
+                 label: from + ' \u2192 ' + to };
+      }
+      const ip = nodeIp(d);
+      return ip ? { kind: 'node', ip, key: 'node:' + ip, label: ip } : null;
+    }
+
+    function stillSelected(el) {
+      if (!el || !el.getAttribute) return false;
+      if (/\bselected\b/.test(el.getAttribute('class') || '')) return true;
+      const g = el.parentElement;
+      return !!(g && g.getAttribute && /\bselected\b/.test(g.getAttribute('class') || ''));
+    }
+
+    function selectedTarget() {
+      if (lastSelectedEl && stillSelected(lastSelectedEl)) {
+        const t = describeShape(lastSelectedEl);
+        if (t) return t;
+      }
+      return describeShape(document.querySelector(LINK_SEL))
+          || describeShape(document.querySelector(NODE_SEL));
+    }
+
+    /* A condition is an EVENT, not a standing state: it covers the round you
+       were on when you set it, plus a spread of rounds either side. spread 0 is
+       the single round in focus, 1 is three rounds, 2 is five, and so on - the
+       left and right arrows walk that. Keeping it as a count of rounds rather
+       than a pair of timestamps means it stays correct if the bin size differs
+       between tests. */
+    function windowOf(lv) {
+      const len = lastBinSize || 300;
+      const focus = lv.focus != null ? lv.focus : currentRound();
+      if (focus == null) return null;
+      const spread = lv.spread || 0;
+      return [focus - spread * len, focus + spread * len];
+    }
+
+    /** How much of the set figure this round gets: 1 at the centre, anywhere
+     *  between 0.5 and 1.5 on the rounds either side.
+     *
+     *  A real degradation is not a rectangle. The flat plateau was the last
+     *  obvious tell left in a screenshot from here - every round in the event
+     *  carrying the identical figure to the decimal.
+     *
+     *  It has to be STABLE, though, and that is the whole difficulty: the same
+     *  round is asked for by the map, by the chart and by the per-round
+     *  figures, at different moments and from different responses. A fresh
+     *  Math.random() in here would hand each of them a different answer and
+     *  the three surfaces would quietly stop agreeing - which is the one thing
+     *  this tool exists to prevent. So it is a hash of the round's distance
+     *  from the centre, mixed with a seed drawn when the box was ticked: the
+     *  same round always comes back with the same figure, and ticking the box
+     *  again draws a new shape.
+     */
+    function wobble(lv, round) {
+      if (!lv || !lv.rand || round == null) return 1;
+      const focus = lv.focus;
+      if (focus == null || round === focus) return 1;   // the centre is what you typed
+      const len = lastBinSize || 300;
+      let h = ((lv.seed || 0) ^ Math.round((round - focus) / len)) >>> 0;
+      h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+      h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+      h = (h ^ (h >>> 16)) >>> 0;
+      return 0.5 + h / 4294967296;
+    }
+
+    function coversRound(lv, round) {
+      /* A response that does not say which round it is about is left in: better
+         to show the condition than to hide it on a technicality. */
+      if (round == null) return true;
+      const w = windowOf(lv);
+      if (!w) return true;
+      return round >= w[0] && round <= w[1];
+    }
+
+    /** Where in this route the target sits, or -1. For a link we match the hop
+     *  whose own link entry joins exactly those two nodes, so selecting one of
+     *  several parallel paths through the same pair of boxes still means that
+     *  path and not merely "anything touching this node". */
+    function targetIndexInRoute(json, route, t) {
+      const nodes = Array.isArray(json.nodes) ? json.nodes : [];
+      const links = Array.isArray(json.links) ? json.links : [];
+      for (let i = 0; i < route.route.length; i++) {
+        const hop = route.route[i];
+        if (!hop) continue;
+        if (t.kind === 'node') {
+          if (nodeIp(resolveNode(json, hop)) === t.ip) return i;
+        } else {
+          const l = links[hop.link];
+          if (!l) continue;
+          if (nodeIp(nodes[l.source]) === t.from && nodeIp(nodes[l.target]) === t.to) return i;
+        }
+      }
+      return -1;
+    }
+
+    function parseKey(key) {
+      if (key.indexOf('node:') === 0) return { kind: 'node', ip: key.slice(5) };
+      const pair = key.slice(5).split('>');
+      return { kind: 'link', from: pair[0], to: pair[1] };
+    }
+
+    /* ---------------------------------------------------------------------
+       THE REWRITE. Everything here was measured on a live path visualisation;
+       the comments say which parts are load-bearing and why, because three of
+       them are not guessable from the response alone.
+
+       1. There is no per-hop loss field. TE walks routes[] itself and tallies
+          pktsSent / pktsLost / deadEnds per node, then colours from that.
+       2. Truncating a route makes TE record a DEAD END, which is NOT loss. A
+          dead end only means nothing answered past that point, exactly as an
+          unresponsive-but-healthy router looks in real life.
+       3. The node only goes red when the AGENTS whose traffic died also report
+          that loss. Proven by controlled test: truncate + long star tail with
+          the agents untouched leaves pktsLost at 0 and the node blue; the same
+          truncation WITH the agents' loss set gives pktsLost == pktsSent and
+          "Forwarding Loss > 10%" counts the node. So the agent coupling is
+          required, not decoration - which is also why the map and the timeline
+          can be made to agree: they are already the same fact.
+       --------------------------------------------------------------------- */
+    /* The per-agent effect of the last run: source index -> {total, killed, lat},
+       plus the agent id each source maps to. This is the ONE place the map and
+       the timeline both read, which is what keeps them in step - they are not
+       two numbers to synchronise, they are the same number. */
+    let lastAgentEffect = null;
+    let lastAgentIds = null;
+
+    function applyImpairments(json, quiet, round, onlyKey) {
+      const active = [];
+      for (const [key, lv] of levels) {
+        if (!lv.loss && !lv.lat) continue;
+        if (onlyKey != null && key !== onlyKey) continue;
+        if (!coversRound(lv, round)) continue;
+        active.push([key, lv]);
+      }
+      if (!active.length) return json;
+
+      const routes = Array.isArray(json.routes) ? json.routes : [];
+      const nodes = Array.isArray(json.nodes) ? json.nodes : [];
+
+      /* Every route each agent owns, so an agent can report the share of ITS
+         OWN traffic that died rather than a flat number. An agent with one of
+         four routes through a dead node reports 25%, not 100%. */
+      const perAgent = new Map();
+      for (const r of routes) {
+        if (!r || !Array.isArray(r.route) || r.source == null) continue;
+        const e = perAgent.get(r.source) || { total: 0, killed: 0, lat: 0 };
+        e.total++;
+        perAgent.set(r.source, e);
+      }
+
+      const summary = [];
+      for (const [key, lv] of active) {
+        const t = parseKey(key);
+        /* The same factor the chart and the per-round figures will use for
+           this round, so the three cannot drift apart. */
+        const w = wobble(lv, round);
+        const hit = [];
+        for (const r of routes) {
+          if (!r || !Array.isArray(r.route)) continue;
+          const at = targetIndexInRoute(json, r, t);
+          if (at >= 0) hit.push({ r, at });
+        }
+        if (!hit.length) { summary.push({ target: key, matched: 0 }); continue; }
+
+        /* Latency first: scale this hop and everything past it. Doing it before
+           the truncation below costs nothing (scaled hops that then get cut off
+           simply vanish) and keeps the two independent of each other. */
+        let hops = 0;
+        if (lv.lat) {
+          const add = Math.round(lv.lat * w);
+          for (const { r, at } of hit) {
+            /* A hop's delay is the delay of ONE link - it is what TE averages
+               into its own "Link Delay (Avg) > 100ms (N links)" counter - so the
+               added milliseconds go on at the target link and nowhere else.
+               Carrying them down the tail as well would count the same
+               congestion once per remaining hop and put the end-to-end figure
+               out of step with the agents' RTT set below. */
+            const h = r.route[at];
+            if (h && typeof h.delay === 'number') { h.delay = h.delay + add; hops++; }
+            if (r.source != null) {
+              const e = perAgent.get(r.source);
+              /* max, not sum, for the same reason the rest of the tool uses
+                 it: clicking a link leaves its node selected too, and the same
+                 delay must not be charged twice for one gesture. */
+              if (e) e.lat = Math.max(e.lat, add);
+            }
+          }
+        }
+
+        /* Loss: kill that share of the routes THROUGH THIS TARGET. Note the
+           denominator - "100%" here is every route through this node, not every
+           route in the test, so a leaf node at full loss is still a small event
+           end to end. That is the truthful reading and the console says so. */
+        let cut = 0;
+        if (lv.loss) {
+          const pct = Math.min(LOSS_MAX, lv.loss * w);
+          let kill = Math.round(hit.length * pct / 100);
+          /* A node with one, two or three routes through it cannot express 17%
+             by killing whole routes, and rounding down to none would make the
+             figure you typed look ignored. One route goes, and the summary below reports
+             the share actually cut so the overstatement is on the record rather
+             than quietly assumed. */
+          if (!kill && hit.length) kill = 1;
+          for (let k = 0; k < kill; k++) {
+            const { r, at } = hit[k];
+            const drop = r.route.length - at - 1;
+            if (drop <= 0) continue;
+            r.route.length = at + 1;
+            r.numTrailingStars = drop;
+            cut++;
+            if (r.source != null) { const e = perAgent.get(r.source); if (e) e.killed++; }
+          }
+        }
+        summary.push({ target: key, matched: hit.length, cut, hops,
+          loss: Math.round(Math.min(LOSS_MAX, lv.loss * w)),
+          cutPct: hit.length ? Math.round(100 * cut / hit.length) : 0,
+          latMs: Math.round(lv.lat * w) });
+      }
+
+      /* The coupling. Without this the node stays blue no matter what. */
+      for (const [ai, e] of perAgent) {
+        const n = nodes[ai];
+        if (!n) continue;
+        const pct = e.total ? Math.round(100 * e.killed / e.total) : 0;
+        for (const bag of nodeDataBags(n)) {
+          if (e.killed) bag.loss = pct;
+          if (e.lat > 0) {
+            for (const k of ['avgRtt', 'minRtt', 'maxRtt']) {
+              if (typeof bag[k] === 'number') bag[k] = bag[k] + e.lat;
+            }
+          }
+        }
+      }
+
+      /* If routes died but no agent could be tied to them, the node will show
+         dead ends and stay blue - the exact failure that is easy to stare past,
+         so say it out loud rather than leave someone adjusting a key that can
+         never work on this data. */
+      let killed = 0;
+      for (const s2 of summary) killed += (s2.cut || 0);
+      let coupled = 0;
+      for (const e of perAgent.values()) if (e.killed) coupled++;
+      if (killed > 0 && coupled === 0 && !quiet) {
+        console.warn('[TE Optics] ' + killed + ' route(s) were cut, but none of them '
+          + 'carried a source agent, so no agent loss could be set. The node will '
+          + 'show dead ends and STAY BLUE. Red needs both halves.');
+      }
+
+      lastAgentEffect = perAgent;
+      lastAgentIds = new Map();
+      for (const ai of perAgent.keys()) {
+        const id = agentIdOf(nodes[ai]);
+        if (id != null) lastAgentIds.set(ai, id);
+      }
+
+      lastSummary = summary;
+      return json;
+    }
+
+    let lastSummary = [];
+
+    /* The join between a graph agent node and a datapoints row. TE spells it
+       several ways depending on the endpoint, so try each rather than pick one
+       and be silently wrong. */
+    function agentIdOf(node) {
+      if (!node) return null;
+      for (const k of ['vAgentId', 'v_agent_id', 'agentId', 'agent_id']) {
+        if (node[k] != null) return String(node[k]);
+      }
+      return null;
+    }
+
+    /* What the current levels do END TO END, tallied from the UNTOUCHED graph.
+       Worked out on demand rather than cached from the last map rewrite, so the
+       timeline is correct even when its response arrives before the graph's. */
+    /* Set when a strip response arrived with a condition live but no graph yet
+       to derive it from. That happens on the FIRST adjustment after pasting:
+       the layer flip fetches the graph and the strip at the same time, and if
+       the strip wins the race there are no routes to work out who was affected.
+       One more flip fixes it, so say so rather than silently drawing the real
+       numbers under a red node. */
+    let timelineNeedsGraph = false;
+
+    /** What ONE target does end to end, tallied from the untouched graph.
+     *
+     *  Per target rather than all-in-one, because each target carries its own
+     *  window now: the strip has to ask "what is in force at THIS round", and
+     *  that answer differs along the chart. Each call parses a throwaway copy,
+     *  which is cheap at one or two targets and keeps the tally honest - it is
+     *  always measured against pristine routes, never against routes a previous
+     *  target already cut.
+     */
+    function impactOfTarget(key) {
+      const none = { lossPct: 0, latMs: 0, byAgent: new Map(), agents: 0 };
+      if (!lastGraphText) { timelineNeedsGraph = true; return none; }
+      let g = null;
+      try { g = JSON.parse(lastGraphText); } catch (_) { return none; }
+      /* round is passed as null so the window does not exclude it here - the
+         caller decides which rounds this impact applies to. */
+      applyImpairments(g, true, null, key);
+      const eff = lastAgentEffect;
+      if (!eff || !eff.size) return none;
+      let lossSum = 0, latSum = 0, n = 0;
+      const byAgent = new Map();
+      for (const [src, e] of eff) {
+        const loss = e.total ? (100 * e.killed / e.total) : 0;
+        const lat = e.lat || 0;
+        lossSum += loss; latSum += lat; n++;
+        const id = lastAgentIds && lastAgentIds.get(src);
+        if (id != null) byAgent.set(id, { loss, lat });
+      }
+      if (!n) return none;
+      /* The strip aggregates across agents, so an impairment only some agents
+         route through moves it by their share - 3 of 17 agents at 100% is about
+         18% on the timeline, not 100%. That is the honest number, and it is what
+         stops the picture looking obviously manufactured. */
+      /* Latency dilutes the same way loss does: the agents that do not route
+         through the target contribute a zero to this average, so a slow link one
+         agent in ten uses moves the strip by a tenth of its milliseconds. */
+      return { lossPct: lossSum / n, latMs: latSum / n, byAgent, agents: n };
+    }
+
+    /** Every active target with its window and its end-to-end effect. */
+    function perTargetImpacts() {
+      const out = [];
+      for (const [key, lv] of levels) {
+        if (!lv.loss && !lv.lat) continue;
+        const imp = impactOfTarget(key);
+        if (!imp.agents) continue;
+        out.push({ key, lv, imp });
+      }
+      return out;
+    }
+
+    /** The combined effect in force at one round. */
+    function impactAtRound(round, cached) {
+      const list = cached || perTargetImpacts();
+      let lossPct = 0, latMs = 0;
+      const byAgent = new Map();
+      let agents = 0;
+      for (const t of list) {
+        if (!coversRound(t.lv, round)) continue;
+        /* imp is measured on a pristine graph with no round, so it is the
+           figure at the centre. The round's own share of it is applied here,
+           once, exactly as the map applied it. */
+        const w = wobble(t.lv, round);
+        const loss = Math.min(100, t.imp.lossPct * w);
+        const lat = t.imp.latMs * w;
+        agents = Math.max(agents, t.imp.agents);
+        lossPct = Math.max(lossPct, loss);
+        latMs = Math.max(latMs, lat);
+        for (const [id, v] of t.imp.byAgent) {
+          const scaled = { loss: Math.min(100, v.loss * w), lat: v.lat * w };
+          const cur = byAgent.get(id);
+          byAgent.set(id, cur
+            ? { loss: Math.max(cur.loss, scaled.loss), lat: Math.max(cur.lat, scaled.lat) }
+            : scaled);
+        }
+      }
+      return { lossPct, latMs, byAgent, agents };
+    }
+    function timelineKind(url) {
+      if (/latenc|avgrtt|delay/i.test(url)) return 'latency';
+      if (/jitter/i.test(url)) return 'jitter';
+      if (/loss/i.test(url)) return 'loss';
+      return '';
+    }
+
+    const TIMELINE_URL = '/agent/view/timeline/';
+    const POINTS_URL = '/agent/view/interval/';
+
+    function ensureEndToEndRules() {
+      addRule('impairTimeline', TIMELINE_URL,
+        'the timeline strip follows what the map was told to do', (json, url) => {
+          if (!json || !Array.isArray(json.values)) return json;
+          const kind = timelineKind(url);
+          if (kind !== 'loss' && kind !== 'latency') return json;
+          const list = perTargetImpacts();
+          if (!list.length) return json;
+
+          /* THE INDEX RULE, measured: values[i] is the round
+             chunks[0].startRoundId + i * chunks[0].intervalLength. That one
+             mapping is what lets a condition sit over the rounds it actually
+             covers instead of flooding the whole chart. */
+          const chunk = Array.isArray(json.chunks) && json.chunks[0];
+          const startRound = chunk && Number(chunk.startRoundId);
+          const step = chunk && Number(chunk.intervalLength);
+          const canMap = isFinite(startRound) && isFinite(step) && step > 0;
+          if (!canMap) {
+            /* Without chunks there is no way to say WHICH rounds these values
+               are, so narrowing would be a guess. Say so once and leave the
+               chart alone rather than painting the wrong part of it. */
+            console.warn('[TE Optics] the timeline response carries no chunks, so the '
+              + 'window cannot be placed on it. The chart is left untouched.');
+            return json;
+          }
+
+          for (let i = 0; i < json.values.length; i++) {
+            const round = startRound + i * step;
+            const imp = impactAtRound(round, list);
+            const v = Number(json.values[i]) || 0;
+            if (kind === 'loss' && imp.lossPct > 0) {
+              /* max, not sum: a round that already lost packets does not lose
+                 them twice because a path through one node was also killed. */
+              json.values[i] = Math.max(v, imp.lossPct);
+            } else if (kind === 'latency' && imp.latMs > 0) {
+              /* Added milliseconds, so they ADD here. The baseline still shows
+                 through: a round that was already slow stays that much slower
+                 than its neighbours instead of being flattened to one figure. */
+              json.values[i] = v + imp.latMs;
+            }
+          }
+          return json;
+        }, true);
+
+      addRule('impairPoints', POINTS_URL,
+        'the per-round agent numbers follow the map', (json, url) => {
+          const rows = Array.isArray(json) ? json
+            : (json && Array.isArray(json.datapoints) ? json.datapoints : null);
+          if (!rows) return json;
+          /* These are the numbers for ONE round, so they only move if that round
+             is inside the window. */
+          const imp = impactAtRound(roundOfUrl(url));
+          if (!imp.lossPct && !imp.latMs) return json;
+          for (const row of rows) {
+            if (!row || typeof row !== 'object') continue;
+            const meta = row.meta || (row.meta = {});
+            const id = meta.vAgentId != null ? String(meta.vAgentId) : null;
+            /* Per agent where the ids line up, the fleet average where they do
+               not - so a changed id spelling degrades to something plausible
+               instead of silently writing nothing. */
+            const per = (id && imp.byAgent.get(id)) || null;
+            const loss = per ? per.loss : imp.lossPct;
+            const lat = per ? per.lat : imp.latMs;
+            if (loss > 0) {
+              if (row.metrics && typeof row.metrics === 'object') row.metrics.LOSS = loss;
+              meta.loss = loss;
+            }
+            if (lat > 0) {
+              if (row.metrics && typeof row.metrics === 'object'
+                  && typeof row.metrics.LATENCY === 'number') {
+                row.metrics.LATENCY = Math.round(row.metrics.LATENCY + lat);
+              }
+              for (const k of ['avgRtt', 'minRtt', 'maxRtt']) {
+                if (typeof meta[k] === 'number') meta[k] = Math.round(meta[k] + lat);
+              }
+            }
+          }
+          return json;
+        }, true);
+    }
+
+    function ensureImpairRule() {
+      addRule('impair', GRAPH_URL, 'the conditions set in the window',
+        (json, url) => applyImpairments(json, false, roundOfUrl(url)), true);
+    }
+
+    /** Re-request the round you are ALREADY on.
+     *
+     *  Stepping the timeline also refetches, but it moves you in time - four
+     *  taps of "+" would walk you four rounds into the past, which made the
+     *  whole increment idea unusable. Switching the sub-tab away and back makes
+     *  ThousandEyes re-request the current round instead, so the picture updates
+     *  under your hands and the clock does not move. Measured: Map -> Path
+     *  Visualization issues graph/multi for the same startBin. */
+    function nudgeSameRound() {
+      const tab = (name) => Array.from(document.querySelectorAll('button'))
+        .find(b => (b.textContent || '').trim() === name);
+      const back = tab('Path Visualization');
+      const away = tab('Map') || tab('Table');
+      if (!back || !away) return false;
+      try {
+        away.click();
+        setTimeout(() => { try { back.click(); } catch (e) {} }, 420);
+        return true;
+      } catch (e) { return false; }
+    }
+
+    /** Install (or drop) the rewrite rule to match the current levels. Runs
+     *  synchronously on every write: the rule IS the state, so it must never
+     *  lag behind what the window says. */
+    function syncRule() {
+      let any = false;
+      for (const lv of levels.values()) if (lv.loss || lv.lat) { any = true; break; }
+      if (any) { ensureImpairRule(); ensureEndToEndRules(); }
+      else { dropRule('impair'); dropRule('impairTimeline'); dropRule('impairPoints'); }
+    }
+
+    /** Only the REFETCH is debounced - holding "+" should cost one round trip,
+     *  not five. */
+    /** Refresh without the clock moving. nudgeAll() picks the best available
+     *  strategy; what each one actually reaches is recorded on each branch. */
+    /** The active layer tab (Agent to Server / HTTP Server / Page Load / BGP)
+     *  and a sibling to bounce off.
+     *
+     *  Found structurally rather than by name: the tab buttons share a
+     *  "tabs-nav-button" class and the active one carries aria-selected="true".
+     *  The sub-tab row (Path Visualization / Map / Table) uses the same markup,
+     *  so it is excluded by name - those three are the only names we need to
+     *  know, and getting that wrong only costs us the better nudge. */
+    /* The sub-tab row under the layer row uses the same markup, so it is
+       excluded by name - those are the only names we need to know. */
+    const SUB_LABEL = /^(path visualisation|path visualization|map|table|views?)$/i;
+    /* The layer names TE ships. Matching on these as well as on the class is
+       deliberate belt and braces: a class name is a build artefact and has
+       changed under this before, whereas "BGP Route Visualization" is in the
+       product. Either route alone is enough to find the row. */
+    const LAYER_LABEL = new RegExp('^(agent to (server|agent)|http server|page load'
+      + '|transaction|bgp( route( visualization| visualisation)?)?|dns (server|trace)'
+      + '|dnssec|voice|sip server|ftp server|ftp|web|network|api)$', 'i');
+
+    function tabCandidates() {
+      const out = [];
+      const push = (sel) => {
+        try {
+          for (const el of document.querySelectorAll(sel)) {
+            if (out.indexOf(el) < 0) out.push(el);
+          }
+        } catch (e) { /* selector unsupported here */ }
+      };
+      push('button[class*="tabs-nav-button"]');
+      push('[role="tab"]');
+      push('nav button');
+      push('[class*="tabs"] button');
+      return out;
+    }
+
+    function layerTabPair() {
+      const btns = tabCandidates();
+      if (!btns.length) return null;
+      const label = (b) => (b.textContent || '').trim();
+      const enabled = (b) => !b.disabled && b.getAttribute('aria-disabled') !== 'true';
+      const marked = (b) => b.getAttribute('aria-selected') === 'true'
+        || b.getAttribute('aria-checked') === 'true'
+        || b.getAttribute('tabindex') === '0'
+        || /\b(active|selected|current)\b/i.test(b.getAttribute('class') || '');
+
+      const groups = new Map();
+      for (const b of btns) {
+        const list = (b.parentElement && b.parentElement.parentElement) || b.parentElement;
+        if (!list) continue;
+        if (!groups.has(list)) groups.set(list, []);
+        groups.get(list).push(b);
+      }
+      /* A row that names a layer wins over one merely found by class: it is
+         the row a person would call the layer tabs. */
+      const rows = Array.from(groups.values()).filter((g) => g.length >= 2
+        && !g.some((b) => SUB_LABEL.test(label(b))));
+      rows.sort((a, b) => b.filter((x) => LAYER_LABEL.test(label(x))).length
+                        - a.filter((x) => LAYER_LABEL.test(label(x))).length);
+      for (const g of rows) {
+        const active = g.find(marked) || null;
+        if (!active) continue;
+        const other = g.find((b) => b !== active && enabled(b) && label(b));
+        if (other) return { active, other };
+      }
+      return null;
+    }
+
+    /** The metric selector (Loss / Latency / Jitter) and a sibling to bounce
+     *  off.
+     *
+     *  This is the one that actually brings the strip back in the live app.
+     *  Found by its own labels rather than by class, and only on something
+     *  that looks like a control, because this clicks a real thing on
+     *  someone's dashboard. Which metric is current comes from the URL
+     *  (`metrics=`), so we put the view back exactly where we found it.
+     */
+    const METRIC_LABEL = /^(packet\s+)?loss$|^(avg\.?\s+)?latency$|^jitter$|^delay$/i;
+
+    function metricTabPair() {
+      let cands;
+      try {
+        cands = Array.from(document.querySelectorAll(
+          'button,[role="tab"],[role="radio"],[role="option"],[role="menuitemradio"]'));
+      } catch (e) { return null; }
+      const labelled = cands.filter((el) => METRIC_LABEL.test((el.textContent || '').trim()));
+      if (labelled.length < 2) return null;
+
+      const by = (depth) => {
+        const groups = new Map();
+        for (const el of labelled) {
+          let p = el.parentElement;
+          for (let i = 1; i < depth && p; i++) p = p.parentElement;
+          if (!p) continue;
+          if (!groups.has(p)) groups.set(p, []);
+          groups.get(p).push(el);
+        }
+        for (const g of groups.values()) if (g.length >= 2) return g;
+        return null;
+      };
+      const group = by(1) || by(2);
+      if (!group) return null;
+
+      const now = currentMetric();
+      const want = /loss/i.test(now) ? /loss/i
+        : /latenc|delay/i.test(now) ? /latenc|delay/i
+        : /jitter/i.test(now) ? /jitter/i : null;
+      const marked = (el) => el.getAttribute('aria-selected') === 'true'
+        || el.getAttribute('aria-checked') === 'true';
+      const active = group.find(marked)
+        || (want && group.find((el) => want.test((el.textContent || '').trim())))
+        || group[0];
+      const other = group.find((el) => el !== active && !el.disabled
+        && el.getAttribute('aria-disabled') !== 'true');
+      return other ? { active, other } : null;
+    }
+
+    /* The click BACK onto whatever was active is owed to the page: until it
+       lands, the view is sitting on a metric or a layer nobody asked for. If
+       another gesture starts first it is paid immediately rather than left to
+       fire later, when it would be putting the view back to a state two moves
+       out of date. */
+    let pendingBack = null;
+
+    function payBack() {
+      if (!pendingBack) return;
+      const b = pendingBack;
+      pendingBack = null;
+      clearTimeout(b.timer);
+      b.go();
+    }
+
+    /** Click one control, then click back onto the one that was active. */
+    /** Click the way a hand does.
+     *
+     *  el.click() dispatches a click and nothing else. A tab that commits on
+     *  pointerdown or mousedown - which plenty do - never hears it, so the
+     *  view does not move and the refresh silently does nothing. Sending the
+     *  whole sequence costs four extra events and removes an entire class of
+     *  "it works when I click it myself". The plain .click() stays as the
+     *  fallback for anything that only listens for that. */
+    function fireClick(el) {
+      if (!el) return false;
+      let r = { left: 0, top: 0, width: 0, height: 0 };
+      try { r = el.getBoundingClientRect(); } catch (e) { /* detached */ }
+      const x = r.left + (r.width || 0) / 2;
+      const y = r.top + (r.height || 0) / 2;
+      const opts = { bubbles: true, cancelable: true, composed: true,
+        view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
+      const send = (Ctor, type, init) => {
+        try {
+          if (typeof Ctor !== 'function') return;
+          el.dispatchEvent(new Ctor(type, init));
+        } catch (e) { /* this environment has no such constructor */ }
+      };
+      try { if (typeof el.focus === 'function') el.focus(); } catch (e) { /* */ }
+      send(window.PointerEvent, 'pointerdown',
+        Object.assign({ pointerId: 1, isPrimary: true, pointerType: 'mouse' }, opts));
+      send(window.MouseEvent, 'mousedown', opts);
+      send(window.PointerEvent, 'pointerup',
+        Object.assign({ pointerId: 1, isPrimary: true, pointerType: 'mouse' },
+          opts, { buttons: 0 }));
+      send(window.MouseEvent, 'mouseup', Object.assign({}, opts, { buttons: 0 }));
+      try { el.click(); } catch (e) { return false; }
+      return true;
+    }
+
+    function flipPair(pair, backAfter) {
+      if (!pair) return false;
+      try {
+        payBack();
+        fireClick(pair.other);
+        const go = () => {
+          pendingBack = null;
+          try { fireClick(pair.active); } catch (e) {}
+        };
+        pendingBack = { go, timer: setTimeout(go, backAfter || NUDGE_FLIP_MS) };
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function nudgeMetric() { return flipPair(metricTabPair()); }
+
+    /* metricTabPair() only ever finds a metric selector that is drawn as a
+       ROW of options. The three below are the shapes it cannot see, and at
+       least one of them is why "switch to latency and back" works by hand
+       while the automated version does nothing. */
+
+    /** A native <select>. Clicking one does nothing at all: the value has to
+     *  be set and the change announced, or no framework hears it. */
+    function nudgeMetricSelect() {
+      let sels;
+      try { sels = Array.from(document.querySelectorAll('select')); }
+      catch (e) { return false; }
+      for (const sel of sels) {
+        const opts = Array.from(sel.options || []);
+        const metric = (o) => METRIC_LABEL.test((o.textContent || '').trim())
+          || /loss|latenc|jitter|delay/i.test(o.value || '');
+        const hits = opts.filter(metric);
+        if (hits.length < 2) continue;
+        const was = sel.value;
+        const other = hits.find((o) => o.value !== was);
+        if (!other) continue;
+        const set = (v) => {
+          sel.value = v;
+          for (const t of ['input', 'change']) {
+            try { sel.dispatchEvent(new Event(t, { bubbles: true })); } catch (e) { /* */ }
+          }
+        };
+        payBack();
+        set(other.value);
+        const go = () => { pendingBack = null; try { set(was); } catch (e) {} };
+        pendingBack = { go, timer: setTimeout(go, NUDGE_FLIP_MS) };
+        return true;
+      }
+      return false;
+    }
+
+    /* Measured on the live app: the metric control is a dropdown BUTTON
+       whose text reads "Metrics: Loss". Matching that exactly beats the
+       generic "a control whose text mentions the current metric", which on a
+       real page also matches a legend, a column header and a filter chip.
+       The generic form stays as the fallback for a build that words it
+       differently. */
+    const METRIC_TRIGGER = /^metrics?\s*:/i;
+
+    /** A dropdown whose options do not exist until it is opened. */
+    function metricTrigger() {
+      let cands;
+      try {
+        cands = Array.from(document.querySelectorAll(
+          'button,[role="combobox"],[aria-haspopup],[class*="dropdown"],[class*="select"]'));
+      } catch (e) { return null; }
+      const named = cands.find((el) => METRIC_TRIGGER.test((el.textContent || '').trim()));
+      if (named) return named;
+      /* Past this point we are guessing from text alone, and "a control whose
+         text says Loss" also describes one option in a row of them. A row
+         needs no opening, and nudgeMetric() already handles it properly, so
+         leave it alone rather than treat an option as a trigger and click
+         our way through a menu that was never closed. */
+      if (metricTabPair()) return null;
+      const kind = shownKind();
+      if (!kind) return null;
+      const saysCurrent = new RegExp(kind === 'latency' ? 'latenc|delay' : kind, 'i');
+      return cands.find((el) => {
+        const t = (el.textContent || '').trim();
+        return t.length < 40 && saysCurrent.test(t);
+      }) || null;
+    }
+
+    function nudgeMetricMenu() {
+      const kind = shownKind();
+      if (!kind) return false;
+      const saysCurrent = new RegExp(kind === 'latency' ? 'latenc|delay' : kind, 'i');
+      const trigger = metricTrigger();
+      if (!trigger) return false;
+
+      /* Open, pick something else, and schedule the whole thing in reverse.
+         Each step is guarded: a menu that does not open simply leaves the
+         later steps finding nothing, and the verifier moves on. */
+      const pick = (want, then) => {
+        fireClick(trigger);
+        setTimeout(() => {
+          let opts;
+          try {
+            opts = Array.from(document.querySelectorAll(
+              '[role="option"],[role="menuitem"],[role="menuitemradio"],li,button'));
+          } catch (e) { opts = []; }
+          const hit = opts.find((el) => {
+            if (el === trigger) return false;          // that is what we opened
+            const t = (el.textContent || '').trim();
+            return t && t.length < 40 && !METRIC_TRIGGER.test(t) && want.test(t);
+          });
+          if (hit) fireClick(hit);
+          if (then) setTimeout(then, 260);
+        }, 280);
+      };
+
+      const otherWant = kind === 'loss' ? /^(avg\.?\s*)?latency$|^delay$/i
+                                        : /^(packet\s*)?loss$/i;
+      payBack();
+      pick(otherWant);
+      const go = () => { pendingBack = null; pick(saysCurrent); };
+      pendingBack = { go, timer: setTimeout(go, NUDGE_FLIP_MS + 600) };
+      return true;
+    }
+
+    /** No control at all: the metric lives in the URL, so change it there and
+     *  let TE's own router notice. Does nothing on a build that does not
+     *  listen, which costs one escalation step and no harm - the URL is put
+     *  back either way. */
+    function nudgeMetricUrl() {
+      let url, had;
+      try {
+        url = new URL(window.location.href);
+        had = url.searchParams.get('metrics');
+      } catch (e) { return false; }
+      if (!had) return false;
+      const other = /loss/i.test(had) ? had.replace(/loss/i, 'Latency')
+        : /latenc/i.test(had) ? had.replace(/latency/i, 'Loss') : null;
+      if (!other || other === had) return false;
+
+      const put = (v) => {
+        try {
+          const u = new URL(window.location.href);
+          u.searchParams.set('metrics', v);
+          window.history.replaceState(window.history.state, '', u.toString());
+          for (const t of ['popstate', 'hashchange']) {
+            try { window.dispatchEvent(new Event(t)); } catch (e) { /* */ }
+          }
+        } catch (e) { /* */ }
+      };
+      payBack();
+      put(other);
+      const go = () => { pendingBack = null; put(had); };
+      pendingBack = { go, timer: setTimeout(go, NUDGE_FLIP_MS) };
+      return true;
+    }
+    function nudgeLayer() { return flipPair(layerTabPair()); }
+
+    function nudgeRound() {
+      const btn = (name) => Array.from(document.querySelectorAll('button')).find((b) => {
+        const n = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+        return n === name && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
+      });
+      const prev = btn('Previous interval');
+      if (!prev) return false;
+      try {
+        prev.click();
+        /* Next is looked up again AFTER the step, because at the newest round
+           it is disabled until you move off it. */
+        setTimeout(() => {
+          const next = btn('Next interval');
+          if (next) { try { next.click(); } catch (e) {} }
+        }, NUDGE_RETURN_MS);
+        return true;
+      } catch (e) { return false; }
+    }
+
+    /* In the order they are worth trying. The metric selector goes first
+       because it is the one that demonstrably brings the strip back; the layer
+       flip reaches all three surfaces when the tabs are where we expect them;
+       the last two reach the map and the per-round figures but NOT the chart,
+       and are only here so something happens rather than nothing. */
+    /* In the order they are worth trying. The LAYER flip goes first because
+       it re-renders the whole test view, strip included, and is the one
+       measured to bring back the chart for the metric you are already on.
+       The metric flip is second: it does fetch a strip, but the one it
+       fetches is for the metric it swung TO, and TE will often serve the
+       original from its own cache on the way back - which looks like success
+       and is not. The last two reach the map and the per-round figures but
+       not the chart, and are here so that something happens rather than
+       nothing. */
+    /* In the order they are worth trying, and that order is evidence now
+       rather than guesswork.
+
+       The METRIC gestures go first because switching the metric away and
+       back is the thing confirmed to bring the chart back, and because they
+       are cheap: the view never leaves the page you are looking at. The
+       LAYER flip is demoted below them - it works, but it navigates to
+       another layer and back to do it, which is a lot of motion on screen
+       for something tried first and usually not needed. The last two reach
+       the map and the per-round figures but not the chart, and are here so
+       that something happens rather than nothing.
+
+       `takes` is how long that gesture needs for its own round trip. A fixed
+       verification window was too short for the menu, which has to open,
+       pick, settle, reopen and pick back before the strip it asked for can
+       possibly arrive - so it was being judged a failure while it was still
+       working. */
+    const GESTURES = [
+      { id: 'metric', go: nudgeMetric, takes: NUDGE_FLIP_MS,
+        says: 'switched the metric away and back' },
+      { id: 'menu', go: nudgeMetricMenu, takes: NUDGE_FLIP_MS + 1200,
+        says: 'opened the metric menu and switched back' },
+      { id: 'select', go: nudgeMetricSelect, takes: NUDGE_FLIP_MS,
+        says: 'changed the metric <select> and back' },
+      { id: 'url', go: nudgeMetricUrl, takes: NUDGE_FLIP_MS,
+        says: 'changed metrics= in the URL and back' },
+      { id: 'layer', go: nudgeLayer, takes: NUDGE_FLIP_MS,
+        says: 'flipped the test layer away and back' },
+      { id: 'round', go: nudgeRound, takes: NUDGE_RETURN_MS,
+        says: 'stepped one round and back' },
+      { id: 'subtab', go: nudgeSameRound, takes: 600,
+        says: 're-requested the current round' },
+    ];
+
+    /** One gesture, the best one available, without checking the result.
+     *  TEPC.refetch() uses this because it reports what it did; the automatic
+     *  path uses nudgeUntilChart() instead. */
+    function nudgeAll() {
+      for (const g of GESTURES) if (g.go()) return g.id;
+      return '';
+    }
+
+    /* Polled rather than checked once, late: a gesture that works usually
+       works within a few hundred ms of the click back, and waiting out a
+       fixed deadline before even looking made a working refresh feel like a
+       broken one. */
+    const NUDGE_VERIFY_EVERY_MS = 220;
+    /* On top of whatever the gesture itself takes. */
+    const NUDGE_VERIFY_SLACK_MS = 1800;
+
+    /** Keep going until the chart at the top has actually been re-requested.
+     *
+     *  Which control does that is not something to assume. It has been wrong
+     *  before, and the failure is the nastiest one this tool has: the map
+     *  goes red, the chart keeps its real numbers, and the two sit there
+     *  contradicting each other with nothing on screen to say why. So each
+     *  gesture is made and then CHECKED against the number of timeline
+     *  responses that have come back, and the next one is tried if the strip
+     *  did not move. */
+    /* A second Apply must not race the first one's escalation: two chains
+       clicking the same tabs past each other would leave the view somewhere
+       neither of them intended. Each run carries its generation and gives up
+       the moment a newer one starts. */
+    let nudgeGen = 0;
+
+    function nudgeUntilChart(i, tried, gen) {
+      i = i || 0;
+      tried = tried || [];
+      if (gen == null) gen = ++nudgeGen;
+      if (gen !== nudgeGen) return;
+      if (i >= GESTURES.length) {
+        console.warn('[TE Optics] ' + (tried.length
+            ? 'tried ' + tried.join(', then ') + ', and the chart at the top '
+              + 'still has not been re-requested.'
+            : 'found no control to refresh with.')
+          + ' Switch the test layer away and back by hand (e.g. BGP, then '
+          + 'Agent to Server) - the map is already right. TEPC.why() prints '
+          + 'what it could and could not find.');
+        /* On screen as well as in the console: the console is not where
+           anyone is looking when the chart fails to move. */
+        notify('Chart not refreshed \u2014 switch the test layer away and back.');
+        afterNudge();
+        return;
+      }
+      const g = GESTURES[i];
+      /* The metric on screen BEFORE anything is clicked. A gesture that
+         swings the view elsewhere must not be allowed to answer for the
+         strip the user is actually looking at. */
+      const kind = shownKind();
+      const before = seenFor(kind);
+      if (!g.go()) { nudgeUntilChart(i + 1, tried, gen); return; }
+      tried.push(g.id);
+
+      const deadline = Date.now() + (g.takes || NUDGE_FLIP_MS) + NUDGE_VERIFY_SLACK_MS;
+      const poll = () => {
+        if (gen !== nudgeGen) return;
+        if (seenFor(kind) > before) {
+          log('chart refetched - ' + g.says + '.');
+          afterNudge();
+          return;
+        }
+        if (Date.now() < deadline) { setTimeout(poll, NUDGE_VERIFY_EVERY_MS); return; }
+        nudgeUntilChart(i + 1, tried, gen);
+      };
+      setTimeout(poll, NUDGE_VERIFY_EVERY_MS);
+    }
+
+    let warnedCacheBack = false;
+
+    /** Refetch so the change appears.
+     *
+     *  The debounce is there for a figure being stepped: four taps of an arrow
+     *  should cost one round trip, not four. Apply is a decision, not a step,
+     *  so it passes 0 and goes straight out - the chart at the top is the whole
+     *  reason you pressed it, and waiting a beat for it reads as a bug.
+     */
+    function doNudge() {
+      applyTimer = null;
+      payBack();
+      /* TE's cache switch is a ONE HOUR cookie. When it lapses mid-session the
+         rounds come back from IndexedDB, no request goes out, and everything
+         you change appears to do nothing at all - indistinguishable from the
+         harness being broken. Catch it here rather than let someone debug a
+         non-problem. */
+      if (!cacheDisabled()) {
+        if (!warnedCacheBack) {
+          warnedCacheBack = true;
+          console.warn('[TE Optics] the round cache is ON again - TE\'s switch for it '
+            + 'is a one-hour cookie and it has lapsed. Nothing you change can '
+            + 'appear until it is off.\n  Run TEPC.setup(), reload, and paste '
+            + 'this tool again.');
+        }
+        notify('Round cache lapsed \u2014 run TEPC.setup() and reload the page.');
+      } else {
+        warnedCacheBack = false;
+      }
+      nudgeUntilChart(0);
+    }
+
+    /** Refetch so the change appears.
+     *
+     *  The debounce is there for a figure being stepped: four taps of an arrow
+     *  should cost one round trip, not four. Apply is a decision rather than a
+     *  step, so it passes 0 and the refetch goes out in the same tick - the
+     *  chart at the top is the whole reason it was pressed, and a beat of delay
+     *  before it moves reads as a bug.
+     */
+    function scheduleNudge(delay) {
+      if (applyTimer) { clearTimeout(applyTimer); applyTimer = null; }
+      if (delay === 0) { doNudge(); return; }
+      applyTimer = setTimeout(doNudge, delay == null ? APPLY_DEBOUNCE_MS : delay);
+    }
+
+    /* One retry, and only one: if the strip still cannot be derived after a
+       second pass something else is wrong, and flipping forever would just make
+       the page thrash. */
+    let healing = false;
+
+    function anyLevelActive() {
+      for (const lv of levels.values()) if (lv.loss || lv.lat) return true;
+      return false;
+    }
+
+    function afterNudge() {
+      if (timelineNeedsGraph && !healing && anyLevelActive() && lastGraphText) {
+        timelineNeedsGraph = false;
+        healing = true;
+        notify('The chart was a step behind \u2014 syncing it.');
+        nudgeAll();
+        setTimeout(() => { healing = false; refreshPanel(); },
+          NUDGE_FLIP_MS + 2800);
+        return;
+      }
+      if (timelineNeedsGraph && !lastGraphText) {
+        console.warn('[TE Optics] the chart could not be rewritten because no path-vis '
+          + 'graph has been captured yet. Let the map load once, then adjust again.');
+      }
+      timelineNeedsGraph = false;
+      healing = false;
+      refreshPanel();
+    }
+
+    function levelsFor(key) {
+      let lv = levels.get(key);
+      if (!lv) {
+        /* focus is pinned HERE, when the condition is first set, not read live.
+           If it tracked the current round the event would follow you along the
+           timeline and never sit still - which is the opposite of an outage. */
+        lv = { loss: 0, lat: 0, spread: 0, focus: currentRound() };
+        levels.set(key, lv);
+      }
+      if (lv.focus == null) lv.focus = currentRound();
+      return lv;
+    }
+
+    /** Write a condition and put it on screen.
+     *
+     *  The ONE write path: the window and the console API both come through
+     *  here, so there is no second way for the map, the chart and the per-round
+     *  figures to end up disagreeing. Only the fields you pass are touched.
+     */
+    function setTarget(key, vals, now) {
+      const lv = levelsFor(key);
+      if (vals.loss != null) lv.loss = intIn(vals.loss, 0, LOSS_MAX);
+      if (vals.lat != null) lv.lat = intIn(vals.lat, 0, LAT_MAX);
+      if (vals.spread != null) lv.spread = intIn(vals.spread, 0, SPREAD_MAX);
+      if (vals.seed != null) lv.seed = Number(vals.seed) >>> 0;
+      if (vals.rand != null) {
+        const on = !!vals.rand;
+        /* A new seed each time it is switched on, so an event you did not like
+           the shape of can be reshaped by unticking and ticking. */
+        if (on && (!lv.rand || lv.seed == null) && vals.seed == null) {
+          lv.seed = (Math.random() * 4294967296) >>> 0;
+        }
+        lv.rand = on;
+      }
+      /* A window with no impairment in it is not a condition, so the target
+         goes rather than lingering as a ghost in the list. */
+      if (!lv.loss && !lv.lat) levels.delete(key);
+      syncRule();
+      scheduleNudge(now ? 0 : null);
+      return levels.get(key) || null;
+    }
+
+    function clearTarget(key) {
+      if (!levels.has(key)) return;
+      levels.delete(key);
+      syncRule();
+      refreshPanel();
+      scheduleNudge();
+    }
+
+    function clearAll() {
+      levels.clear();
+      syncRule();
+      refreshPanel();
+      scheduleNudge();
+    }
+
+    // --------------------------------------------------------- the window --
+    /* Read fresh on every open, so switching ThousandEyes between light and
+       dark does not leave this sitting there in the wrong one. No brand colour
+       and nothing playful: it is a small instrument resting on top of someone
+       else's monitoring console. One accent, on Apply, and the two colours the
+       figures themselves have already earned - loss red, delay amber. */
+    /* The panel has already worked out which way round the page is - it
+       follows ThousandEyes' own theme and remembers an explicit choice - so
+       defer to it rather than ask the OS a second question and risk the two
+       disagreeing on the same screen. The media query is only the answer for
+       a tab where the panel never got that far. */
+    function prefersDark() {
+      try {
+        if (typeof tepTheme === 'string') return tepTheme === 'dark';
+      } catch (e) { /* outside the panel's closure: fall through */ }
+      try {
+        return !!(window.matchMedia
+          && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      } catch (e) { return false; }
+    }
+
+    function palette() {
+      return prefersDark()
+        ? { surface: '#172029', sunken: '#111922', edge: '#2d3a48',
+            text: '#e9eef3', dim: '#8e9bab', accent: '#2e9ea0',
+            onAccent: '#06171a', loss: '#e3796e', delay: '#dba44d',
+            shadow: '0 18px 44px rgba(0,0,0,.58)' }
+        : { surface: '#ffffff', sunken: '#f6f8fa', edge: '#d2d9e1',
+            text: '#17232f', dim: '#66727e', accent: '#0d6e71',
+            onAccent: '#ffffff', loss: '#a6301f', delay: '#875612',
+            shadow: '0 14px 34px rgba(19,33,46,.17)' };
+    }
+
+    let panelEl = null;
+    let panelFields = null;
+    let panelNotes = null;
+    /* The window keeps the target it was opened on. It deliberately does NOT
+       follow the selection: a stray click on the map would otherwise move the
+       figures you are halfway through typing onto a different node. */
+    let panelTarget = null;
+
+    function mk(parent, tag, style, text) {
+      const el = document.createElement(tag);
+      if (style) styleEl(el, style);
+      if (text != null) el.textContent = text;
+      if (parent) parent.appendChild(el);
+      return el;
+    }
+
+    function intIn(v, lo, hi) {
+      const n = Math.round(Number(v));
+      if (!isFinite(n)) return lo;
+      return Math.max(lo, Math.min(hi, n));
+    }
+
+    function clockOf(round) {
+      if (round == null) return '';
+      try {
+        const d = new Date(round * 1000);
+        const p = (n) => (n < 10 ? '0' : '') + n;
+        return p(d.getHours()) + ':' + p(d.getMinutes());
+      } catch (e) { return ''; }
+    }
+
+    function closePanel() {
+      if (panelEl) { try { panelEl.remove(); } catch (e) {} }
+      panelEl = null; panelFields = null; panelNotes = null; panelTarget = null;
+    }
+
+    /** The window is draggable by its header, because the thing you are about
+     *  to judge is underneath it. */
+    function dragBy(handle) {
+      handle.addEventListener('mousedown', (e) => {
+        if (!panelEl || (e.button != null && e.button !== 0)) return;
+        let r = { left: 0, top: 0 };
+        try { r = panelEl.getBoundingClientRect(); } catch (_) {}
+        const dx = e.clientX - r.left, dy = e.clientY - r.top;
+        const move = (ev) => {
+          if (!panelEl) return;
+          panelEl.style.left = Math.max(0, ev.clientX - dx) + 'px';
+          panelEl.style.top = Math.max(0, ev.clientY - dy) + 'px';
+        };
+        const up = () => {
+          document.removeEventListener('mousemove', move, true);
+          document.removeEventListener('mouseup', up, true);
+        };
+        document.addEventListener('mousemove', move, true);
+        document.addEventListener('mouseup', up, true);
+        e.preventDefault();
+      });
+    }
+
+    function hoverable(el, from, to) {
+      el.addEventListener('mouseenter', () => { el.style.background = to; });
+      el.addEventListener('mouseleave', () => { el.style.background = from; });
+    }
+
+    function button(parent, c, label, primary) {
+      const bg = primary ? c.accent : c.surface;
+      const b = mk(parent, 'button', {
+        font: 'inherit', fontSize: '12px', fontWeight: primary ? '600' : '500',
+        color: primary ? c.onAccent : c.text, background: bg,
+        border: '1px solid ' + (primary ? c.accent : c.edge),
+        borderRadius: '6px', padding: '5px 11px', cursor: 'pointer',
+      }, label);
+      hoverable(b, bg, primary ? c.accent : c.sunken);
+      return b;
+    }
+
+    /* Chrome draws its own spinner inside a number field, and it steps by one.
+       Ours is always visible and steps by something useful, so hide the
+       duplicate rather than offer two sets of arrows that disagree. */
+    let spinnerCss = null;
+    function hideNativeSpinners() {
+      const head = document.head || document.documentElement;
+      if (spinnerCss || !head) return;
+      spinnerCss = document.createElement('style');
+      spinnerCss.textContent =
+        'input[data-telab]::-webkit-inner-spin-button,'
+        + 'input[data-telab]::-webkit-outer-spin-button'
+        + '{-webkit-appearance:none;margin:0}'
+        + 'input[data-telab]{-moz-appearance:textfield}';
+      head.appendChild(spinnerCss);
+    }
+
+    /** label - number box - unit - a pair of arrows that step it. */
+    function numberRow(parent, c, label, value, unit, max, step, tint) {
+      const row = mk(parent, 'div', {
+        display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 11px',
+      });
+      mk(row, 'div', { flex: '1 1 auto', color: c.dim }, label);
+
+      const input = mk(row, 'input', {
+        width: '58px', font: 'inherit', fontSize: '12px',
+        fontVariantNumeric: 'tabular-nums', textAlign: 'right',
+        color: c.text, background: c.sunken,
+        border: '1px solid ' + c.edge, borderRadius: '5px', padding: '4px 6px',
+      });
+      input.type = 'number';
+      input.min = '0';
+      input.max = String(max);
+      /* The field's own arrow keys step by the same amount as the buttons, so
+         the two cannot tell you different things about what a tap is worth. */
+      input.step = String(step);
+      input.value = String(value || 0);
+      input.setAttribute('data-telab', '1');
+
+      /* The figure carries its own colour, and keeps carrying it as you type:
+         a field showing 0 is not a condition and should not look like one. */
+      const tintNow = () => {
+        input.style.color = Number(input.value) ? (tint || c.text) : c.text;
+      };
+      const changed = () => { tintNow(); if (panelNotes) renderNotes(); };
+      input.addEventListener('input', changed);
+      tintNow();
+
+      mk(row, 'div', { width: '56px', color: c.dim, fontSize: '11px',
+        whiteSpace: 'nowrap' }, unit);
+
+      const arrows = mk(row, 'div', {
+        display: 'flex', flexDirection: 'column',
+        border: '1px solid ' + c.edge, borderRadius: '5px', overflow: 'hidden',
+      });
+      const arrow = (glyph, dir) => {
+        const b = mk(arrows, 'div', {
+          width: '17px', height: '11px', lineHeight: '11px', textAlign: 'center',
+          fontSize: '7px', color: c.dim, background: c.surface,
+          cursor: 'pointer', userSelect: 'none',
+        }, glyph);
+        hoverable(b, c.surface, c.sunken);
+        b.addEventListener('click', () => {
+          input.value = String(intIn((Number(input.value) || 0) + dir * step, 0, max));
+          changed();
+        });
+        return b;
+      };
+      arrow('\u25b2', +1);
+      mk(arrows, 'div', { height: '1px', background: c.edge });
+      arrow('\u25bc', -1);
+
+      return input;
+    }
+
+    /** A checkbox with a label you can click, and a quiet word on the end. */
+    function checkRow(parent, c, label, checked, hint) {
+      const row = mk(parent, 'div', {
+        display: 'flex', alignItems: 'center', gap: '8px', padding: '2px 11px 8px',
+      });
+      const box = mk(row, 'input', { margin: '0', cursor: 'pointer',
+        accentColor: c.accent });
+      box.type = 'checkbox';
+      box.checked = !!checked;
+      const text = mk(row, 'div', { color: c.dim, cursor: 'pointer' }, label);
+      const after = () => { if (panelNotes) renderNotes(); };
+      box.addEventListener('change', after);
+      box.addEventListener('click', after);
+      text.addEventListener('click', () => { box.checked = !box.checked; after(); });
+      if (hint) mk(row, 'div', { color: c.dim, fontSize: '11px', opacity: '.75' }, hint);
+      return box;
+    }
+
+    /** Everything the window has to SAY rather than ask: how wide the event is,
+     *  whether the view on screen can even draw it, and what else is live. */
+    function renderNotes() {
+      if (!panelNotes || !panelTarget) return;
+      const c = palette();
+      while (panelNotes.firstChild) panelNotes.removeChild(panelNotes.firstChild);
+      const line = (text, style) => mk(panelNotes, 'div',
+        Object.assign({ fontSize: '11px', color: c.dim, marginTop: '2px' },
+          style || {}), text);
+
+      const spread = panelFields ? intIn(panelFields.spread.value, 0, SPREAD_MAX) : 0;
+      const rounds = spread * 2 + 1;
+      const mins = Math.round(rounds * (lastBinSize || 300) / 60);
+      const lv = levels.get(panelTarget.key);
+      const at = clockOf(lv ? lv.focus : currentRound());
+      line(rounds + (rounds === 1 ? ' round' : ' rounds') + ' · ' + mins + ' min'
+        + (at ? ' · pinned at ' + at : ''));
+
+      /* Randomize with nothing either side of the centre varies nothing, and a
+         tick box that silently does nothing is worse than no tick box. */
+      if (panelFields && panelFields.rand && panelFields.rand.checked) {
+        const which = [];
+        if (Number(panelFields.loss.value)) which.push('loss');
+        if (Number(panelFields.lat.value)) which.push('latency');
+        if (!spread) {
+          line('Randomize has nothing to work on at one round — widen the '
+            + 'time window.', { color: c.delay });
+        } else if (!which.length) {
+          line('Randomize follows whichever figure is set, and neither is.',
+            { color: c.delay });
+        } else {
+          line('Each round either side takes 50-150% of the '
+            + which.join(' and the ') + '.');
+        }
+      }
+
+      /* A change the view cannot draw is the worst outcome here: it IS applied,
+         it just looks like nothing happened, and you go hunting for a bug that
+         is not there. Say which selector to move instead. */
+      if (lv && lv.loss && metricWarning('loss')) {
+        line('The view is not showing loss — switch the metric selector.',
+          { color: c.delay });
+      }
+      if (lv && lv.lat && metricWarning('latency')) {
+        line('The view is not showing latency — switch the metric selector.',
+          { color: c.delay });
+      }
+
+      const miss = lastSummary.filter((x) => !x.matched)
+        .map((x) => x.target.replace(/^node:|^link:/, ''));
+      if (miss.length) {
+        line('No match on this round: ' + miss.join(', '), { color: c.loss });
+      }
+
+      const others = [];
+      for (const [key, o] of levels) {
+        if (key === panelTarget.key) continue;
+        if (!o.loss && !o.lat) continue;
+        others.push(key.replace(/^node:|^link:/, '')
+          + '  ' + o.loss + '%  +' + o.lat + 'ms  ' + ((o.spread || 0) * 2 + 1) + 'r');
+      }
+      if (others.length) {
+        line('Also live: ' + others.join('   ·   '), { marginTop: '5px' });
+      }
+    }
+
+    function refreshPanel() { if (panelEl) renderNotes(); }
+
+    function applyPanel() {
+      if (!panelTarget || !panelFields) return;
+      /* `true`: refetch at once rather than on the debounce. The chart at the
+         top is the whole reason Apply was pressed. */
+      const lv = setTarget(panelTarget.key, {
+        loss: intIn(panelFields.loss.value, 0, LOSS_MAX),
+        lat: intIn(panelFields.lat.value, 0, LAT_MAX),
+        spread: intIn(panelFields.spread.value, 0, SPREAD_MAX),
+        rand: !!panelFields.rand.checked,
+      }, true);
+      notify(lv
+        ? panelTarget.label + ': ' + lv.loss + '% loss, +' + lv.lat + ' ms, '
+          + ((lv.spread || 0) * 2 + 1) + ' rounds — refreshing the chart'
+        : panelTarget.label + ': nothing set — both figures were zero.');
+      renderNotes();
+    }
+
+    function openPanel(t, x, y) {
+      /* The first deliberate act is where the interception goes in. Until
+         someone shift-clicks something, this has not touched the page's
+         networking at all - which is the whole bargain for shipping it to
+         everyone. */
+      install();
+      if (!cacheDisabled()) warnAboutCache();
+      const keep = panelEl && panelTarget && panelTarget.key === t.key;
+      closePanel();
+      panelTarget = t;
+      const c = palette();
+      const lv = levels.get(t.key) || { loss: 0, lat: 0, spread: 0 };
+
+      panelEl = mk(null, 'div', {
+        position: 'fixed', left: '-9999px', top: '0px', zIndex: '2147483647',
+        width: '278px', background: c.surface, color: c.text,
+        border: '1px solid ' + c.edge, borderRadius: '10px', overflow: 'hidden',
+        font: '12px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif',
+        boxShadow: c.shadow, userSelect: 'none',
+      });
+
+      /* Bubble phase, not capture: the inputs have to receive their own events
+         first. Stopping it here keeps a click or a keystroke inside the window
+         from reaching TE, which clears its selection on a stray click and would
+         pull the target out from under us mid-edit. */
+      for (const type of ['mousedown', 'mouseup', 'click', 'dblclick',
+                          'contextmenu', 'wheel', 'keyup']) {
+        panelEl.addEventListener(type, (e) => e.stopPropagation());
+      }
+      panelEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') applyPanel();
+        else if (e.key === 'Escape') closePanel();
+        e.stopPropagation();
+      });
+
+      const head = mk(panelEl, 'div', {
+        display: 'flex', alignItems: 'baseline', gap: '8px',
+        padding: '9px 11px 8px', borderBottom: '1px solid ' + c.edge,
+        background: c.sunken, cursor: 'move',
+      });
+      mk(head, 'div', { fontWeight: '600' }, 'Correction');
+      mk(head, 'div', {
+        flex: '1 1 auto', color: c.dim, fontSize: '11px', textAlign: 'right',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }, (t.kind === 'link' ? 'link  ' : 'node  ') + t.label);
+      const shut = mk(head, 'div', {
+        color: c.dim, cursor: 'pointer', fontSize: '15px', lineHeight: '1',
+        padding: '0 1px',
+      }, '×');
+      shut.addEventListener('click', closePanel);
+      dragBy(head);
+
+      hideNativeSpinners();
+      const body = mk(panelEl, 'div', { padding: '4px 0 2px' });
+      panelFields = {
+        loss: numberRow(body, c, 'Packet loss', lv.loss, '%',
+          LOSS_MAX, LOSS_STEP, c.loss),
+        lat: numberRow(body, c, 'Latency', lv.lat, 'ms',
+          LAT_MAX, LAT_STEP, c.delay),
+        spread: numberRow(body, c, 'Time window', lv.spread || 0, '\u00b1 rounds',
+          SPREAD_MAX, SPREAD_STEP, null),
+      };
+      /* It follows whichever figure is set rather than having a box each: a
+         correction is one event, and loss and delay arriving on the same link
+         would not wander independently. */
+      panelFields.rand = checkRow(body, c, 'Randomize', lv.rand,
+        '50-150% either side');
+
+      panelNotes = mk(panelEl, 'div', { padding: '4px 11px 9px' });
+      renderNotes();
+
+      const foot = mk(panelEl, 'div', {
+        display: 'flex', gap: '6px', alignItems: 'center',
+        padding: '9px 11px 11px', borderTop: '1px solid ' + c.edge,
+        background: c.sunken,
+      });
+      button(foot, c, 'Apply', true).addEventListener('click', applyPanel);
+      const clr = button(foot, c, 'Clear', false);
+      clr.addEventListener('click', () => {
+        clearTarget(panelTarget.key);
+        panelFields.loss.value = '0';
+        panelFields.lat.value = '0';
+        notify(panelTarget.label + ': cleared.');
+        renderNotes();
+      });
+      mk(foot, 'div', { flex: '1 1 auto' });
+      button(foot, c, 'Close', false).addEventListener('click', closePanel);
+
+      document.documentElement.appendChild(panelEl);
+      placePanel(keep ? null : x, keep ? null : y);
+      try { panelFields.loss.focus(); panelFields.loss.select(); } catch (e) {}
+    }
+
+    function placePanel(x, y) {
+      if (!panelEl) return;
+      let r = { width: 278, height: 230 };
+      try { r = panelEl.getBoundingClientRect(); } catch (e) {}
+      const w = window.innerWidth || 1280, h = window.innerHeight || 800;
+      const px = Math.max(8, Math.min((x == null ? 90 : x) + 8, w - (r.width || 278) - 8));
+      const py = Math.max(8, Math.min((y == null ? 90 : y) + 8, h - (r.height || 230) - 8));
+      panelEl.style.left = px + 'px';
+      panelEl.style.top = py + 'px';
+    }
+
+    // ------------------------------------------------------------- the toast --
+    /* The harness's own transient word - "applying", "the cache lapsed". It is
+       not a control, so it carries nothing to click and clears itself. The
+       window above never auto-hides, because you are typing in it. */
+    let toastEl = null;
+    let toastTimer = null;
+
+    function notify(text) {
+      if (!text) return;
+      const c = palette();
+      if (!toastEl) {
+        toastEl = mk(document.documentElement, 'div', {
+          position: 'fixed', left: '14px', bottom: '14px', zIndex: '2147483646',
+          maxWidth: '330px', pointerEvents: 'none', opacity: '0',
+          font: '12px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif',
+          transition: 'opacity 240ms ease',
+        });
+      }
+      styleEl(toastEl, {
+        background: c.surface, color: c.text,
+        border: '1px solid ' + c.edge, borderLeft: '3px solid ' + c.accent,
+        borderRadius: '7px', padding: '8px 11px', boxShadow: c.shadow,
+      });
+      toastEl.textContent = text;
+      toastEl.style.opacity = '1';
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toastTimer = null;
+        if (toastEl) toastEl.style.opacity = '0';
+      }, TOAST_MS);
+    }
+
+    // ------------------------------------------------------- the right-click --
+    /** Whatever node or link is under the pointer. The pointer usually lands on
+     *  the circle or the path itself, but it can land on a label or on the
+     *  group that wraps them, so walk up a little way before giving up. */
+    function shapeUnder(el) {
+      let n = el;
+      for (let i = 0; n && i < 6; i++) {
+        const t = describeShape(n);
+        if (t) return t;
+        if (n.querySelector) {
+          const inner = n.querySelector('circle.node') || n.querySelector('path.link');
+          const ti = inner && describeShape(inner);
+          if (ti) return ti;
+        }
+        n = n.parentElement;
+      }
+      return null;
+    }
+
+    function insidePanel(el) {
+      if (!panelEl || !el) return false;
+      if (typeof panelEl.contains === 'function') return panelEl.contains(el);
+      for (let n = el; n; n = n.parentElement) if (n === panelEl) return true;
+      return false;
+    }
+
+    /** Shift and a left-click on a node or a link: the way in.
+     *
+     *  A plain click still does exactly what it always did - it is TE's own
+     *  selection and not ours to take over. Shift is the modifier because it
+     *  costs nothing to reach and leaves the page untouched until it is held:
+     *  during a demo there is nothing to notice.
+     */
+    function onShiftClick(e) {
+      if (!menuOn || !e.shiftKey) return;
+      if (e.button != null && e.button !== 0) return;
+      if (insidePanel(e.target)) return;
+      /* Only on an actual shape. A shift-click on empty canvas opening the
+         window for whatever happened to be selected would be a window you did
+         not ask for, pointing at a node you were not looking at. */
+      const t = shapeUnder(e.target);
+      if (!t) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openPanel(t, e.clientX, e.clientY);
+    }
+
+    /** Swallow the mousedown as well, or TE has already started whatever
+     *  shift-drag means to it before the click arrives. */
+    function onShiftDown(e) {
+      if (!menuOn || !e.shiftKey) return;
+      if (e.button != null && e.button !== 0) return;
+      if (insidePanel(e.target)) return;
+      if (!shapeUnder(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    /* Kept alongside the click: if TE ever claims shift-click on the map for
+       something of its own, this is still a way in that costs nothing to
+       leave here. */
+    function onContextMenu(e) {
+      if (!menuOn) return;
+      /* SHIFT and right-click, not right-click alone. A plain right-click has
+         to keep doing exactly what it always did: during a demo or a screen
+         share nothing should hint that the page is carrying a harness, and a
+         context menu that is subtly not the browser's own is precisely the
+         sort of thing someone notices. */
+      if (!e.shiftKey) return;
+      /* Inside our own window the browser's menu is the more useful one. */
+      if (insidePanel(e.target)) return;
+      /* Under the pointer first, then whatever TE has highlighted - so this
+         works both ways round: shift-right-click the thing, or select it and
+         shift-right-click near it. */
+      const t = shapeUnder(e.target) || selectedTarget();
+      if (!t) return;        // not on the map at all: leave the page's menu be
+      e.preventDefault();
+      e.stopPropagation();
+      openPanel(t, e.clientX, e.clientY);
+    }
+
+    /* The selection lives in TE's DOM, so we follow it by watching for the
+       class to move rather than by hooking TE's own click handling, which is
+       not ours to depend on. Clicking a link leaves its node marked selected
+       too, so the most recent element to gain the class is the one that counts
+       - which is the whole reason this observer exists. */
+    let selObserver = null;
+    function watchSelection(on) {
+      if (on && !selObserver) {
+        /* Guarded: a headless test harness has no MutationObserver, and losing
+           this there is harmless - right-clicking reads the pointer anyway. */
+        if (typeof MutationObserver === 'undefined') return;
+        selObserver = new MutationObserver((muts) => {
+          for (const m of muts) {
+            const el = m.target;
+            if (!el || !el.getAttribute) continue;
+            if (!/\bselected\b/.test(el.getAttribute('class') || '')) continue;
+            /* The class lands on the shape or on its group, so accept the group
+               too and reach down for the shape it wraps. */
+            const shape = (el.querySelector
+              && (el.querySelector('circle.node') || el.querySelector('path.link'))) || el;
+            if (describeShape(shape)) lastSelectedEl = shape;
+          }
+        });
+        selObserver.observe(document.documentElement,
+          { subtree: true, attributes: true, attributeFilter: ['class'] });
+      } else if (!on && selObserver) {
+        selObserver.disconnect();
+        selObserver = null;
+      }
+    }
+
+    // --------------------------------------------------------- round cache --
+    /* ThousandEyes keeps each round in IndexedDB and will not re-request a round
+       it already holds. That is invisible until you try to CHANGE something on
+       the round in front of you: the rule is live, no request goes out, and the
+       screen sits there contradicting you. TE ships its own switch for this
+       (te.setDisableIndexedDbCache), which sets a one-hour cookie and needs one
+       reload. Everything else here assumes it is off. */
+    function cacheDisabled() {
+      try { return /disableIndexedDbCache=true/.test(document.cookie); } catch (e) { return false; }
+    }
+
+    function warnAboutCache() {
+      console.warn("[TE Optics] ThousandEyes round cache is still ON, so an adjustment "
+        + "cannot show up on the round you are already looking at.\n"
+        + "  Run TEPC.setup(), then reload the page.");
+    }
+
+
+    // ----------------------------------------------------------- the API --
+    /* Deliberately not surfaced in the panel UI or on the install page: the
+       gesture is the only thing you need to know, and the console is here for
+       the cases a window cannot reach - scripting a scenario, or setting a
+       target the map is not currently drawing. */
+    const TEPC = {
+      /** Set a correction. Only the fields you pass change.
+       *    TEPC.set({ loss: 37 })                   on whatever is selected
+       *    TEPC.set({ lat: 120, spread: 3 })        delay across seven rounds
+       *    TEPC.set({ rand: true })                 vary the rounds either side
+       *    TEPC.set({ target: 'node:10.1.2.3', loss: 100 })                  */
+      set(opts) {
+        const o = opts || {};
+        const t = o.target ? { key: String(o.target), label: String(o.target) }
+                           : selectedTarget();
+        if (!t) {
+          console.warn('[TE Optics] nothing is selected, so there is nothing to '
+            + "set. Click a node or a link first, or pass { target: 'node:<ip>' }.");
+          return null;
+        }
+        /* Immediate, like Apply: typing this in is a decision, not a figure
+           being held down on a stepper. */
+        const lv = setTarget(t.key, o, true);
+        refreshPanel();
+        return lv;
+      },
+
+      /** Where each number on the screen comes from, on the live graph.
+       *
+       *  THREE DIFFERENT DENOMINATORS sit on that screen at once, and read
+       *  side by side they look like they contradict each other:
+       *
+       *    the node     of the traffic THROUGH THIS NODE, how much died
+       *    an agent     of THIS AGENT'S OWN traffic, how much died
+       *    the chart    of THE WHOLE FLEET'S traffic, how much died
+       *
+       *  100% at the node is not 100% at the agent unless every route that
+       *  agent owns goes through it, and it is not 100% on the chart unless
+       *  that is true of every agent in the test. A node dying and the test
+       *  losing 5% is the correct picture, not a broken one - it is also the
+       *  honest one, which is the whole reason the chart is derived from the
+       *  agents rather than written to match the figure you typed.
+       *
+       *  This prints the arithmetic for what is currently set.             */
+      explain() {
+        if (!lastGraphText) {
+          console.warn('[TE Optics] no path-vis graph captured yet - let the map load '
+            + 'once, then run this again.');
+          return TEPC;
+        }
+        const live = [];
+        for (const [key, lv] of levels) if (lv.loss || lv.lat) live.push([key, lv]);
+        if (!live.length) { log('nothing is set, so nothing to explain.'); return TEPC; }
+
+        const keepSummary = lastSummary;
+        for (const [key, lv] of live) {
+          const before = JSON.parse(lastGraphText);
+          const after = JSON.parse(lastGraphText);
+          const round = lv.focus != null ? lv.focus : currentRound();
+          applyImpairments(after, true, round, key);
+          const t = parseKey(key);
+
+          const routes = Array.isArray(before.routes) ? before.routes : [];
+          let through = 0;
+          const own = new Map(), thru = new Map(), killed = new Map();
+          routes.forEach((r, i) => {
+            if (!r || !Array.isArray(r.route)) return;
+            const src = r.source;
+            own.set(src, (own.get(src) || 0) + 1);
+            if (targetIndexInRoute(before, r, t) >= 0) {
+              through++;
+              thru.set(src, (thru.get(src) || 0) + 1);
+            }
+            const a = after.routes[i];
+            if (a && a.route.length < r.route.length) killed.set(src, (killed.get(src) || 0) + 1);
+          });
+
+          console.log('%c' + key + '%c  ' + lv.loss + '% loss, +' + lv.lat + ' ms'
+            + (lv.rand ? ', randomized' : ''),
+            'font-weight:700', 'font-weight:400');
+          console.log('  routes in this graph   ' + routes.length);
+          console.log('  routes through it      ' + through
+            + '   <- the figure you typed is a share OF THESE');
+          console.log('  routes cut             '
+            + Array.from(killed.values()).reduce((a2, b) => a2 + b, 0));
+
+          const rows = [];
+          let sum = 0, n = 0;
+          for (const [src, total] of own) {
+            const node = after.nodes[src];
+            const says = node && node.data ? (node.data.loss || 0) : 0;
+            rows.push({
+              agent: (node && (node.agent || node.ipAddress)) || ('#' + src),
+              'own routes': total,
+              'through the target': thru.get(src) || 0,
+              cut: killed.get(src) || 0,
+              'this agent reports': says + '%',
+            });
+            sum += says; n++;
+          }
+          console.table(rows);
+          const mean = n ? sum / n : 0;
+          console.log('  fleet mean             ' + mean.toFixed(2)
+            + '%   <- THIS is what the chart draws');
+          console.log('  ' + n + ' agents own routes here; '
+            + rows.filter((r) => r.cut).length + ' of them lost any.');
+          if (lv.rand) {
+            console.log('  Randomize is on, so only the pinned round carries that '
+              + 'mean - the rounds either side take 50-150% of it.');
+          }
+          if (through && through < routes.length) {
+            console.log('  So: ' + lv.loss + '% of the ' + through + ' routes through '
+              + 'this target is ' + mean.toFixed(1) + '% of the test. Three '
+              + 'denominators, one event.');
+          }
+        }
+        lastSummary = keepSummary;
+        return TEPC;
+      },
+
+      /** Take the correction off one target, or off everything. */
+      unset(target) {
+        if (target) clearTarget(String(target)); else clearAll();
+        return TEPC;
+      },
+
+      /** Open the window without the gesture, on whatever is selected. */
+      open() {
+        const t = selectedTarget();
+        if (!t) {
+          console.warn('[TE Optics] nothing is selected. Click a node or a link '
+            + 'on the path visualisation first, or just shift-click one.');
+          return TEPC;
+        }
+        openPanel(t, null, null);
+        return TEPC;
+      },
+
+      /** What is set, as a plain table. */
+      levels() {
+        const rows = [];
+        for (const [key, lv] of levels) {
+          rows.push({ target: key, loss: lv.loss + '%', delay: '+' + lv.lat + 'ms',
+            rounds: (lv.spread || 0) * 2 + 1, random: !!lv.rand });
+        }
+        console.table(rows);
+        return rows;
+      },
+
+      /** ThousandEyes caches every round in IndexedDB, so a changed response
+       *  cannot show up until that cache is out of the way. TE ships its own
+       *  switch for it; this sets it and tells you to reload. Lasts an hour. */
+      setup() {
+        if (cacheDisabled()) { log('round cache already off - nothing to do.'); return TEPC; }
+        const te = window.te;
+        if (te && typeof te.setDisableIndexedDbCache === 'function') {
+          te.setDisableIndexedDbCache(true);
+          console.warn('[TE Optics] ThousandEyes round cache switched OFF (a '
+            + 'cookie, one hour).\n  RELOAD THE PAGE NOW.\n  Without this, a '
+            + 'change cannot appear on the round you are already looking at.');
+        } else {
+          console.warn('[TE Optics] could not find te.setDisableIndexedDbCache on '
+            + 'this page. Corrections will only show on a round you have not '
+            + 'visited yet.');
+        }
+        return TEPC;
+      },
+
+      /** Make TE re-request, once, without waiting for the verifier. */
+      refetch() { nudgeAll(); return TEPC; },
+
+      /** What the refresher can actually see on this page.
+       *
+       *  Here because "it only updates when I switch the view by hand" has
+       *  now been diagnosed twice from guesses, and guessing is the slow way.
+       *  This prints what was found, what it would click, and whether the
+       *  strip has come back - which turns the next round into reading
+       *  rather than another guess. */
+      why() {
+        const label = (b) => (b.textContent || '').trim();
+        const show = (name, pair) => {
+          if (!pair) { console.log('  ' + name + ': NOT FOUND'); return; }
+          console.log('  ' + name + ': would click "' + label(pair.other)
+            + '", then back to "' + label(pair.active) + '"');
+        };
+        console.log('%c[TE Optics] refresh diagnostics', 'font-weight:700');
+        console.log('  metric on screen: ' + (currentMetric() || '(none in the URL)')
+          + '  -> strip kind "' + shownKind() + '"');
+        show('layer tabs', layerTabPair());
+        show('metric selector (a row of options)', metricTabPair());
+        const trig = metricTrigger();
+        console.log('  metric dropdown: ' + (trig
+          ? 'would open "' + (trig.textContent || '').trim() + '"' : 'NOT FOUND'));
+        console.log('  which gestures have something to work with:');
+        for (const g of GESTURES) {
+          /* Asked, not performed: finding a control is the question here. */
+          let has = false;
+          if (g.id === 'layer') has = !!layerTabPair();
+          else if (g.id === 'metric') has = !!metricTabPair();
+          else if (g.id === 'select') {
+            try {
+              has = Array.from(document.querySelectorAll('select')).some((sel) =>
+                Array.from(sel.options || []).filter((o) =>
+                  METRIC_LABEL.test((o.textContent || '').trim())
+                  || /loss|latenc|jitter|delay/i.test(o.value || '')).length >= 2);
+            } catch (e) { has = false; }
+          } else if (g.id === 'url') {
+            try { has = !!new URL(window.location.href).searchParams.get('metrics'); }
+            catch (e) { has = false; }
+          } else if (g.id === 'menu') has = !!metricTrigger();
+          else if (g.id === 'subtab') {
+            try {
+              const t = Array.from(document.querySelectorAll('button'));
+              has = t.some((b) => /^path visualisation|^path visualization/i
+                .test((b.textContent || '').trim()));
+            } catch (e) { has = false; }
+          } else has = '(only answerable by trying)';
+          console.log('    ' + g.id + ': ' + has);
+        }
+        const rows = [];
+        for (const el of tabCandidates()) {
+          const t = label(el);
+          if (!t) continue;
+          rows.push({
+            text: t.slice(0, 40),
+            role: el.getAttribute('role') || '',
+            selected: el.getAttribute('aria-selected') || el.getAttribute('tabindex') || '',
+            cls: (el.getAttribute('class') || '').slice(0, 34),
+          });
+        }
+        console.log('  every tab-ish control it can see (' + rows.length + '):');
+        console.table(rows);
+        const seen = [];
+        for (const [k, n] of timelineSeen) seen.push(k + ': ' + n);
+        console.log('  timeline responses seen, by metric: '
+          + (seen.length ? seen.join(', ') : 'NONE YET'));
+        console.log('  round cache: ' + (cacheDisabled() ? 'off (good)'
+          : 'ON - nothing can change on the round you are looking at'));
+        console.log('  interception: ' + (installed ? 'installed' : 'NOT installed yet'));
+        if (!layerTabPair()) {
+          console.log('%c  The layer tabs were not found, so the one gesture that '
+            + 'reliably refetches the chart is unavailable. Send me the table '
+            + 'above and I can match them.', 'color:#b45309');
+        }
+        return TEPC;
+      },
+
+      /** Turn the shift-click gesture off (or back on). */
+      gesture(on) { return wire(on !== false); },
+
+      /** Log matching responses, for working out the shape of an endpoint
+       *  this does not rewrite yet. TEPC.last('alerts') inspects one. */
+      watch(part) {
+        if (part && watches.indexOf(part) < 0) watches.push(part);
+        install();
+        log('watching', part, '- browse the app, then TEPC.last(' + JSON.stringify(part) + ')');
+        return TEPC;
+      },
+      last(part) { return lastByKey.get(part) || null; },
+
+      /** Everything off, interception included. */
+      off() { clearAll(); wire(false); uninstall(); return TEPC; },
+
+      help() {
+        console.log('TE Optics / Correction\n'
+          + '\n  TEPC.setup()        disable TE\'s round cache, then RELOAD (one hour)'
+          + '\n  shift + click       a node or a link on a path visualisation'
+          + '\n'
+          + '\n  In the window: packet loss %, latency ms, time window (rounds'
+          + '\n  either side of the one in focus), and Randomize, which gives every'
+          + '\n  round either side 50-150% of whichever figure is set so the event'
+          + '\n  is not a rectangle. Apply writes it and refetches at once.'
+          + '\n'
+          + '\n  TEPC.set({ loss: 37 })            on whatever is selected'
+          + '\n  TEPC.set({ lat: 120, spread: 3 }) delay across seven rounds'
+          + '\n  TEPC.set({ rand: true, seed: 7 }) the same shape every time'
+          + '\n  TEPC.open()  TEPC.levels()  TEPC.unset()  TEPC.refetch()'
+          + '\n  TEPC.watch(\'alerts\')  TEPC.last(\'alerts\')   shape discovery'
+          + '\n  TEPC.off()                        everything off, including the'
+          + '\n                                    response interception'
+          + '\n'
+          + '\n  Loss means: this share of the routes THROUGH that target die at'
+          + '\n  it, and the agents that owned them report it. Both halves are'
+          + '\n  needed - a truncated route on its own is only a DEAD END, which'
+          + '\n  is what a healthy router ignoring probes looks like, and TE will'
+          + '\n  not colour it.');
+        return TEPC;
+      },
+    };
+
+    // ---------------------------------------------------------------- boot --
+    /* Silent on purpose. A line in the console on every page load would
+       advertise a feature whose entire discoverability is meant to be the
+       gesture. */
+    function wire(on) {
+      const want = on !== false;
+      if (want && !menuOn) {
+        menuOn = true;
+        document.addEventListener('click', onShiftClick, true);
+        document.addEventListener('mousedown', onShiftDown, true);
+        document.addEventListener('contextmenu', onContextMenu, true);
+        watchSelection(true);
+      } else if (!want && menuOn) {
+        document.removeEventListener('click', onShiftClick, true);
+        document.removeEventListener('mousedown', onShiftDown, true);
+        document.removeEventListener('contextmenu', onContextMenu, true);
+        watchSelection(false);
+        closePanel();
+        menuOn = false;
+      }
+      return TEPC;
+    }
+
+    /* A re-injected bookmarklet runs this file again in the same tab. The
+       panel tears its own DOM down above; these listeners live on document
+       and would otherwise pile up, so the previous build is asked to let go
+       before this one takes over. */
+    try {
+      if (typeof window.__TEP_OPTICS_CORRECTION_OFF__ === 'function') {
+        window.__TEP_OPTICS_CORRECTION_OFF__();
+      }
+    } catch (_) { /* an older build that cannot: its listeners simply stay */ }
+    window.__TEP_OPTICS_CORRECTION_OFF__ = () => { try { TEPC.off(); } catch (_) { /* */ } };
+
+    window.TEPC = TEPC;
+    wire(true);
+  })();
 
   // ---------------------------------------------------------------------------
   // Init — fully automatic auth detection
