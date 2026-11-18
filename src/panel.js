@@ -47,7 +47,7 @@
       return;
     }
   }
-  const TEP_VERSION = '4.35';
+  const TEP_VERSION = '4.36';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -3292,12 +3292,11 @@
       position: absolute; bottom: calc(14px + 5%); left: 50%; transform: translateX(-50%); z-index: 6;
       display: flex; align-items: center; gap: 9px;
     }
-    /* 38px — matches .tep-dashmap-search's own new ~38px rendered height
-       (8px padding + 1px border on each side around its 20px-tall input),
-       up from 34px alongside the search bar's own ~10% size bump below. */
     .tep-dashmap-full-zoom {
       flex: 0 0 auto;
-      width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+      /* 46px now: the search bar grew to 10px padding + 2px border around a
+         22px input, and these are kept the same height as it. */
+      width: 46px; height: 46px; display: flex; align-items: center; justify-content: center;
       border-radius: 9px; cursor: pointer; color: var(--tep-slate-200); font-size: 18px; font-weight: 700; line-height: 1;
       background: rgba(var(--tep-slate-900-rgb),.92); border: 1px solid var(--tep-slate-600); box-shadow: 0 2px 8px rgba(0,0,0,.5);
     }
@@ -3306,16 +3305,27 @@
        the matching input/icon/count sizing below and .tep-dashmap-full-zoom
        above (sized to match this bar's new height exactly). */
     .tep-dashmap-search {
-      display: flex; align-items: center; gap: 8px; position: relative;
-      padding: 8px 13px; border-radius: 22px;
-      background: rgba(var(--tep-slate-900-rgb),.92);
+      display: flex; align-items: center; gap: 10px; position: relative;
+      padding: 10px 17px; border-radius: 26px;
+      background: rgba(var(--tep-slate-900-rgb),.94);
       /* Orange border/glow visible by default (not just on focus, below) —
          matches .tep-dashmap-full-min's always-orange treatment, so the
          search bar reads as the row's primary/inviting action next to the
          plainer slate-gray zoom buttons beside it. */
-      border: 1px solid rgba(249,115,22,.55); box-shadow: 0 0 0 1px rgba(249,115,22,.12), 0 2px 8px rgba(0,0,0,.5);
+      /* Stroke doubled to 2px and brought up to near-solid orange, with a
+         soft outer glow, so the bar is findable on a busy map without having
+         to be focused first. It used to be a 1px line at 55% - present, but
+         easy to read past against the markers. CONFIRMED via user request
+         ("a bit more obvious... a little more orange stroke"). */
+      border: 2px solid color-mix(in srgb, var(--tep-orange) 88%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--tep-orange) 16%, transparent),
+        0 0 18px -4px color-mix(in srgb, var(--tep-orange) 60%, transparent),
+        0 2px 10px rgba(0,0,0,.55);
       backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     }
+    /* The magnifier takes the accent too: on the map it is the only cue that
+       this pill is a search field before anything has been typed. */
+    .tep-dashmap-search > svg:first-child { width: 18px; height: 18px; color: var(--tep-orange-fg); }
     /* Inline (sidebar dashboard) map's search bar — same chrome/behavior as
        the fullscreen one above, but sits in normal flow below the map
        instead of overlaid bottom-middle (no absolute positioning needed).
@@ -3323,12 +3333,23 @@
        its original size, since it sits inline in the (much narrower)
        sidebar rather than overlaid on the full map. */
     .tep-dash-map-search {
-      display: flex; align-items: center; gap: 7px;
-      margin-top: 8px; padding: 7px 12px; border-radius: 20px;
-      background: rgba(var(--tep-slate-900-rgb),.92); border: 1px solid var(--tep-slate-600); box-shadow: 0 2px 8px rgba(0,0,0,.5);
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 8px; padding: 9px 13px; border-radius: 22px;
+      background: rgba(var(--tep-slate-900-rgb),.92);
+      /* Was a plain slate hairline, so under the sidebar map it read as a
+         divider rather than a field. Same orange stroke as the fullscreen
+         bar, a step lighter because it sits on the panel rather than over
+         the map, and a little taller - its width is the sidebar's, so
+         height and type are the only way it can get bigger. */
+      border: 1.5px solid color-mix(in srgb, var(--tep-orange) 72%, transparent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--tep-orange) 12%, transparent), 0 2px 8px rgba(0,0,0,.5);
     }
+    .tep-dash-map-search > svg:first-child { width: 16px; height: 16px; color: var(--tep-orange-fg); }
     .tep-dashmap-search:focus-within, .tep-dash-map-search:focus-within {
-      border-color: var(--tep-orange); box-shadow: 0 0 0 2px rgba(249,115,22,.25), 0 2px 8px rgba(0,0,0,.5);
+      border-color: var(--tep-orange);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--tep-orange) 34%, transparent),
+        0 0 22px -4px color-mix(in srgb, var(--tep-orange) 75%, transparent),
+        0 2px 10px rgba(0,0,0,.55);
     }
     .tep-dashmap-search svg, .tep-dash-map-search svg { flex: 0 0 auto; color: var(--tep-slate-400); }
     .tep-dashmap-search input, .tep-dash-map-search input {
@@ -3348,13 +3369,16 @@
        request — height/line-height follow the font up to keep the text
        vertically centered (18→20px, matching the .tep-dashmap-full-zoom
        comment above's height math). */
+    /* ...and up again (264->304px wide, 15->16px type, 20->22px line) with
+       the stronger stroke above. The zoom buttons beside it follow the new
+       height - see .tep-dashmap-full-zoom. */
     .tep-dashmap-search input {
-      width: 264px; max-width: 38vw;
-      height: 20px !important; line-height: 20px !important; font-size: 15px;
+      width: 304px; max-width: 42vw;
+      height: 22px !important; line-height: 22px !important; font-size: 16px;
     }
     .tep-dash-map-search input {
       flex: 1 1 auto; min-width: 0; width: 100%;
-      height: 18px !important; line-height: 18px !important; font-size: 13px;
+      height: 20px !important; line-height: 20px !important; font-size: 14px;
     }
     .tep-dashmap-search input::placeholder, .tep-dash-map-search input::placeholder { color: var(--tep-slate-500); }
     /* .tep-dashmap-search-count/-clear are shared classes (same markup,
