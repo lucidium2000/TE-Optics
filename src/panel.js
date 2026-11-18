@@ -31,11 +31,23 @@
   // is deliberately narrower: only the two hostnames the user actually
   // expects to run this on.
   const TEP_EXPECTED_HOSTS = ['app.thousandeyes.com', 'app.thousandeyes.us'];
-  if (!TEP_EXPECTED_HOSTS.includes(String(window.location.hostname).toLowerCase())) {
-    window.location.href = 'https://app.thousandeyes.com';
-    return;
+  /* Share links — <token>.share.thousandeyes.com — are a real ThousandEyes
+     surface, and MEASURED to serve the same view routes and the same /ajax/
+     endpoints as the portal: /agent/view/timeline/…, /agent/view/interval/…
+     and /topology/path-vis/graph/multi all appear verbatim. The path view's
+     correction therefore works there with no change to what it intercepts.
+     What is NOT there is an account session, so everything that lists tests,
+     agents or units is unavailable — see tepIsShareLink and the reduced mode
+     in initAuth. CONFIRMED via user request, against a live share link. */
+  const TEP_SHARE_HOST_RE = /^[a-z0-9-]+\.share\.thousandeyes\.(?:com|us)$/i;
+  {
+    const host = String(window.location.hostname).toLowerCase();
+    if (!TEP_EXPECTED_HOSTS.includes(host) && !TEP_SHARE_HOST_RE.test(host)) {
+      window.location.href = 'https://app.thousandeyes.com';
+      return;
+    }
   }
-  const TEP_VERSION = '4.34';
+  const TEP_VERSION = '4.35';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -7513,6 +7525,17 @@
     return /thousandeyes\.(?:com|us)$/i.test(window.location.hostname);
   }
 
+  /** A published share link rather than the signed-in portal.
+   *
+   *  The share token lives in the hostname and scopes everything the page can
+   *  see to one snapshot. The view routes and the /ajax/ endpoints behind them
+   *  are the same, which is why the path-view correction needs no special case
+   *  — but there is no account behind it, so test listing, agent loading, unit
+   *  totals and every write are simply not available. */
+  function tepIsShareLink() {
+    return TEP_SHARE_HOST_RE.test(String(window.location.hostname));
+  }
+
   function readBrowserCookie(name) {
     try {
       const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -10929,6 +10952,26 @@
     if (!isOnTEPage()) {
       setStatus('⚠ Not on ThousandEyes — inject this on app.thousandeyes.com or app.thousandeyes.us', 'err');
       log('This script must run on ThousandEyes (app.thousandeyes.com or app.thousandeyes.us).', 'tep-log-err');
+      return;
+    }
+
+    /* A share link has no account behind it: the token in the hostname scopes
+       the page to one snapshot. /ajax/settings/tests/init is account-scoped and
+       would fail here, and the failure reads as "the panel is broken" rather
+       than "this surface has no account" — so it is not attempted. Say what IS
+       available instead.
+       The path-view correction is already live by this point: its closure wires
+       itself at load and intercepts the same endpoints a share page serves, so
+       it needs nothing from here. CONFIRMED against a live share link. */
+    if (tepIsShareLink()) {
+      setStatus('Share link — path view correction is ready. Shift-click a node or link.');
+      log('Share link detected (' + window.location.hostname + ').', 'tep-log-ok');
+      log('Available here: the path view correction — shift-click a node or a link on the '
+        + 'Path Visualization to set loss or added delay. It intercepts the same endpoints '
+        + 'a share page serves, so it behaves exactly as it does in the portal.', 'tep-log-info');
+      log('Not available here: tests, agents, dashboards, units and anything that writes — '
+        + 'a share link carries no account session for those to run against. '
+        + 'Open the portal for those.', 'tep-log-info');
       return;
     }
 
@@ -41839,9 +41882,11 @@
     function metricWarning(kind) {
       const m = currentMetric();
       if (!m) return '';
-      const showing = /loss/i.test(m) ? 'loss' : /latenc|delay/i.test(m) ? 'latency'
-        : /jitter/i.test(m) ? 'jitter' : m;
-      if (showing === kind) return '';
+      const kinds = shownKinds();
+      /* Among ANY of the strips on screen, not just the first. A view showing
+         loss and availability together was being told it does not show loss. */
+      if (kinds.indexOf(kind) >= 0) return '';
+      const showing = kinds.length ? kinds.join(' and ') : m;
       return 'This view is set to show ' + showing + ' (metrics=' + m + '), not '
         + kind + '. The data was changed, but the path is not coloured by '
         + kind + ' right now - switch the metric selector to ' + kind
@@ -41855,6 +41900,8 @@
        the nodes simply carry no metrics. */
     function applyRules(url, json) {
       let out = json;
+      /* Nothing is rewritten for a test that is not the one on screen. */
+      if (!urlIsForFocusedTest(url)) return out;
       for (const r of rules) {
         if (url.indexOf(r.match) < 0) continue;
         try {
@@ -41893,8 +41940,69 @@
     let lastBin = null;
     let lastBinSize = 300;
 
+    /* Which test the captured graph belongs to. Conditions are keyed by the
+       IP of a hop ("node:10.1.2.3") or by a pair of them, and those keys
+       describe ONE test's path. Carry them into another test and they match
+       nothing in the new graph, which is the "No match on this round" the
+       panel then reports — the conditions are not wrong, they are simply
+       about a path that is no longer on screen.
+       CONFIRMED via user report. */
+    let lastTestIds = null;
+
+    /** The test the PAGE is showing, read from its own URL.
+     *
+     *  This is the authority for "what is in focus", and it has to be — the
+     *  alternative, believing whichever response happens to arrive, loses a
+     *  race it cannot win. Switch tests and the requests already in flight for
+     *  the one you left keep landing for a second or two afterwards. */
+    function focusedTestIds() {
+      try { return testIdsOfUrl(location.search); } catch (_) { return null; }
+    }
+
+    /** Is this response about the test in focus?
+     *
+     *  Every url the correction touches names its test — the graph carries
+     *  testIds=, the timeline and the per-round figures carry testId= — and
+     *  until now not one of them was checked. The rules matched on a url
+     *  SUBSTRING alone, so a response belonging to another test was rewritten
+     *  exactly as eagerly as the one on screen. That is how conditions set on
+     *  one test turned up on another. CONFIRMED via user report.
+     *
+     *  When either side cannot be read the answer is yes: a url that does not
+     *  name a test is not evidence of the wrong test, and refusing to act on
+     *  it would break the views that simply word things differently. */
+    function urlIsForFocusedTest(url) {
+      const want = focusedTestIds();
+      const got = testIdsOfUrl(url);
+      if (!want || !got) return true;
+      if (got === want) return true;
+      /* A multi-test graph is for this test if the focused one is among them. */
+      const g = got.split(',');
+      return want.split(',').some((w) => g.indexOf(w) >= 0);
+    }
+
+    function testIdsOfUrl(url) {
+      const m = /[?&]testIds?=([^&]*)/.exec(url || '');
+      if (!m || !m[1]) return null;
+      /* Sorted, so the same set of tests in a different order is the same
+         view rather than a spurious switch. */
+      return decodeURIComponent(m[1]).split(',').map((x) => x.trim())
+        .filter(Boolean).sort().join(',') || null;
+    }
+
     function noteGraph(url, json, text) {
       if (url.indexOf(GRAPH_URL) < 0 || !json || !Array.isArray(json.nodes)) return;
+      /* A graph for a test that is not in focus is a response still in flight
+         from the one just left. Adopting it would measure every condition
+         against the wrong path. */
+      if (!urlIsForFocusedTest(url)) return;
+      /* The reset follows the PAGE, not this response. Keying it off whichever
+         graph arrived meant a late response for the previous test flipped the
+         remembered id back and reset again — which cleared conditions that had
+         just been set, over and over. */
+      const focus = focusedTestIds() || testIdsOfUrl(url);
+      if (focus && lastTestIds && focus !== lastTestIds) resetForTest(focus);
+      if (focus) lastTestIds = focus;
       lastGraph = json;
       if (typeof text === 'string') lastGraphText = text;
       const b = /[?&]startBin=(\d+)/.exec(url);
@@ -41944,12 +42052,39 @@
     function seenFor(kind) { return timelineSeen.get(kind) || 0; }
 
     /** Which strip is on screen right now, in timelineKind()'s words. */
-    function shownKind() {
+    /** EVERY strip on screen, not one of them.
+     *
+     *  metrics= is a LIST — a path view is routinely set to
+     *  `netLoss,httpAvailability`, which puts two strips above the map. The
+     *  old single-kind answer is what left one of them stale: the verifier
+     *  watched whichever metric it happened to name, saw that one come back,
+     *  declared success and stopped, while the other strip sat there with its
+     *  original numbers under an impaired map. Which one got stranded simply
+     *  depended on the order of the tests in here.
+     *  CONFIRMED via user report (availability not updating). */
+    function shownKinds() {
       const m = currentMetric();
-      if (/loss/i.test(m)) return 'loss';
-      if (/latenc|delay/i.test(m)) return 'latency';
-      if (/jitter/i.test(m)) return 'jitter';
-      return '';
+      if (!m) return [];
+      const out = [];
+      /* Per metric NAME, not against the whole string: testing /loss/ against
+         "netLoss,httpAvailability" is true no matter which half matched, which
+         is the same conflation in miniature. */
+      for (const raw of String(m).split(',')) {
+        const one = raw.trim();
+        if (!one) continue;
+        const k = /avail/i.test(one) ? 'availability'
+          : /latenc|delay|rtt/i.test(one) ? 'latency'
+            : /jitter/i.test(one) ? 'jitter'
+              : /loss/i.test(one) ? 'loss' : '';
+        if (k && out.indexOf(k) < 0) out.push(k);
+      }
+      return out;
+    }
+
+    /** The primary strip, for the gestures that can only name one. */
+    function shownKind() {
+      const ks = shownKinds();
+      return ks.length ? ks[0] : '';
     }
 
     function noteWatch(url, json) {
@@ -42224,11 +42359,10 @@
     const LAT_MAX = 1000;        // ms - a whole second of delay is already absurd
     const SPREAD_MAX = 48;       // 48 rounds either side is four hours at 5 min
     const APPLY_DEBOUNCE_MS = 260;
-    const NUDGE_RETURN_MS = 1200;   // time to let one timeline step land
-    /* Long enough for the other layer to actually mount. Flipping back before
-       TE has finished switching lets it treat the return as "you never left",
-       and nothing is re-requested. */
-    const NUDGE_FLIP_MS = 1100;
+    /* The dwell: one full second ON the other metric, between switching away
+       and switching back. Fixed and unconditional — see refreshChart.
+       CONFIRMED via user request. */
+    const NUDGE_SETTLE_MS = 1000;
     const TOAST_MS = 3200;          // a transient note clears itself
 
     /* target key -> { loss, lat } where both are integer LEVELS, not values.
@@ -42294,6 +42428,14 @@
        left and right arrows walk that. Keeping it as a count of rounds rather
        than a pair of timestamps means it stays correct if the bin size differs
        between tests. */
+    /** A round id as a wall clock, for saying WHERE a condition landed. */
+    function roundLabel(round) {
+      if (round == null) return 'this round';
+      try {
+        return new Date(round * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch (_) { return String(round); }
+    }
+
     function windowOf(lv) {
       const len = lastBinSize || 300;
       const focus = lv.focus != null ? lv.focus : currentRound();
@@ -42628,10 +42770,84 @@
       return { lossPct, latMs, byAgent, agents };
     }
     function timelineKind(url) {
+      /* Availability is tested FIRST: some availability endpoints carry a loss
+         term in the query string, and matching /loss/ on one of those would
+         rewrite an availability chart with a loss figure. */
+      if (/avail/i.test(url)) return 'availability';
       if (/latenc|avgrtt|delay/i.test(url)) return 'latency';
       if (/jitter/i.test(url)) return 'jitter';
       if (/loss/i.test(url)) return 'loss';
       return '';
+    }
+
+    /* ── Availability ────────────────────────────────────────────────────────
+     *  Availability is BINARY per agent per round in ThousandEyes — the round
+     *  either completed or it did not — and the figure on the chart is the
+     *  share of agents that completed. So that is what is modelled: agents are
+     *  marked down, and what is written is the share still standing.
+     *
+     *  Real networks are more forgiving than this: TCP retransmission recovers
+     *  a good deal of packet loss, so a path can sit at 40% loss with HTTP
+     *  availability untouched. Modelling that faithfully was tried, and left
+     *  the availability strip flat next to a path that was visibly dying —
+     *  correct, and no use to a rehearsal. Here loss ALWAYS costs availability,
+     *  in proportion, and predictably. CONFIRMED via user report, repeatedly.
+     *  AVAIL_SENSITIVITY scales it for anyone who wants it gentler. */
+    const AVAIL_SENSITIVITY = 1;    // <1 = loss has to be worse before agents drop
+
+    /** Stable 0-100 draw for one agent in one round. */
+    function availDraw(id, round) {
+      let h = (String(id).length << 16) >>> 0;
+      const sid = String(id);
+      for (let i = 0; i < sid.length; i++) h = (Math.imul(h, 31) + sid.charCodeAt(i)) >>> 0;
+      h = (h ^ (Math.round(Number(round) || 0) >>> 0)) >>> 0;
+      h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+      h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+      h = (h ^ (h >>> 16)) >>> 0;
+      return (h / 4294967296) * 100;
+    }
+
+    /** Which agents count as DOWN for this round.
+     *
+     *  Decided for the round as a whole, not agent by agent. An earlier version
+     *  gave each agent its own draw against its loss, which is fine across a
+     *  fleet and useless with a handful: measured on a three-agent test, a
+     *  round carrying 33% loss stayed at 100% availability purely on the roll,
+     *  which is exactly the "availability is not affected" this exists to fix.
+     *
+     *  So the NUMBER down is fixed by the loss — the agents' loss added up, as
+     *  whole agents — and it is never zero while anything is losing packets:
+     *  loss on a path always costs at least one agent its round. WHICH agents
+     *  is then the worst-hit first, with the stable draw only breaking ties,
+     *  so equally-impaired agents take turns from round to round instead of
+     *  the same one failing every time. Nothing here is random: the strip and
+     *  the per-round figures ask separately and must get the same set. */
+    function downAgentsAtRound(imp, round) {
+      const out = new Set();
+      if (!imp || !imp.agents || !imp.byAgent) return out;
+      const lossy = [];
+      let sum = 0;
+      for (const [id, v] of imp.byAgent) {
+        if (!v || !(v.loss > 0)) continue;
+        lossy.push({ id, loss: v.loss, tie: availDraw(id, round) });
+        sum += Math.min(100, v.loss);
+      }
+      if (!lossy.length) return out;
+      let n = Math.round((sum / 100) * AVAIL_SENSITIVITY);
+      n = Math.max(1, Math.min(lossy.length, n));
+      lossy.sort((x, y) => (y.loss - x.loss) || (x.tie - y.tie));
+      for (let i = 0; i < n; i++) out.add(lossy[i].id);
+      return out;
+    }
+
+    /** Availability %, or null when nothing is impaired at this round. */
+    function availabilityAtRound(imp, round) {
+      if (!imp || !imp.agents) return null;
+      const down = downAgentsAtRound(imp, round);
+      /* No loss anywhere means this is not an availability event — leave the
+         chart alone rather than writing 100 over whatever was really there. */
+      if (!down.size) return null;
+      return 100 * (imp.agents - down.size) / imp.agents;
     }
 
     const TIMELINE_URL = '/agent/view/timeline/';
@@ -42642,7 +42858,7 @@
         'the timeline strip follows what the map was told to do', (json, url) => {
           if (!json || !Array.isArray(json.values)) return json;
           const kind = timelineKind(url);
-          if (kind !== 'loss' && kind !== 'latency') return json;
+          if (kind !== 'loss' && kind !== 'latency' && kind !== 'availability') return json;
           const list = perTargetImpacts();
           if (!list.length) return json;
 
@@ -42676,6 +42892,12 @@
                  through: a round that was already slow stays that much slower
                  than its neighbours instead of being flattened to one figure. */
               json.values[i] = v + imp.latMs;
+            } else if (kind === 'availability') {
+              const avail = availabilityAtRound(imp, round);
+              /* min, not assignment: a round that was ALREADY below 100% keeps
+                 its own figure if that is the worse of the two. Availability
+                 cannot be improved by breaking something. */
+              if (avail != null) json.values[i] = Math.min(v, avail);
             }
           }
           return json;
@@ -42690,6 +42912,9 @@
              is inside the window. */
           const imp = impactAtRound(roundOfUrl(url));
           if (!imp.lossPct && !imp.latMs) return json;
+          /* The same set the availability strip counted, so a row here can
+             never disagree with the chart above it. */
+          const downNow = downAgentsAtRound(imp, roundOfUrl(url));
           for (const row of rows) {
             if (!row || typeof row !== 'object') continue;
             const meta = row.meta || (row.meta = {});
@@ -42703,6 +42928,17 @@
             if (loss > 0) {
               if (row.metrics && typeof row.metrics === 'object') row.metrics.LOSS = loss;
               meta.loss = loss;
+            }
+            /* An agent whose routes are all gone did not complete the round, so
+               its availability is 0 — not a scaled-down number. Written only at
+               the cutoff, for the same reason the strip uses: a partially
+               impaired agent still got through. Keeping this in step with the
+               strip is what stops the chart and the per-round figures beneath
+               it telling different stories. */
+            if (id != null ? downNow.has(id) : (downNow.size > 0 && downNow.size >= imp.agents)) {
+              if (row.metrics && typeof row.metrics === 'object'
+                  && typeof row.metrics.AVAILABILITY === 'number') row.metrics.AVAILABILITY = 0;
+              if (typeof meta.availability === 'number') meta.availability = 0;
             }
             if (lat > 0) {
               if (row.metrics && typeof row.metrics === 'object'
@@ -42723,30 +42959,42 @@
         (json, url) => applyImpairments(json, false, roundOfUrl(url)), true);
     }
 
-    /** Re-request the round you are ALREADY on.
-     *
-     *  Stepping the timeline also refetches, but it moves you in time - four
-     *  taps of "+" would walk you four rounds into the past, which made the
-     *  whole increment idea unusable. Switching the sub-tab away and back makes
-     *  ThousandEyes re-request the current round instead, so the picture updates
-     *  under your hands and the clock does not move. Measured: Map -> Path
-     *  Visualization issues graph/multi for the same startBin. */
-    function nudgeSameRound() {
-      const tab = (name) => Array.from(document.querySelectorAll('button'))
-        .find(b => (b.textContent || '').trim() === name);
-      const back = tab('Path Visualization');
-      const away = tab('Map') || tab('Table');
-      if (!back || !away) return false;
-      try {
-        away.click();
-        setTimeout(() => { try { back.click(); } catch (e) {} }, 420);
-        return true;
-      } catch (e) { return false; }
-    }
-
     /** Install (or drop) the rewrite rule to match the current levels. Runs
      *  synchronously on every write: the rule IS the state, so it must never
      *  lag behind what the window says. */
+    /** Start clean because a different test is in focus.
+     *
+     *  Everything held here describes one test's path: the conditions keyed by
+     *  hop, the per-agent effect measured against that path, the match summary
+     *  the panel reports from, and any metric flip still owed a click back.
+     *  None of it means anything against another test, and keeping it is what
+     *  produced conditions that silently matched nothing.
+     *
+     *  The conditions are DROPPED rather than carried, and said out loud — a
+     *  demo quietly losing its impairment on a tab change is worse than being
+     *  told it was cleared. */
+    function resetForTest(ids) {
+      const had = levels.size;
+      levels.clear();
+      lastSummary = [];
+      lastAgentEffect = null;
+      lastAgentIds = null;
+      lastGraph = null;
+      lastGraphText = null;
+      timelineNeedsGraph = false;
+      healing = false;
+      nudgeGen++;            // a refresh still in flight will not report into the new view
+      refreshQueued = false;
+      clearBusy();
+      closePanel();
+      syncRule();            // drops the interception entirely when nothing is set
+      if (had) {
+        notify('Different test in focus \u2014 cleared ' + had
+          + ' condition' + (had === 1 ? '' : 's') + '. They described the other test\u2019s path.');
+      }
+      log('test changed to ' + ids + ' - correction state reset.');
+    }
+
     function syncRule() {
       let any = false;
       for (const lv of levels.values()) if (lv.loss || lv.lat) { any = true; break; }
@@ -42754,467 +43002,211 @@
       else { dropRule('impair'); dropRule('impairTimeline'); dropRule('impairPoints'); }
     }
 
-    /** Only the REFETCH is debounced - holding "+" should cost one round trip,
-     *  not five. */
-    /** Refresh without the clock moving. nudgeAll() picks the best available
-     *  strategy; what each one actually reaches is recorded on each branch. */
-    /** The active layer tab (Agent to Server / HTTP Server / Page Load / BGP)
-     *  and a sibling to bounce off.
-     *
-     *  Found structurally rather than by name: the tab buttons share a
-     *  "tabs-nav-button" class and the active one carries aria-selected="true".
-     *  The sub-tab row (Path Visualization / Map / Table) uses the same markup,
-     *  so it is excluded by name - those three are the only names we need to
-     *  know, and getting that wrong only costs us the better nudge. */
-    /* The sub-tab row under the layer row uses the same markup, so it is
-       excluded by name - those are the only names we need to know. */
-    const SUB_LABEL = /^(path visualisation|path visualization|map|table|views?)$/i;
-    /* The layer names TE ships. Matching on these as well as on the class is
-       deliberate belt and braces: a class name is a build artefact and has
-       changed under this before, whereas "BGP Route Visualization" is in the
-       product. Either route alone is enough to find the row. */
-    const LAYER_LABEL = new RegExp('^(agent to (server|agent)|http server|page load'
-      + '|transaction|bgp( route( visualization| visualisation)?)?|dns (server|trace)'
-      + '|dnssec|voice|sip server|ftp server|ftp|web|network|api)$', 'i');
+    /* The Metrics menu button, as it reads on the live view: "Metrics: Loss
+       (Primary) + 1". */
+    const METRIC_TRIGGER = /^metrics?\s*:/i;
 
-    function tabCandidates() {
+    /* Bumped whenever a refresh starts or the test in focus changes, so a
+       refresh that finishes after the view has moved on stays quiet. */
+    let nudgeGen = 0;
+
+    /* ── The refresh: one out-and-back on the Metrics menu, nothing else ──────
+     *
+     *  This replaces a ladder of seven "gestures" that was tried in order until
+     *  the chart moved. The ladder is why this was unreliable, and worse: its
+     *  click BACK searched every <li> and <button> on the whole page for text
+     *  merely CONTAINING the metric name, so it could land on a path-view
+     *  slider or a group heading before it ever reached the real option; and
+     *  when a step did not verify it went on to step the round and flip the
+     *  layer, moving the very timeline selection the condition was pinned to.
+     *  CONFIRMED via user report ("don't touch the loss slider").
+     *
+     *  Everything below was MEASURED on the live view, not inferred:
+     *
+     *    - the control is a button reading "Metrics: Loss (Primary) + 1";
+     *    - its primary options are  .primary-option-group button.metric-option
+     *      and exist only while the menu is open;
+     *    - picking one leaves the menu OPEN, so there is no reopening;
+     *    - Loss -> Latency re-requests the per-round figures and the path
+     *      graph; Latency -> Loss re-requests the loss strip;
+     *    - the "+ 1" comparison strip (e.g. HTTP availability) is NOT
+     *      re-requested by any of that. It is cached on its own, and only
+     *      unticking and re-ticking its checkbox  li.comparison-option  brings
+     *      it back. That is why availability never changed no matter how the
+     *      timing was tuned.
+     *
+     *  So: open the menu, switch the primary metric away, hold one second,
+     *  switch it back, and bounce any comparison strip the correction rewrites.
+     *  Exact-text matches inside the menu only. No round stepping, no layer
+     *  flip, no sliders. If the menu is not there, say so and stop. */
+    const PRIMARY_OPTION = '.primary-option-group button.metric-option';
+    const COMPARISON_OPTION = 'li.comparison-option';
+    const NUDGE_CLICK_GAP_MS = 160;      // let one click settle before the next
+    const NUDGE_MENU_OPEN_MS = 1500;     // longest we wait for the menu to draw
+    const NUDGE_VERIFY_MS = 3000;        // longest we wait for the strip to return
+    const NUDGE_GRAPH_WAIT_MS = 5000;    // longest we hold for the path graph on a first Apply
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function waitFor(test, capMs) {
+      const end = Date.now() + capMs;
+      while (Date.now() < end) { if (test()) return true; await sleep(60); }
+      return !!test();
+    }
+    const txt = (el) => ((el && el.textContent) || '').trim();
+
+    function metricsMenuButton() {
+      try {
+        return Array.from(document.querySelectorAll('button'))
+          .find((b) => METRIC_TRIGGER.test(txt(b))) || null;
+      } catch (_) { return null; }
+    }
+    function metricsMenuOpen() {
+      try { return !!document.querySelector(PRIMARY_OPTION); } catch (_) { return false; }
+    }
+    /** A primary option by its EXACT label. Contains-matching is what sent the
+     *  old click-back to the wrong control. */
+    function primaryOption(label) {
+      const want = String(label || '').toLowerCase();
+      if (!want) return null;
+      try {
+        return Array.from(document.querySelectorAll(PRIMARY_OPTION))
+          .find((b) => txt(b).toLowerCase() === want) || null;
+      } catch (_) { return null; }
+    }
+    /** "Metrics: Loss  (Primary) + 1"  ->  "Loss" */
+    function primaryLabelOf(btn) {
+      const m = /^metrics?\s*:\s*(.*?)\s*(?:\(primary\).*|\+\s*\d+.*)?$/i.exec(txt(btn));
+      return m && m[1] ? m[1].trim() : '';
+    }
+    function kindOfLabel(label) {
+      const t = String(label || '');
+      return /avail/i.test(t) ? 'availability' : /latenc|delay/i.test(t) ? 'latency'
+        : /jitter/i.test(t) ? 'jitter' : /loss/i.test(t) ? 'loss' : '';
+    }
+    /** The comparison checkbox with this exact label, or null. */
+    function comparisonBox(label) {
+      const want = String(label || '').toLowerCase();
+      try {
+        const li = Array.from(document.querySelectorAll(COMPARISON_OPTION))
+          .find((x) => txt(x).toLowerCase() === want);
+        return li ? li.querySelector('input[type="checkbox"]') : null;
+      } catch (_) { return null; }
+    }
+    /** Ticked comparison strips that the correction rewrites, by label. */
+    function comparisonStripsToBounce() {
       const out = [];
-      const push = (sel) => {
-        try {
-          for (const el of document.querySelectorAll(sel)) {
-            if (out.indexOf(el) < 0) out.push(el);
-          }
-        } catch (e) { /* selector unsupported here */ }
-      };
-      push('button[class*="tabs-nav-button"]');
-      push('[role="tab"]');
-      push('nav button');
-      push('[class*="tabs"] button');
+      try {
+        for (const li of document.querySelectorAll(COMPARISON_OPTION)) {
+          const box = li.querySelector('input[type="checkbox"]');
+          if (!box || !box.checked) continue;
+          const k = kindOfLabel(txt(li));
+          if (k === 'availability' || k === 'loss' || k === 'latency') out.push(txt(li));
+        }
+      } catch (_) { /* */ }
       return out;
     }
 
-    function layerTabPair() {
-      const btns = tabCandidates();
-      if (!btns.length) return null;
-      const label = (b) => (b.textContent || '').trim();
-      const enabled = (b) => !b.disabled && b.getAttribute('aria-disabled') !== 'true';
-      const marked = (b) => b.getAttribute('aria-selected') === 'true'
-        || b.getAttribute('aria-checked') === 'true'
-        || b.getAttribute('tabindex') === '0'
-        || /\b(active|selected|current)\b/i.test(b.getAttribute('class') || '');
+    /* One refresh at a time. A second Apply during a flip must not start a
+       second set of clicks on the same menu; it is remembered and run once the
+       first has put the view back. */
+    let refreshing = false;
+    let refreshQueued = false;
 
-      const groups = new Map();
-      for (const b of btns) {
-        const list = (b.parentElement && b.parentElement.parentElement) || b.parentElement;
-        if (!list) continue;
-        if (!groups.has(list)) groups.set(list, []);
-        groups.get(list).push(b);
-      }
-      /* A row that names a layer wins over one merely found by class: it is
-         the row a person would call the layer tabs. */
-      const rows = Array.from(groups.values()).filter((g) => g.length >= 2
-        && !g.some((b) => SUB_LABEL.test(label(b))));
-      rows.sort((a, b) => b.filter((x) => LAYER_LABEL.test(label(x))).length
-                        - a.filter((x) => LAYER_LABEL.test(label(x))).length);
-      for (const g of rows) {
-        const active = g.find(marked) || null;
-        if (!active) continue;
-        const other = g.find((b) => b !== active && enabled(b) && label(b));
-        if (other) return { active, other };
-      }
-      return null;
-    }
-
-    /** The metric selector (Loss / Latency / Jitter) and a sibling to bounce
-     *  off.
-     *
-     *  This is the one that actually brings the strip back in the live app.
-     *  Found by its own labels rather than by class, and only on something
-     *  that looks like a control, because this clicks a real thing on
-     *  someone's dashboard. Which metric is current comes from the URL
-     *  (`metrics=`), so we put the view back exactly where we found it.
-     */
-    const METRIC_LABEL = /^(packet\s+)?loss$|^(avg\.?\s+)?latency$|^jitter$|^delay$/i;
-
-    function metricTabPair() {
-      let cands;
+    async function refreshChart() {
+      if (refreshing) { refreshQueued = true; return; }
+      refreshing = true;
+      const gen = ++nudgeGen;
+      let ok = false;
+      let openedByUs = false;
       try {
-        cands = Array.from(document.querySelectorAll(
-          'button,[role="tab"],[role="radio"],[role="option"],[role="menuitemradio"]'));
-      } catch (e) { return null; }
-      const labelled = cands.filter((el) => METRIC_LABEL.test((el.textContent || '').trim()));
-      if (labelled.length < 2) return null;
-
-      const by = (depth) => {
-        const groups = new Map();
-        for (const el of labelled) {
-          let p = el.parentElement;
-          for (let i = 1; i < depth && p; i++) p = p.parentElement;
-          if (!p) continue;
-          if (!groups.has(p)) groups.set(p, []);
-          groups.get(p).push(el);
+        setBusy('Please wait — refreshing the chart…');
+        const btn = metricsMenuButton();
+        if (!btn) return;
+        const homeLabel = primaryLabelOf(btn);
+        const homeKind = kindOfLabel(homeLabel);
+        if (!metricsMenuOpen()) {
+          openedByUs = true;
+          btn.click();
+          if (!(await waitFor(metricsMenuOpen, NUDGE_MENU_OPEN_MS))) return;
         }
-        for (const g of groups.values()) if (g.length >= 2) return g;
-        return null;
-      };
-      const group = by(1) || by(2);
-      if (!group) return null;
+        const home = primaryOption(homeLabel);
+        /* Latency is the partner for everything except Latency itself. */
+        const awayLabel = /^latency$/i.test(homeLabel) ? 'Loss' : 'Latency';
+        const away = primaryOption(awayLabel);
+        if (!home || !away) return;
 
-      const now = currentMetric();
-      const want = /loss/i.test(now) ? /loss/i
-        : /latenc|delay/i.test(now) ? /latenc|delay/i
-        : /jitter/i.test(now) ? /jitter/i : null;
-      const marked = (el) => el.getAttribute('aria-selected') === 'true'
-        || el.getAttribute('aria-checked') === 'true';
-      const active = group.find(marked)
-        || (want && group.find((el) => want.test((el.textContent || '').trim())))
-        || group[0];
-      const other = group.find((el) => el !== active && !el.disabled
-        && el.getAttribute('aria-disabled') !== 'true');
-      return other ? { active, other } : null;
-    }
+        const bounce = comparisonStripsToBounce();
+        const before = homeKind ? seenFor(homeKind) : 0;
 
-    /* The click BACK onto whatever was active is owed to the page: until it
-       lands, the view is sitting on a metric or a layer nobody asked for. If
-       another gesture starts first it is paid immediately rather than left to
-       fire later, when it would be putting the view back to a state two moves
-       out of date. */
-    let pendingBack = null;
+        /* OUT: switch the main view to the other metric. */
+        setBusy('Please wait — switching to ' + awayLabel + '…');
+        away.click();
+        const wentAway = Date.now();
+        await sleep(NUDGE_CLICK_GAP_MS);
+        for (const label of bounce) {
+          const box = comparisonBox(label);
+          if (box && box.checked) { box.click(); await sleep(NUDGE_CLICK_GAP_MS); }
+        }
 
-    function payBack() {
-      if (!pendingBack) return;
-      const b = pendingBack;
-      pendingBack = null;
-      clearTimeout(b.timer);
-      b.go();
-    }
+        /* DWELL: one full second ON the other metric, counted from the click
+           that put it there - the unticking above happens inside the second,
+           not on top of it. */
+        setBusy('Please wait — holding on ' + awayLabel + '…');
+        await sleep(Math.max(0, NUDGE_SETTLE_MS - (Date.now() - wentAway)));
+        /* ...and not back until there is a path graph to work from.
+         *
+         * The interception goes in on the first shift-click, which is AFTER the
+         * page loaded its graph, so on the first Apply of a session nothing has
+         * been captured yet. Switching away re-requests the graph, but the
+         * strip re-requested by switching back can arrive first - and a strip
+         * rewritten with no graph to measure against is not rewritten at all.
+         * MEASURED: first Apply on a fresh load returned the loss strip all
+         * zeros and availability all 100, with every later Apply correct. That
+         * is the whole of "it only works some of the time".
+         * Normally the graph is in well inside the second and this adds
+         * nothing; on that first Apply it holds a little longer. */
+        if (!lastGraphText && anyLevelActive()) {
+          setBusy('Please wait \u2014 loading the path\u2026');
+          await waitFor(() => !!lastGraphText, NUDGE_GRAPH_WAIT_MS);
+        }
 
-    /** Click one control, then click back onto the one that was active. */
-    /** Click the way a hand does.
-     *
-     *  el.click() dispatches a click and nothing else. A tab that commits on
-     *  pointerdown or mousedown - which plenty do - never hears it, so the
-     *  view does not move and the refresh silently does nothing. Sending the
-     *  whole sequence costs four extra events and removes an entire class of
-     *  "it works when I click it myself". The plain .click() stays as the
-     *  fallback for anything that only listens for that. */
-    function fireClick(el) {
-      if (!el) return false;
-      let r = { left: 0, top: 0, width: 0, height: 0 };
-      try { r = el.getBoundingClientRect(); } catch (e) { /* detached */ }
-      const x = r.left + (r.width || 0) / 2;
-      const y = r.top + (r.height || 0) / 2;
-      const opts = { bubbles: true, cancelable: true, composed: true,
-        view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
-      const send = (Ctor, type, init) => {
+        /* BACK: the option is looked up again, because the menu re-renders. */
+        setBusy('Please wait — switching back to ' + homeLabel + '…');
+        const back = primaryOption(homeLabel);
+        if (back) back.click();
+        await sleep(NUDGE_CLICK_GAP_MS);
+        for (const label of bounce) {
+          const box = comparisonBox(label);
+          if (box && !box.checked) { box.click(); await sleep(NUDGE_CLICK_GAP_MS); }
+        }
+
+        /* Did the strip for the metric on screen actually come back? */
+        ok = homeKind
+          ? await waitFor(() => seenFor(homeKind) > before, NUDGE_VERIFY_MS)
+          : true;
+        if (ok) log('chart refetched - ' + homeLabel + ' -> ' + awayLabel + ' -> ' + homeLabel
+          + (bounce.length ? ', and re-ticked ' + bounce.join(', ') : '') + '.');
+      } catch (e) {
+        console.warn('[TE Optics] the refresh threw part-way:', e);
+      } finally {
+        /* Close the menu only if this opened it. */
         try {
-          if (typeof Ctor !== 'function') return;
-          el.dispatchEvent(new Ctor(type, init));
-        } catch (e) { /* this environment has no such constructor */ }
-      };
-      try { if (typeof el.focus === 'function') el.focus(); } catch (e) { /* */ }
-      send(window.PointerEvent, 'pointerdown',
-        Object.assign({ pointerId: 1, isPrimary: true, pointerType: 'mouse' }, opts));
-      send(window.MouseEvent, 'mousedown', opts);
-      send(window.PointerEvent, 'pointerup',
-        Object.assign({ pointerId: 1, isPrimary: true, pointerType: 'mouse' },
-          opts, { buttons: 0 }));
-      send(window.MouseEvent, 'mouseup', Object.assign({}, opts, { buttons: 0 }));
-      try { el.click(); } catch (e) { return false; }
-      return true;
-    }
-
-    function flipPair(pair, backAfter) {
-      if (!pair) return false;
-      try {
-        payBack();
-        fireClick(pair.other);
-        const go = () => {
-          pendingBack = null;
-          try { fireClick(pair.active); } catch (e) {}
-        };
-        pendingBack = { go, timer: setTimeout(go, backAfter || NUDGE_FLIP_MS) };
-        return true;
-      } catch (e) { return false; }
-    }
-
-    function nudgeMetric() { return flipPair(metricTabPair()); }
-
-    /* metricTabPair() only ever finds a metric selector that is drawn as a
-       ROW of options. The three below are the shapes it cannot see, and at
-       least one of them is why "switch to latency and back" works by hand
-       while the automated version does nothing. */
-
-    /** A native <select>. Clicking one does nothing at all: the value has to
-     *  be set and the change announced, or no framework hears it. */
-    function nudgeMetricSelect() {
-      let sels;
-      try { sels = Array.from(document.querySelectorAll('select')); }
-      catch (e) { return false; }
-      for (const sel of sels) {
-        const opts = Array.from(sel.options || []);
-        const metric = (o) => METRIC_LABEL.test((o.textContent || '').trim())
-          || /loss|latenc|jitter|delay/i.test(o.value || '');
-        const hits = opts.filter(metric);
-        if (hits.length < 2) continue;
-        const was = sel.value;
-        const other = hits.find((o) => o.value !== was);
-        if (!other) continue;
-        const set = (v) => {
-          sel.value = v;
-          for (const t of ['input', 'change']) {
-            try { sel.dispatchEvent(new Event(t, { bubbles: true })); } catch (e) { /* */ }
+          if (openedByUs && metricsMenuOpen()) {
+            const b2 = metricsMenuButton();
+            if (b2) b2.click();
           }
-        };
-        payBack();
-        set(other.value);
-        const go = () => { pendingBack = null; try { set(was); } catch (e) {} };
-        pendingBack = { go, timer: setTimeout(go, NUDGE_FLIP_MS) };
-        return true;
-      }
-      return false;
-    }
-
-    /* Measured on the live app: the metric control is a dropdown BUTTON
-       whose text reads "Metrics: Loss". Matching that exactly beats the
-       generic "a control whose text mentions the current metric", which on a
-       real page also matches a legend, a column header and a filter chip.
-       The generic form stays as the fallback for a build that words it
-       differently. */
-    const METRIC_TRIGGER = /^metrics?\s*:/i;
-
-    /** A dropdown whose options do not exist until it is opened. */
-    function metricTrigger() {
-      let cands;
-      try {
-        cands = Array.from(document.querySelectorAll(
-          'button,[role="combobox"],[aria-haspopup],[class*="dropdown"],[class*="select"]'));
-      } catch (e) { return null; }
-      const named = cands.find((el) => METRIC_TRIGGER.test((el.textContent || '').trim()));
-      if (named) return named;
-      /* Past this point we are guessing from text alone, and "a control whose
-         text says Loss" also describes one option in a row of them. A row
-         needs no opening, and nudgeMetric() already handles it properly, so
-         leave it alone rather than treat an option as a trigger and click
-         our way through a menu that was never closed. */
-      if (metricTabPair()) return null;
-      const kind = shownKind();
-      if (!kind) return null;
-      const saysCurrent = new RegExp(kind === 'latency' ? 'latenc|delay' : kind, 'i');
-      return cands.find((el) => {
-        const t = (el.textContent || '').trim();
-        return t.length < 40 && saysCurrent.test(t);
-      }) || null;
-    }
-
-    function nudgeMetricMenu() {
-      const kind = shownKind();
-      if (!kind) return false;
-      const saysCurrent = new RegExp(kind === 'latency' ? 'latenc|delay' : kind, 'i');
-      const trigger = metricTrigger();
-      if (!trigger) return false;
-
-      /* Open, pick something else, and schedule the whole thing in reverse.
-         Each step is guarded: a menu that does not open simply leaves the
-         later steps finding nothing, and the verifier moves on. */
-      const pick = (want, then) => {
-        fireClick(trigger);
-        setTimeout(() => {
-          let opts;
-          try {
-            opts = Array.from(document.querySelectorAll(
-              '[role="option"],[role="menuitem"],[role="menuitemradio"],li,button'));
-          } catch (e) { opts = []; }
-          const hit = opts.find((el) => {
-            if (el === trigger) return false;          // that is what we opened
-            const t = (el.textContent || '').trim();
-            return t && t.length < 40 && !METRIC_TRIGGER.test(t) && want.test(t);
-          });
-          if (hit) fireClick(hit);
-          if (then) setTimeout(then, 260);
-        }, 280);
-      };
-
-      const otherWant = kind === 'loss' ? /^(avg\.?\s*)?latency$|^delay$/i
-                                        : /^(packet\s*)?loss$/i;
-      payBack();
-      pick(otherWant);
-      const go = () => { pendingBack = null; pick(saysCurrent); };
-      pendingBack = { go, timer: setTimeout(go, NUDGE_FLIP_MS + 600) };
-      return true;
-    }
-
-    /** No control at all: the metric lives in the URL, so change it there and
-     *  let TE's own router notice. Does nothing on a build that does not
-     *  listen, which costs one escalation step and no harm - the URL is put
-     *  back either way. */
-    function nudgeMetricUrl() {
-      let url, had;
-      try {
-        url = new URL(window.location.href);
-        had = url.searchParams.get('metrics');
-      } catch (e) { return false; }
-      if (!had) return false;
-      const other = /loss/i.test(had) ? had.replace(/loss/i, 'Latency')
-        : /latenc/i.test(had) ? had.replace(/latency/i, 'Loss') : null;
-      if (!other || other === had) return false;
-
-      const put = (v) => {
-        try {
-          const u = new URL(window.location.href);
-          u.searchParams.set('metrics', v);
-          window.history.replaceState(window.history.state, '', u.toString());
-          for (const t of ['popstate', 'hashchange']) {
-            try { window.dispatchEvent(new Event(t)); } catch (e) { /* */ }
+        } catch (_) { /* */ }
+        refreshing = false;
+        if (gen === nudgeGen) {
+          clearBusy();
+          if (!ok) {
+            notify('Chart not refreshed — open Metrics, pick Latency, then pick '
+              + 'your metric again.');
           }
-        } catch (e) { /* */ }
-      };
-      payBack();
-      put(other);
-      const go = () => { pendingBack = null; put(had); };
-      pendingBack = { go, timer: setTimeout(go, NUDGE_FLIP_MS) };
-      return true;
-    }
-    function nudgeLayer() { return flipPair(layerTabPair()); }
-
-    function nudgeRound() {
-      const btn = (name) => Array.from(document.querySelectorAll('button')).find((b) => {
-        const n = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
-        return n === name && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
-      });
-      const prev = btn('Previous interval');
-      if (!prev) return false;
-      try {
-        prev.click();
-        /* Next is looked up again AFTER the step, because at the newest round
-           it is disabled until you move off it. */
-        setTimeout(() => {
-          const next = btn('Next interval');
-          if (next) { try { next.click(); } catch (e) {} }
-        }, NUDGE_RETURN_MS);
-        return true;
-      } catch (e) { return false; }
-    }
-
-    /* In the order they are worth trying. The metric selector goes first
-       because it is the one that demonstrably brings the strip back; the layer
-       flip reaches all three surfaces when the tabs are where we expect them;
-       the last two reach the map and the per-round figures but NOT the chart,
-       and are only here so something happens rather than nothing. */
-    /* In the order they are worth trying. The LAYER flip goes first because
-       it re-renders the whole test view, strip included, and is the one
-       measured to bring back the chart for the metric you are already on.
-       The metric flip is second: it does fetch a strip, but the one it
-       fetches is for the metric it swung TO, and TE will often serve the
-       original from its own cache on the way back - which looks like success
-       and is not. The last two reach the map and the per-round figures but
-       not the chart, and are here so that something happens rather than
-       nothing. */
-    /* In the order they are worth trying, and that order is evidence now
-       rather than guesswork.
-
-       The METRIC gestures go first because switching the metric away and
-       back is the thing confirmed to bring the chart back, and because they
-       are cheap: the view never leaves the page you are looking at. The
-       LAYER flip is demoted below them - it works, but it navigates to
-       another layer and back to do it, which is a lot of motion on screen
-       for something tried first and usually not needed. The last two reach
-       the map and the per-round figures but not the chart, and are here so
-       that something happens rather than nothing.
-
-       `takes` is how long that gesture needs for its own round trip. A fixed
-       verification window was too short for the menu, which has to open,
-       pick, settle, reopen and pick back before the strip it asked for can
-       possibly arrive - so it was being judged a failure while it was still
-       working. */
-    const GESTURES = [
-      { id: 'metric', go: nudgeMetric, takes: NUDGE_FLIP_MS,
-        says: 'switched the metric away and back' },
-      { id: 'menu', go: nudgeMetricMenu, takes: NUDGE_FLIP_MS + 1200,
-        says: 'opened the metric menu and switched back' },
-      { id: 'select', go: nudgeMetricSelect, takes: NUDGE_FLIP_MS,
-        says: 'changed the metric <select> and back' },
-      { id: 'url', go: nudgeMetricUrl, takes: NUDGE_FLIP_MS,
-        says: 'changed metrics= in the URL and back' },
-      { id: 'layer', go: nudgeLayer, takes: NUDGE_FLIP_MS,
-        says: 'flipped the test layer away and back' },
-      { id: 'round', go: nudgeRound, takes: NUDGE_RETURN_MS,
-        says: 'stepped one round and back' },
-      { id: 'subtab', go: nudgeSameRound, takes: 600,
-        says: 're-requested the current round' },
-    ];
-
-    /** One gesture, the best one available, without checking the result.
-     *  TEPC.refetch() uses this because it reports what it did; the automatic
-     *  path uses nudgeUntilChart() instead. */
-    function nudgeAll() {
-      for (const g of GESTURES) if (g.go()) return g.id;
-      return '';
-    }
-
-    /* Polled rather than checked once, late: a gesture that works usually
-       works within a few hundred ms of the click back, and waiting out a
-       fixed deadline before even looking made a working refresh feel like a
-       broken one. */
-    const NUDGE_VERIFY_EVERY_MS = 220;
-    /* On top of whatever the gesture itself takes. */
-    const NUDGE_VERIFY_SLACK_MS = 1800;
-
-    /** Keep going until the chart at the top has actually been re-requested.
-     *
-     *  Which control does that is not something to assume. It has been wrong
-     *  before, and the failure is the nastiest one this tool has: the map
-     *  goes red, the chart keeps its real numbers, and the two sit there
-     *  contradicting each other with nothing on screen to say why. So each
-     *  gesture is made and then CHECKED against the number of timeline
-     *  responses that have come back, and the next one is tried if the strip
-     *  did not move. */
-    /* A second Apply must not race the first one's escalation: two chains
-       clicking the same tabs past each other would leave the view somewhere
-       neither of them intended. Each run carries its generation and gives up
-       the moment a newer one starts. */
-    let nudgeGen = 0;
-
-    function nudgeUntilChart(i, tried, gen) {
-      i = i || 0;
-      tried = tried || [];
-      if (gen == null) gen = ++nudgeGen;
-      if (gen !== nudgeGen) return;
-      if (i >= GESTURES.length) {
-        console.warn('[TE Optics] ' + (tried.length
-            ? 'tried ' + tried.join(', then ') + ', and the chart at the top '
-              + 'still has not been re-requested.'
-            : 'found no control to refresh with.')
-          + ' Switch the test layer away and back by hand (e.g. BGP, then '
-          + 'Agent to Server) - the map is already right. TEPC.why() prints '
-          + 'what it could and could not find.');
-        /* On screen as well as in the console: the console is not where
-           anyone is looking when the chart fails to move. */
-        notify('Chart not refreshed \u2014 switch the test layer away and back.');
-        afterNudge();
-        return;
-      }
-      const g = GESTURES[i];
-      /* The metric on screen BEFORE anything is clicked. A gesture that
-         swings the view elsewhere must not be allowed to answer for the
-         strip the user is actually looking at. */
-      const kind = shownKind();
-      const before = seenFor(kind);
-      if (!g.go()) { nudgeUntilChart(i + 1, tried, gen); return; }
-      tried.push(g.id);
-
-      const deadline = Date.now() + (g.takes || NUDGE_FLIP_MS) + NUDGE_VERIFY_SLACK_MS;
-      const poll = () => {
-        if (gen !== nudgeGen) return;
-        if (seenFor(kind) > before) {
-          log('chart refetched - ' + g.says + '.');
           afterNudge();
-          return;
         }
-        if (Date.now() < deadline) { setTimeout(poll, NUDGE_VERIFY_EVERY_MS); return; }
-        nudgeUntilChart(i + 1, tried, gen);
-      };
-      setTimeout(poll, NUDGE_VERIFY_EVERY_MS);
+        if (refreshQueued) { refreshQueued = false; refreshChart(); }
+      }
     }
 
     let warnedCacheBack = false;
@@ -43228,13 +43220,17 @@
      */
     function doNudge() {
       applyTimer = null;
-      payBack();
       /* TE's cache switch is a ONE HOUR cookie. When it lapses mid-session the
          rounds come back from IndexedDB, no request goes out, and everything
          you change appears to do nothing at all - indistinguishable from the
          harness being broken. Catch it here rather than let someone debug a
          non-problem. */
-      if (!cacheDisabled()) {
+      /* Not on a share link. The switch is a per-hostname cookie, so a share
+         link never has it - and MEASURED there, with the cookie absent, a first
+         Apply on a fresh load still re-requested every strip and the chart
+         changed. Warning about it on every Apply sent people to fix something
+         that was not broken. */
+      if (!cacheDisabled() && !onShareHost()) {
         if (!warnedCacheBack) {
           warnedCacheBack = true;
           console.warn('[TE Optics] the round cache is ON again - TE\'s switch for it '
@@ -43246,7 +43242,7 @@
       } else {
         warnedCacheBack = false;
       }
-      nudgeUntilChart(0);
+      refreshChart();
     }
 
     /** Refetch so the change appears.
@@ -43274,18 +43270,28 @@
     }
 
     function afterNudge() {
-      if (timelineNeedsGraph && !healing && anyLevelActive() && lastGraphText) {
+      if (timelineNeedsGraph && !healing && anyLevelActive()) {
+        /* A strip was read before any path graph had been captured, so it
+           went through untouched. This used to check for the graph on the
+           spot and, finding none YET, warn and drop the flag for good - which
+           left the chart wrong until something else happened to refresh it.
+           The graph is on its way; wait for it, then run the refresh once
+           more. The second pass lands back here with `healing` set and falls
+           through. */
         timelineNeedsGraph = false;
         healing = true;
         notify('The chart was a step behind \u2014 syncing it.');
-        nudgeAll();
-        setTimeout(() => { healing = false; refreshPanel(); },
-          NUDGE_FLIP_MS + 2800);
+        setBusy('Please wait \u2014 syncing the chart\u2026');
+        waitFor(() => !!lastGraphText, NUDGE_GRAPH_WAIT_MS).then((have) => {
+          if (have) { refreshChart(); return; }
+          healing = false;
+          clearBusy();
+          console.warn('[TE Optics] the chart could not be rewritten because no path-vis '
+            + 'graph was captured. Let the map load once, then press Apply again.');
+          notify('Path not loaded yet \u2014 let the map draw, then press Apply again.');
+          refreshPanel();
+        });
         return;
-      }
-      if (timelineNeedsGraph && !lastGraphText) {
-        console.warn('[TE Optics] the chart could not be rewritten because no path-vis '
-          + 'graph has been captured yet. Let the map load once, then adjust again.');
       }
       timelineNeedsGraph = false;
       healing = false;
@@ -43311,8 +43317,22 @@
      *  here, so there is no second way for the map, the chart and the per-round
      *  figures to end up disagreeing. Only the fields you pass are touched.
      */
-    function setTarget(key, vals, now) {
+    function setTarget(key, vals, now, recentre) {
       const lv = levelsFor(key);
+      /* Re-centre on the round you are standing on NOW.
+       *
+       * focus is pinned on first use so the event does not slide along the
+       * timeline as you scrub — that part is right and stays. What was wrong
+       * is that it then never moved again: set a condition, scrub somewhere
+       * else, set it again, and the second act landed on the first act's
+       * window. Pressing Apply is an explicit statement about a moment, so it
+       * says where the event sits; the automatic re-reads (the chart redraw,
+       * the per-round figures) pass nothing and leave it exactly where it was.
+       * CONFIRMED via user report. */
+      if (recentre) {
+        const r = currentRound();
+        if (r != null) lv.focus = r;
+      }
       if (vals.loss != null) lv.loss = intIn(vals.loss, 0, LOSS_MAX);
       if (vals.lat != null) lv.lat = intIn(vals.lat, 0, LAT_MAX);
       if (vals.spread != null) lv.spread = intIn(vals.spread, 0, SPREAD_MAX);
@@ -43384,6 +43404,13 @@
 
     let panelEl = null;
     let panelFields = null;
+    /* The refresh is several seconds of the view moving on its own. Said in
+       the panel, directly above the fields that triggered it — a toast in the
+       corner is not where anyone is looking after pressing Apply.
+       Held at module level so it survives the panel being closed and reopened
+       mid-refresh. */
+    let busyMsg = '';
+    let busyEl = null;
     let panelNotes = null;
     /* The window keeps the target it was opened on. It deliberately does NOT
        follow the selection: a stray click on the map would otherwise move the
@@ -43415,7 +43442,10 @@
 
     function closePanel() {
       if (panelEl) { try { panelEl.remove(); } catch (e) {} }
-      panelEl = null; panelFields = null; panelNotes = null; panelTarget = null;
+      /* busyEl went with the panel, but busyMsg does NOT clear: a refresh in
+         flight is still in flight, and reopening the panel should say so
+         rather than looking idle while the view moves on its own. */
+      panelEl = null; panelFields = null; panelNotes = null; panelTarget = null; busyEl = null;
     }
 
     /** The window is draggable by its header, because the thing you are about
@@ -43627,10 +43657,10 @@
         lat: intIn(panelFields.lat.value, 0, LAT_MAX),
         spread: intIn(panelFields.spread.value, 0, SPREAD_MAX),
         rand: !!panelFields.rand.checked,
-      }, true);
+      }, true, true);
       notify(lv
         ? panelTarget.label + ': ' + lv.loss + '% loss, +' + lv.lat + ' ms, '
-          + ((lv.spread || 0) * 2 + 1) + ' rounds — refreshing the chart'
+          + ((lv.spread || 0) * 2 + 1) + ' rounds centred on ' + roundLabel(lv.focus)
         : panelTarget.label + ': nothing set — both figures were zero.');
       renderNotes();
     }
@@ -43641,7 +43671,7 @@
          networking at all - which is the whole bargain for shipping it to
          everyone. */
       install();
-      if (!cacheDisabled()) warnAboutCache();
+      if (!cacheDisabled() && !onShareHost()) warnAboutCache();
       const keep = panelEl && panelTarget && panelTarget.key === t.key;
       closePanel();
       panelTarget = t;
@@ -43688,6 +43718,16 @@
       dragBy(head);
 
       hideNativeSpinners();
+      /* Sits directly under the title bar and above the fields, so the wait is
+         announced at the thing that caused it. Hidden until there is something
+         to say, so the panel is not permanently taller for it. */
+      busyEl = mk(panelEl, 'div', {
+        display: 'none', alignItems: 'center', gap: '8px',
+        padding: '8px 11px', fontSize: '11.5px', lineHeight: '1.4',
+        color: c.text, background: c.sunken,
+        borderBottom: '1px solid ' + c.edge,
+      });
+      renderBusy();
       const body = mk(panelEl, 'div', { padding: '4px 0 2px' });
       panelFields = {
         loss: numberRow(body, c, 'Packet loss', lv.loss, '%',
@@ -43745,6 +43785,33 @@
        window above never auto-hides, because you are typing in it. */
     let toastEl = null;
     let toastTimer = null;
+
+    /** Draw whatever busy message is in force into the open panel. */
+    function renderBusy() {
+      if (!busyEl) return;
+      if (!busyMsg) { busyEl.style.display = 'none'; busyEl.textContent = ''; return; }
+      const c = palette();
+      busyEl.textContent = '';
+      busyEl.style.display = 'flex';
+      /* A moving mark, because the whole complaint was that a still message
+         during several seconds of the view jumping about reads as a freeze.
+         Pure CSS on one element: no timer to leak if the panel is torn down
+         mid-refresh. */
+      const dot = mk(busyEl, 'div', {
+        flex: '0 0 auto', width: '9px', height: '9px', borderRadius: '50%',
+        background: c.accent, animation: 'tepc-busy 1s ease-in-out infinite',
+      });
+      if (!document.getElementById('tepc-busy-kf')) {
+        const st = document.createElement('style');
+        st.id = 'tepc-busy-kf';
+        st.textContent = '@keyframes tepc-busy{0%,100%{opacity:.25;transform:scale(.72)}50%{opacity:1;transform:scale(1)}}';
+        document.documentElement.appendChild(st);
+      }
+      void dot;
+      mk(busyEl, 'div', { flex: '1 1 auto' }, busyMsg);
+    }
+    function setBusy(text) { busyMsg = text || ''; renderBusy(); }
+    function clearBusy() { setBusy(''); }
 
     function notify(text) {
       if (!text) return;
@@ -43894,6 +43961,13 @@
       try { return /disableIndexedDbCache=true/.test(document.cookie); } catch (e) { return false; }
     }
 
+    /** A published share link (<token>.share.thousandeyes.com). Tested on the
+     *  hostname directly so this closure stays self-contained. */
+    function onShareHost() {
+      try { return /\.share\.thousandeyes\.(?:com|us)$/i.test(String(location.hostname)); }
+      catch (_) { return false; }
+    }
+
     function warnAboutCache() {
       console.warn("[TE Optics] ThousandEyes round cache is still ON, so an adjustment "
         + "cannot show up on the round you are already looking at.\n"
@@ -43922,8 +43996,9 @@
           return null;
         }
         /* Immediate, like Apply: typing this in is a decision, not a figure
-           being held down on a stepper. */
-        const lv = setTarget(t.key, o, true);
+           being held down on a stepper — and for the same reason it re-centres
+           the window on the round you are standing on. */
+        const lv = setTarget(t.key, o, true, true);
         refreshPanel();
         return lv;
       },
@@ -44070,7 +44145,7 @@
       },
 
       /** Make TE re-request, once, without waiting for the verifier. */
-      refetch() { nudgeAll(); return TEPC; },
+      refetch() { refreshChart(); return TEPC; },
 
       /** What the refresher can actually see on this page.
        *
@@ -44080,59 +44155,29 @@
        *  strip has come back - which turns the next round into reading
        *  rather than another guess. */
       why() {
-        const label = (b) => (b.textContent || '').trim();
-        const show = (name, pair) => {
-          if (!pair) { console.log('  ' + name + ': NOT FOUND'); return; }
-          console.log('  ' + name + ': would click "' + label(pair.other)
-            + '", then back to "' + label(pair.active) + '"');
-        };
         console.log('%c[TE Optics] refresh diagnostics', 'font-weight:700');
-        console.log('  metric on screen: ' + (currentMetric() || '(none in the URL)')
-          + '  -> strip kind "' + shownKind() + '"');
-        show('layer tabs', layerTabPair());
-        show('metric selector (a row of options)', metricTabPair());
-        const trig = metricTrigger();
-        console.log('  metric dropdown: ' + (trig
-          ? 'would open "' + (trig.textContent || '').trim() + '"' : 'NOT FOUND'));
-        console.log('  which gestures have something to work with:');
-        for (const g of GESTURES) {
-          /* Asked, not performed: finding a control is the question here. */
-          let has = false;
-          if (g.id === 'layer') has = !!layerTabPair();
-          else if (g.id === 'metric') has = !!metricTabPair();
-          else if (g.id === 'select') {
-            try {
-              has = Array.from(document.querySelectorAll('select')).some((sel) =>
-                Array.from(sel.options || []).filter((o) =>
-                  METRIC_LABEL.test((o.textContent || '').trim())
-                  || /loss|latenc|jitter|delay/i.test(o.value || '')).length >= 2);
-            } catch (e) { has = false; }
-          } else if (g.id === 'url') {
-            try { has = !!new URL(window.location.href).searchParams.get('metrics'); }
-            catch (e) { has = false; }
-          } else if (g.id === 'menu') has = !!metricTrigger();
-          else if (g.id === 'subtab') {
-            try {
-              const t = Array.from(document.querySelectorAll('button'));
-              has = t.some((b) => /^path visualisation|^path visualization/i
-                .test((b.textContent || '').trim()));
-            } catch (e) { has = false; }
-          } else has = '(only answerable by trying)';
-          console.log('    ' + g.id + ': ' + has);
+        console.log('  test in focus (from the page url): ' + (focusedTestIds() || '(none)'));
+        console.log('  metrics on screen: ' + (currentMetric() || '(none in the URL)')
+          + '  -> strips ' + JSON.stringify(shownKinds()));
+        /* Exactly what refreshChart() will use, in the order it uses it. */
+        const btn = metricsMenuButton();
+        console.log('  Metrics button: ' + (btn ? '"' + txt(btn) + '"' : 'NOT FOUND - the refresh cannot run'));
+        if (btn) {
+          const home = primaryLabelOf(btn);
+          console.log('  primary metric: "' + home + '"  -> will switch to "'
+            + (/^latency$/i.test(home) ? 'Loss' : 'Latency') + '", hold '
+            + NUDGE_SETTLE_MS + ' ms, and switch back');
         }
-        const rows = [];
-        for (const el of tabCandidates()) {
-          const t = label(el);
-          if (!t) continue;
-          rows.push({
-            text: t.slice(0, 40),
-            role: el.getAttribute('role') || '',
-            selected: el.getAttribute('aria-selected') || el.getAttribute('tabindex') || '',
-            cls: (el.getAttribute('class') || '').slice(0, 34),
-          });
+        if (metricsMenuOpen()) {
+          const opts = Array.from(document.querySelectorAll(PRIMARY_OPTION)).map(txt);
+          console.log('  primary options (menu is open): ' + opts.join(', '));
+          const cmp = comparisonStripsToBounce();
+          console.log('  comparison strips it will untick and re-tick: '
+            + (cmp.length ? cmp.join(', ') : 'none'));
+        } else {
+          console.log('  (the options only exist while the Metrics menu is open - open it '
+            + 'and run TEPC.why() again to list them)');
         }
-        console.log('  every tab-ish control it can see (' + rows.length + '):');
-        console.table(rows);
         const seen = [];
         for (const [k, n] of timelineSeen) seen.push(k + ': ' + n);
         console.log('  timeline responses seen, by metric: '
@@ -44140,10 +44185,10 @@
         console.log('  round cache: ' + (cacheDisabled() ? 'off (good)'
           : 'ON - nothing can change on the round you are looking at'));
         console.log('  interception: ' + (installed ? 'installed' : 'NOT installed yet'));
-        if (!layerTabPair()) {
-          console.log('%c  The layer tabs were not found, so the one gesture that '
-            + 'reliably refetches the chart is unavailable. Send me the table '
-            + 'above and I can match them.', 'color:#b45309');
+        if (!metricsMenuButton()) {
+          console.log('%c  The Metrics button was not found, so the refresh has '
+            + 'nothing to drive. Open Metrics, pick Latency, then pick your metric '
+            + 'again by hand - the data is already changed.', 'color:#b45309');
         }
         return TEPC;
       },
