@@ -47,7 +47,7 @@
       return;
     }
   }
-  const TEP_VERSION = '4.36';
+  const TEP_VERSION = '4.37';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -44296,6 +44296,328 @@
 
     window.TEPC = TEPC;
     wire(true);
+  })();
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+   *  Source-interface picker, restored in ThousandEyes' own new-test form
+   * ═══════════════════════════════════════════════════════════════════════════
+   *  ThousandEyes lets a test leave an Enterprise Agent from a chosen interface
+   *  (an agent with eth0 and eth1, say). The control for it — a dropdown under
+   *  the agent's name in Select Agents > Advanced — is now only drawn for
+   *  Agent to Agent tests. CONFIRMED via user report and measured on the live
+   *  form, everything below:
+   *
+   *    - Every test form still loads the choices:
+   *        GET /ajax/settings/agents/interfaces
+   *        -> { "834471": [ { ipAddress: "192.168.0.201", interfaceName: "eth0" },
+   *                         { ipAddress: "192.168.85.201", interfaceName: "eth1" } ] }
+   *    - Every test form still SENDS the field, just always empty:
+   *        POST /ajax/tests/network/check   ...  "agentInterfaces": {}
+   *    - The backend still stores it on other types: an existing HTTP Server
+   *      test carries  "agentInterfaces": { "834471": "192.168.0.201" }.
+   *    - In the Agent to Server picker the row is the same row with the
+   *      control switched off (a bare <!--v-if--> where it would be), and the
+   *      row's checkbox id is  select-row-<vAgentId>.
+   *
+   *  So nothing about the product has to be faked. This puts the dropdown back
+   *  in the row, built from the form's own classes so it is the same control to
+   *  look at, and writes the choice into the field the form is already sending.
+   *  Agent to Agent is left entirely alone: wherever TE draws its own picker,
+   *  this draws nothing and rewrites nothing.
+   *
+   *  Self-contained on purpose (no panel helpers), so it can be loaded into a
+   *  live tab on its own and tested there. */
+  (function tepNativeInterfaces() {
+    if (!/^app\.thousandeyes\.(?:com|us)$/i.test(String(location.hostname))) return;
+    try {
+      if (window.__TEP_NATIVE_IFACES__ && typeof window.__TEP_NATIVE_IFACES__.off === 'function') {
+        window.__TEP_NATIVE_IFACES__.off();   // a re-injected bookmarklet must not stack a second copy
+      }
+    } catch (_) { /* an older build that cannot let go simply stays */ }
+
+    const IFACES_URL = '/ajax/settings/agents/interfaces';
+    const IFACES_MAX_AGE_MS = 5 * 60 * 1000;
+    const DEFAULT_LABEL = 'Default interface selection';   // TE's own wording
+    const MINE = 'tep-native-iface';
+    /* POST /ajax/tests/<type>, .../create-instant, .../check — the three writes
+       the form makes. Agent to Agent is excluded: TE's own picker owns it. */
+    const SAVE_RE = /\/ajax\/tests\/([a-z0-9-]+)(?:\/(?:create-instant|check))?\/?(?:\?|$)/i;
+    /* GET /ajax/tests/<type>/<aid>/<testId> — the settings of a test being edited. */
+    const DETAIL_RE = /\/ajax\/tests\/([a-z0-9-]+)\/\d+\/\d+\/?(?:\?|$)/i;
+
+    let ifaces = null, ifacesAt = 0, loading = null;
+    /* vAgentId -> chosen address; '' means "default" was chosen explicitly. */
+    const picks = new Map();
+    let formKey = '';
+    let last = null;          // the last request this rewrote, for diagnostics
+    let menu = null;
+
+    /** Which form this is. Choices belong to one form; opening another test, or
+     *  a new one of a different type, starts with none. */
+    function syncFormKey() {
+      let k = '';
+      try {
+        const q = new URLSearchParams(location.search);
+        k = location.pathname + '|' + (q.get('testId') || '') + '|' + (q.get('testType') || '');
+      } catch (_) { k = String(location.pathname); }
+      if (k !== formKey) { formKey = k; picks.clear(); closeMenu(); }
+    }
+
+    function loadIfaces() {
+      if (loading) return loading;
+      loading = fetch(IFACES_URL, {
+        credentials: 'include',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      }).then((r) => (r.ok ? r.json() : null)).then((j) => {
+        if (j && typeof j === 'object') { ifaces = j; ifacesAt = Date.now(); }
+      }).catch(() => { /* leave the form exactly as TE drew it */ })
+        .then(() => { loading = null; schedule(); });
+      return loading;
+    }
+    const listFor = (id) => {
+      const l = ifaces && ifaces[id];
+      return Array.isArray(l) ? l.filter((x) => x && x.ipAddress) : [];
+    };
+    const labelOf = (x) => ((x.interfaceName ? x.interfaceName + ' ' : '') + x.ipAddress);
+
+    // ── the request ─────────────────────────────────────────────────────────
+    /** Fill TE's own (empty) agentInterfaces with the choices made here. Returns
+     *  the body untouched unless there is a choice for an agent on this test —
+     *  a request this has nothing to say about must go out byte for byte. */
+    function patchBody(url, body) {
+      const m = SAVE_RE.exec(url);
+      if (!m || /^oneway-network$/i.test(m[1])) return body;
+      if (!picks.size || typeof body !== 'string') return body;
+      let j;
+      try { j = JSON.parse(body); } catch (_) { return body; }
+      if (!j || typeof j !== 'object' || Array.isArray(j)) return body;
+      const ids = (j.agentSet && Array.isArray(j.agentSet.vAgentIds)) ? j.agentSet.vAgentIds
+        : (Array.isArray(j.vAgentIds) ? j.vAgentIds : null);
+      if (!ids) return body;
+      const map = (j.agentInterfaces && typeof j.agentInterfaces === 'object' && !Array.isArray(j.agentInterfaces))
+        ? Object.assign({}, j.agentInterfaces) : {};
+      let touched = false;
+      for (const id of ids) {
+        const k = String(id);
+        if (!picks.has(k)) continue;
+        const ip = picks.get(k);
+        if (ip) { if (map[k] !== ip) { map[k] = ip; touched = true; } }
+        else if (k in map) { delete map[k]; touched = true; }
+      }
+      if (!touched) return body;
+      j.agentInterfaces = map;
+      last = { url: url.replace(/^https?:\/\/[^/]+/, ''), agentInterfaces: map, at: Date.now() };
+      try { return JSON.stringify(j); } catch (_) { return body; }
+    }
+
+    /** A test opened for editing may already have interfaces set; show them
+     *  rather than a row of "Default" that would be untrue. Never overrides a
+     *  choice already made in this form. */
+    function seedFrom(xhr) {
+      try {
+        let j = null;
+        if (xhr.responseType === '' || xhr.responseType === 'text') j = JSON.parse(xhr.responseText);
+        else if (xhr.responseType === 'json') j = xhr.response;
+        const map = j && j.agentInterfaces;
+        if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+        syncFormKey();
+        for (const k of Object.keys(map)) {
+          if (map[k] && !picks.has(String(k))) picks.set(String(k), String(map[k]));
+        }
+        schedule();
+      } catch (_) { /* not JSON, not ours */ }
+    }
+
+    const XHR = XMLHttpRequest.prototype;
+    const origOpen = XHR.open, origSend = XHR.send;
+    function open(method, url) {
+      try { this.__tepIfM = String(method || ''); this.__tepIfU = String(url || ''); } catch (_) { /* */ }
+      return origOpen.apply(this, arguments);
+    }
+    function send(body) {
+      let out = body;
+      try {
+        const u = this.__tepIfU || '', m = this.__tepIfM || '';
+        if (/^(?:post|put)$/i.test(m)) out = patchBody(u, body);
+        else if (/^get$/i.test(m) && DETAIL_RE.test(u) && !/^oneway-network$/i.test(DETAIL_RE.exec(u)[1])) {
+          this.addEventListener('load', () => seedFrom(this));
+        }
+      } catch (_) { out = body; }
+      return origSend.call(this, out);
+    }
+    XHR.open = open; XHR.send = send;
+
+    // ── the control ─────────────────────────────────────────────────────────
+    function closeMenu() {
+      if (menu) { try { menu.remove(); } catch (_) { /* */ } menu = null; }
+      document.querySelectorAll('.' + MINE + ' button[aria-expanded="true"]')
+        .forEach((b) => b.setAttribute('aria-expanded', 'false'));
+    }
+    /** First opaque background up the tree, so the menu matches the theme. */
+    function surfaceOf(el) {
+      for (let p = el; p && p !== document.documentElement; p = p.parentElement) {
+        const bg = getComputedStyle(p).backgroundColor;
+        if (bg && !/rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0\s*\)|transparent/i.test(bg)) return bg;
+      }
+      return getComputedStyle(document.body).backgroundColor || '#111';
+    }
+    function openMenu(btn, id) {
+      closeMenu();
+      const list = listFor(id);
+      const cs = getComputedStyle(btn.closest('td') || btn);
+      const ink = cs.color || 'inherit';
+      const r = btn.getBoundingClientRect();
+      menu = document.createElement('ul');
+      menu.setAttribute('role', 'listbox');
+      menu.className = MINE + '-menu';
+      menu.style.cssText = 'position:fixed;z-index:2147483646;margin:0;padding:8px 0;list-style:none;'
+        + 'min-width:' + Math.max(220, Math.round(r.width)) + 'px;border-radius:8px;'
+        + 'background:' + surfaceOf(btn) + ';color:' + ink + ';'
+        + 'border:1px solid color-mix(in srgb,' + ink + ' 22%,transparent);'
+        + 'box-shadow:0 8px 24px rgba(0,0,0,.45);font:14px/20px inherit;'
+        + 'left:' + Math.round(r.left) + 'px;top:' + Math.round(r.bottom + 4) + 'px;';
+      const current = picks.get(id) || '';
+      const add = (label, ip) => {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(ip === current));
+        li.tabIndex = -1;
+        li.style.cssText = 'display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;cursor:pointer;white-space:nowrap;';
+        const dot = document.createElement('span');
+        dot.style.cssText = 'flex:0 0 auto;width:14px;height:14px;border-radius:50%;box-sizing:border-box;'
+          + 'border:' + (ip === current ? '4px solid currentColor' : '1px solid color-mix(in srgb,currentColor 55%,transparent)') + ';';
+        const tx = document.createElement('span');
+        tx.className = 'agent-interfaces__option';
+        tx.textContent = label;
+        li.appendChild(dot); li.appendChild(tx);
+        li.addEventListener('mouseenter', () => { li.style.background = 'color-mix(in srgb,currentColor 10%,transparent)'; });
+        li.addEventListener('mouseleave', () => { li.style.background = ''; });
+        li.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          picks.set(id, ip);
+          closeMenu();
+          schedule();
+        });
+        menu.appendChild(li);
+      };
+      add(DEFAULT_LABEL, '');
+      for (const x of list) add(labelOf(x), String(x.ipAddress));
+      document.body.appendChild(menu);
+      // Keep it on screen when the row is near the bottom of the dialog.
+      const mr = menu.getBoundingClientRect();
+      if (mr.bottom > window.innerHeight - 8) menu.style.top = Math.max(8, Math.round(r.top - mr.height - 4)) + 'px';
+      btn.setAttribute('aria-expanded', 'true');
+    }
+
+    /** Build the control from a dropdown TE has already drawn in this dialog, so
+     *  it carries the form's real classes (they are build-hashed and change
+     *  with every ThousandEyes release — copying them at run time is the only
+     *  way to still match after the next one). Falls back to plain styling. */
+    function build(td, id) {
+      const scope = td.closest('[role="dialog"]') || document;
+      const proto = scope.querySelector('button[class*="_fec-dropdown-control"][class*="_fec-button--flat"]')
+        || document.querySelector('button[class*="_fec-dropdown-control"][class*="_fec-button--flat"]');
+      const outer = document.createElement('div');
+      const wrap = document.createElement('div');
+      wrap.className = ((proto && proto.parentElement && proto.parentElement.className) || '')
+        .split(/\s+/).filter((c) => /^_fec-(?:dropdown|simple-selector)/.test(c)).join(' ')
+        + ' agent-interfaces ' + MINE;
+      wrap.setAttribute('data-testid', 'agent-interface-selector-' + id);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('aria-haspopup', 'listbox');
+      btn.setAttribute('aria-expanded', 'false');
+      if (proto) btn.className = proto.className;
+      else btn.style.cssText = 'background:none;border:0;padding:2px 0;cursor:pointer;color:inherit;font:inherit;font-weight:600;display:inline-flex;align-items:center;gap:4px;';
+      const content = document.createElement('div');
+      const protoContent = proto && proto.querySelector('[class*="_fec-button-content"]');
+      if (protoContent) content.className = protoContent.className.split(/\s+/).filter((c) => !/icon/.test(c)).join(' ');
+      else content.style.cssText = 'display:inline-flex;align-items:center;gap:4px;';
+      const protoIcon = proto && proto.querySelector('[data-testid*="Chevron"]');
+      if (protoIcon) content.appendChild(protoIcon.cloneNode(true));
+      else { const c = document.createElement('span'); c.textContent = '▾'; c.setAttribute('aria-hidden', 'true'); content.appendChild(c); }
+      const text = document.createElement('span');
+      text.className = 'agent-interfaces__selection-text';
+      content.appendChild(text);
+      btn.appendChild(content);
+      btn.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (btn.getAttribute('aria-expanded') === 'true') closeMenu(); else openMenu(btn, id);
+      });
+      wrap.appendChild(btn); outer.appendChild(wrap); td.appendChild(outer);
+      return wrap;
+    }
+    function paint(wrap, id) {
+      const ip = picks.get(id) || '';
+      const hit = ip ? listFor(id).find((x) => String(x.ipAddress) === ip) : null;
+      const label = ip ? (hit ? labelOf(hit) : ip) : DEFAULT_LABEL;
+      const text = wrap.querySelector('.agent-interfaces__selection-text');
+      if (text && text.textContent !== label) { text.textContent = label; text.title = label; }
+      const btn = wrap.querySelector('button');
+      if (btn) btn.setAttribute('aria-label', label);
+    }
+
+    function scan() {
+      timer = null;
+      const names = document.querySelectorAll('.agents-selector-table__display-name');
+      if (!names.length) { closeMenu(); return; }
+      syncFormKey();
+      if (!ifaces || Date.now() - ifacesAt > IFACES_MAX_AGE_MS) { loadIfaces(); if (!ifaces) return; }
+      for (const nameEl of names) {
+        const td = nameEl.closest('td'), row = nameEl.closest('tr');
+        if (!td || !row) continue;
+        const cb = row.querySelector('input[type="checkbox"][id^="select-row-"]');
+        if (!cb) continue;
+        const id = cb.id.slice('select-row-'.length);
+        const mine = td.querySelector('.' + MINE);
+        /* TE's own picker is in this row (Agent to Agent): it owns the choice. */
+        const native = td.querySelector('.agent-interfaces:not(.' + MINE + ')');
+        const want = cb.checked && !native && listFor(id).length > 1;
+        if (!want) {
+          if (mine) { const o = mine.parentElement; (o && o.parentElement === td ? o : mine).remove(); }
+          /* Unticking an agent drops its choice, as TE's own control does. */
+          if (!cb.checked) picks.delete(id);
+          continue;
+        }
+        paint(mine || build(td, id), id);
+      }
+    }
+    let timer = null;
+    function schedule() { if (timer == null) timer = setTimeout(scan, 120); }
+
+    const mo = new MutationObserver(schedule);
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    const onChange = (e) => { if (e.target && /^select-row-/.test(e.target.id || '')) schedule(); };
+    const onDown = (e) => { if (menu && !menu.contains(e.target) && !(e.target.closest && e.target.closest('.' + MINE))) closeMenu(); };
+    const onKey = (e) => { if (e.key === 'Escape' && menu) { closeMenu(); } };
+    const onScroll = (e) => { if (menu && !(e.target === menu || (menu.contains && menu.contains(e.target)))) closeMenu(); };
+    document.addEventListener('change', onChange, true);
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('scroll', onScroll, true);
+    schedule();
+
+    window.__TEP_NATIVE_IFACES__ = {
+      off() {
+        try { mo.disconnect(); } catch (_) { /* */ }
+        document.removeEventListener('change', onChange, true);
+        document.removeEventListener('mousedown', onDown, true);
+        document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('scroll', onScroll, true);
+        /* Only put the originals back if nothing has wrapped these since. */
+        if (XHR.open === open) XHR.open = origOpen;
+        if (XHR.send === send) XHR.send = origSend;
+        closeMenu();
+        document.querySelectorAll('.' + MINE).forEach((w) => { const o = w.parentElement; (o && o.children.length === 1 ? o : w).remove(); });
+        if (timer != null) { clearTimeout(timer); timer = null; }
+      },
+      /** What it knows and what it last sent — for checking it on a live form. */
+      state() {
+        return { form: formKey, agentsWithChoices: ifaces ? Object.keys(ifaces).filter((k) => listFor(k).length > 1) : null,
+          picks: Array.from(picks.entries()), lastRewrite: last };
+      },
+      patchBody,   // exposed so the rewrite can be tested without sending anything
+    };
   })();
 
   // ---------------------------------------------------------------------------
