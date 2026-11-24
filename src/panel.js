@@ -47,7 +47,7 @@
       return;
     }
   }
-  const TEP_VERSION = '4.40';
+  const TEP_VERSION = '4.41';
   // If a panel from this exact build is already injected, toggle its visibility.
   // If a panel from an older build is still on the page (user re-installed the
   // bookmarklet without refreshing the tab), tear it down so the new code can
@@ -4362,6 +4362,19 @@
       /* One type scale. Every size in this overlay is one of these five. */
       --rf-micro:9px; --rf-label:10px; --rf-body:11px; --rf-title:12.5px; --rf-stat:15px;
     }
+    /* The wireless (triangulated) view reads one point larger throughout.
+       CONFIRMED via user request. */
+    .tep-devtopo-overlay.tep-rf-overlay { --rf-micro:10px; --rf-label:11px; --rf-body:12px; --rf-title:13.5px; --rf-stat:16px; }
+    /* ...and in the panel's own type: the system sans the main map's hover
+       cards use, rather than monospace for everything. Monospace stays only
+       where the map uses it too - for addresses (MAC/BSSID here, IPs there).
+       Digits keep fixed widths so stat columns still line up. CONFIRMED via
+       user request (match the font of the main map hovers). */
+    .tep-devtopo-overlay.tep-rf-overlay {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --rf-addr: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
+      --tdt-mono: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-variant-numeric: tabular-nums; }
     /* The single uppercase label treatment, so eyebrows, column heads and tags
        are identical everywhere instead of each picking their own tracking. */
     .tep-devtopo-overlay .rf-cap { font-size: var(--rf-micro); font-weight: 800;
@@ -4714,7 +4727,7 @@
     .tep-devtopo-body { flex: 1; min-height: 0; display: flex; align-items: stretch; }
     .tep-devtopo-body > .tep-devtopo-canvas { flex: 1 1 auto; min-width: 0; }
     .tep-rf-rail {
-      flex: 0 0 var(--rf-rail-w, 308px); min-width: 0; overflow-y: auto; overscroll-behavior: contain;
+      flex: 0 0 var(--rf-rail-w, 30%); min-width: min(280px, 100%); box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain;
       background: var(--tdt-ground2);
       padding: 14px; display: flex; flex-direction: column; gap: 14px;
       /* Its blocks lay themselves out by the width the rail is given. */
@@ -4753,12 +4766,14 @@
        more as it is widened. The rules between cells are drawn by the cells
        (a shadow into the 1px gap), so a short last row leaves no filled-in
        blank cells behind. */
-    .tep-rf-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 1px;
+    .tep-rf-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 1px;
       background: var(--tdt-ground2); border: 1px solid var(--tdt-line); border-radius: 8px; overflow: hidden; }
-    .tep-rf-stat { min-width: 0; padding: 9px 10px; background: var(--tdt-ground2);
+    .tep-rf-stat { min-width: 0; padding: 9px 7px 9px 9px; background: var(--tdt-ground2);
       box-shadow: 1px 0 0 var(--tdt-line), 0 1px 0 var(--tdt-line);
       display: flex; flex-direction: column; gap: 5px; }
-    .tep-rf-stat .s-l { font-size: var(--rf-micro); font-weight: 800; letter-spacing: .1em;
+    /* Tighter tracking than the other caps labels, and never wrapped: at the
+       larger size "THROUGHPUT" otherwise overran a 3-column cell. */
+    .tep-rf-stat .s-l { font-size: var(--rf-micro); font-weight: 800; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       text-transform: uppercase; color: var(--tdt-ink4); }
     .tep-rf-stat .s-v { font-family: var(--tdt-mono); font-size: var(--rf-stat); font-weight: 800;
       color: var(--tdt-ink); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -4895,6 +4910,18 @@
        above it - and zooms about that point, so the stem always meets it. */
     .tep-wtopo-ap.is-lifted { transform-origin: 50% 100%;
       transform: translate(-50%, -100%) translateY(calc(-1 * var(--rf-lift, 0px))) scale(var(--tep-zinv, 1)); }
+    /* In the wireless view an access point's name (and tag) sit ABOVE its
+       icon and the band BELOW it. The band hangs out of the layout, so the
+       icon is still the bottom of the marker and sits right on its point: on
+       top of the stem when tilted, on the point itself when flat.
+       CONFIRMED via user request. */
+    .tep-rf-ap .ap-lb { order: 1; }
+    .tep-rf-ap .tep-rf-serving { order: 2; margin-top: 0; }
+    .tep-rf-ap .ap-ic { order: 3; margin-top: 4px; }
+    .tep-rf-ap .tep-ap-band { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 5px; }
+    /* Flat: the icon's centre is the point (the icon is 55px tall). */
+    .tep-rf-ap:not(.is-lifted) { transform-origin: 50% calc(100% - 27.5px);
+      transform: translate(-50%, calc(-100% + 27.5px)) scale(var(--tep-zinv, 1)); }
     .tep-rf-fp.is-hot, .tep-rf-fp.is-sel { fill-opacity: .4; stroke-opacity: 1; }
     .tep-rf-tilt { position: absolute; top: 12px; left: 12px; z-index: 8; padding: 5px 11px; border-radius: 7px; cursor: pointer;
       font: inherit; font-size: var(--rf-label); font-weight: 800; letter-spacing: .04em; color: var(--tdt-ink2);
@@ -4931,9 +4958,39 @@
     .tep-rf-tl-key.is-hot, .tep-rf-tl-key.is-sel { background: var(--tdt-surface2); color: var(--tdt-ink); }
     /* The slot at the top of the rail. Empty, it is one quiet line of help. */
     .tep-rf-detail:empty { display: none; }
-    .tep-rf-hint { display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border-radius: 10px;
-      border: 1px dashed var(--tdt-line); color: var(--tdt-ink4); font-size: var(--rf-label); line-height: 1.5; }
-    .tep-rf-hint svg { flex: 0 0 auto; margin-top: 2px; color: var(--tdt-ink3); }
+    /* Search at the top of the rail. */
+    .tep-rf-search { display: flex; flex-direction: column; gap: 6px; }
+    .tep-rf-search .rs-box { display: flex; align-items: center; gap: 8px; padding: 0 9px 0 11px; height: 36px; border-radius: 10px;
+      background: var(--tdt-surface); border: 1px solid var(--tdt-line2); color: var(--tdt-ink3); }
+    .tep-rf-search .rs-box:focus-within { border-color: var(--tep-orange); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tep-orange) 18%, transparent); color: var(--tdt-ink2); }
+    .tep-rf-q { flex: 1 1 auto; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; padding: 0;
+      font: inherit; font-size: var(--rf-body); color: var(--tdt-ink); }
+    .tep-rf-q::placeholder { color: var(--tdt-ink4); }
+    .tep-rf-search .rs-n { flex: 0 0 auto; font-size: var(--rf-label); font-weight: 700; color: var(--tdt-ink3); white-space: nowrap; }
+    .tep-rf-search .rs-n.is-none { color: var(--tdt-warn); }
+    .tep-rf-search .rs-x { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border-radius: 6px; cursor: pointer; display: grid; place-items: center;
+      font-size: var(--rf-label); color: var(--tdt-ink3); background: transparent; border: 1px solid transparent; }
+    .tep-rf-search .rs-x:hover { color: var(--tdt-ink); border-color: var(--tdt-line2); }
+    .tep-rf-search .rs-x[hidden] { display: none; }
+    .tep-rf-hits:empty { display: none; }
+    .tep-rf-hits { display: flex; flex-direction: column; gap: 1px; background: var(--tdt-line); border: 1px solid var(--tdt-line2);
+      border-radius: 10px; overflow: hidden; }
+    .tep-rf-hit { display: flex; align-items: center; gap: 9px; padding: 8px 10px; cursor: pointer; background: var(--tdt-ground2); outline: none; }
+    .tep-rf-hit:hover, .tep-rf-hit:focus-visible, .tep-rf-hit.is-hot { background: var(--tdt-surface2); }
+    .tep-rf-hit .r-key { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 2px; }
+    .tep-rf-hit .h-eye { flex: 0 0 auto; display: inline-flex; color: var(--tep-orange); }
+    .tep-rf-hit .h-tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .tep-rf-hit .h-nm { font-size: var(--rf-body); font-weight: 700; color: var(--tdt-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-rf-hit .h-sub { font-size: var(--rf-label); color: var(--tdt-ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tep-rf-hit .h-v { flex: 0 0 auto; font-size: var(--rf-body); font-weight: 800; white-space: nowrap; }
+    .tep-rf-hit .h-v em { font-style: normal; font-size: var(--rf-micro); font-weight: 700; color: var(--tdt-ink4); margin-left: 2px; }
+    .tep-rf-hits .h-more { padding: 6px 10px; font-size: var(--rf-label); color: var(--tdt-ink4); background: var(--tdt-ground2); }
+    /* While searching, what does not match steps back. */
+    .tep-rf-body.rf-has-q .tep-rf-ap:not(.is-q):not(.is-sel):not(.is-hot) { opacity: .22; }
+    .tep-rf-body.rf-has-q .tep-rf-fp:not(.is-q) { opacity: .25; }
+    .tep-rf-body.rf-has-q .tep-rf-row:not(.is-q), .tep-rf-body.rf-has-q .tep-rf-pf-row:not(.is-q),
+    .tep-rf-body.rf-has-q .tep-rf-tl-key:not(.is-q) { opacity: .35; }
+    .tep-rf-body.rf-has-q .tep-rf-tl-cell[data-bssid]:not(.is-q) u { opacity: .18; }
     .tep-rf-pin { border-color: color-mix(in srgb, var(--tdt-ink) 38%, var(--tdt-line));
       box-shadow: 0 0 0 1px color-mix(in srgb, var(--tdt-ink) 10%, transparent), 0 10px 30px -12px rgba(0,0,0,.7); }
     .tep-rf-pin-hd { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
@@ -4976,6 +5033,12 @@
       background: color-mix(in srgb, var(--tdt-ac) 30%, transparent); border: 1px solid color-mix(in srgb, var(--tdt-ac) 70%, transparent); }
     .tep-rf-depth-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--tdt-ac) 48%, transparent); }
     .tep-rf-depth-btn:disabled { opacity: .6; cursor: progress; }
+    /* More to read: the button breathes so it is plain that it does something. */
+    .tep-rf-depth-btn.is-more:not(:disabled) { animation: tep-rf-more 1.9s ease-in-out infinite; }
+    @keyframes tep-rf-more {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tdt-ac) 55%, transparent); }
+      60% { box-shadow: 0 0 0 7px transparent; background: color-mix(in srgb, var(--tdt-ac) 46%, transparent); } }
+    @media (prefers-reduced-motion: reduce) { .tep-rf-depth-btn.is-more { animation: none; } }
     /* ---- performance by BSSID ---- */
     .tep-rf-trend { display: block; width: 100%; height: 100%; overflow: visible; }
     .tep-rf-sparkbox .tep-rf-trend { height: 34px; }
@@ -5102,6 +5165,10 @@
     .tep-ap-ssid { font-size: var(--rf-label); color: var(--tdt-ink2); background: rgba(255,255,255,.05); border: 1px solid var(--tdt-line); border-radius: 999px; padding: 1px 7px; }
     .tep-ap-ssid--link { cursor: pointer; transition: color .12s ease, background .12s ease, border-color .12s ease; }
     .tep-ap-ssid--link:hover { color: var(--tdt-ac); background: color-mix(in srgb, var(--tdt-ac) 18%, transparent); border-color: color-mix(in srgb, var(--tdt-ac) 55%, var(--tdt-line)); }
+    /* Addresses (MAC/BSSID) stay monospace in the wireless view, as IPs do on
+       the map. Last in this sheet so it outranks the per-element rules above. */
+    .tep-rf-overlay .tt-ip, .tep-rf-overlay .tep-rf-pin-sub, .tep-rf-overlay .ap-lb, .tep-rf-overlay .tep-rf-row .r-nm,
+    .tep-rf-overlay .pf-nm, .tep-rf-overlay .tep-rf-tl-key, .tep-rf-overlay .tep-rf-assoc-m { font-family: var(--rf-addr); }
     /* ---- faceplate ---- */
     /* A full-width faceplate is wider than the base 250px node cap, so the ports
        ran straight out of the node box. Widened to fit them: the widest possible
@@ -24667,27 +24734,27 @@
    *  inventing data. CONFIRMED via user request (the past hour, not too many
    *  pulls).
    *
-   *  1. A SKETCH: a spread of rounds across the hour instead of every one.
-   *     The newest three are always read (the current association has to be
-   *     right), then the rest step back at an uneven 4-5 minute spacing. Uneven
-   *     on purpose: a testing AP walks its BSSIDs on a fixed cycle, and an even
-   *     stride that happens to divide that cycle would land on the same BSSID
-   *     every time. This list reaches every residue of every cycle length from
-   *     2 to 8. Charts join the measured points and say so; every minute is
-   *     filled in on request.
+   *  1. A FIRST READ of the newest TEP_EP_WIRELESS_FIRST_MIN minutes, every
+   *     minute of them. (It began as 16 minutes spread across the hour; the
+   *     user found that too light. CONFIRMED via user request: at least 30
+   *     minutes on the first run.) The view says so and offers the rest: the
+   *     full hour, then the hour before it, up to TEP_WL_MAX_WIN minutes.
    *  2. A ROUND STORE: a round that is old enough no longer changes, so it is
    *     kept and never asked for again. Re-opening a view, refreshing it, or
-   *     going from the sketch to every minute only pulls what is missing. */
-  const TEP_EP_WIRELESS_SKETCH = [0, 1, 2, 6, 11, 15, 20, 24, 29, 33, 38, 42, 47, 51, 55, 58];
+   *     reading further back only pulls what is missing. */
+  const TEP_EP_WIRELESS_FIRST_MIN = 30;
+  const TEP_WL_MAX_WIN = 120;         // how far back "read more" can reach, in minutes
   const TEP_WL_SETTLE_S = 600;        // a round older than this is final. Endpoint agents upload late, so 10 min, not 2
   const TEP_WL_FRESH_MS = 60 * 1000;  // a younger round may be reused this long, then is read again
-  const TEP_WL_KEEP_S = 2 * 3600;     // rounds older than this are dropped from the store
+  const TEP_WL_KEEP_S = 3 * 3600;     // rounds older than this are dropped from the store (past the 2-hour window)
   const TEP_WL_STORE_MAX_ELS = 250;   // a round with more records than this is not kept (account-wide polls on big tenants)
   const tepWlRoundStore = new Map();  // 'aid|roundId' -> [{ ids:Set|null, complete, settled, ts, els }]
-  /** Offsets (0 = newest round) a poll of this depth reads. */
-  function tepWirelessPlan(depth) {
-    if (depth === 'sketch') return TEP_EP_WIRELESS_SKETCH.filter((o) => o < TEP_EP_WIRELESS_SAMPLES);
-    const all = []; for (let o = 0; o < TEP_EP_WIRELESS_SAMPLES; o++) all.push(o);
+  /** Offsets (0 = newest round) a poll of this depth reads, over a window of
+   *  `win` minutes (default an hour). 'sketch' is the first read. */
+  function tepWirelessPlan(depth, win) {
+    const n = win || TEP_EP_WIRELESS_SAMPLES;
+    const upto = depth === 'sketch' ? Math.min(TEP_EP_WIRELESS_FIRST_MIN, n) : n;
+    const all = []; for (let o = 0; o < upto; o++) all.push(o);
     return all;
   }
   /** A stored round that covers this request, or null. `ids` is the machineId
@@ -24731,17 +24798,17 @@
     }
   }
   /** "1 hour" / "20 min" — a DURATION, for counting contexts ("1 hour ago"). */
-  function tepWirelessWindowLabel() {
-    const n = TEP_EP_WIRELESS_SAMPLES;
+  function tepWirelessWindowLabel(win) {
+    const n = win || TEP_EP_WIRELESS_SAMPLES;
     if (n % 60 === 0) { const h = n / 60; return h + ' hour' + (h === 1 ? '' : 's'); }
     return n + ' min';
   }
   /** The same span after "the last", where the numeral reads wrong: "the last
    *  hour", not "the last 1 hour". */
-  function tepWirelessWindowPhrase() {
-    const n = TEP_EP_WIRELESS_SAMPLES;
+  function tepWirelessWindowPhrase(win) {
+    const n = win || TEP_EP_WIRELESS_SAMPLES;
     if (n === 60) return 'hour';
-    return tepWirelessWindowLabel();
+    return tepWirelessWindowLabel(n);
   }
   // Wireless-topology view UI state (large sites): which BSSIDs are expanded to
   // show their clients, the header search term, and a repaint hook the handlers call.
@@ -25200,21 +25267,24 @@
     // every ordinary caller leaves it out and gets the view's current scope.
     const scope = (opts && opts.scope !== undefined) ? opts.scope : tepDevtopoScopeMachineIds;
     const depth = (opts && opts.depth === 'sketch') ? 'sketch' : 'full';
+    // Window, in minutes: an hour unless a caller asks for more (the testing
+    // view's "go back further"), never past TEP_WL_MAX_WIN.
+    const win = Math.max(TEP_EP_WIRELESS_SAMPLES, Math.min(TEP_WL_MAX_WIN, Math.round(Number(opts && opts.win) || TEP_EP_WIRELESS_SAMPLES)));
     const scopeIds = scope && scope.size ? [...scope] : null;
     const scopeKey = scopeIds ? ('n' + scopeIds.length + ':' + scopeIds.slice().sort().join(',')) : 'all';
     // A full-depth result answers a sketch request; never the other way round.
-    const deepEnough = (d) => d === 'full' || depth === 'sketch';
-    if (!force && tepEpWirelessCache && tepEpWirelessCache.round === round0 && tepEpWirelessCache.scopeKey === scopeKey && deepEnough(tepEpWirelessCache.depth || 'full') && (Date.now() - tepEpWirelessCache.ts) < TEP_EP_WIRELESS_CACHE_MS) { if (onRound) { try { onRound(tepEpWirelessCache); } catch (_) { /* */ } } return Promise.resolve(tepEpWirelessCache); }
+    const deepEnough = (d, w) => (w || TEP_EP_WIRELESS_SAMPLES) >= win && (d === 'full' || depth === 'sketch');
+    if (!force && tepEpWirelessCache && tepEpWirelessCache.round === round0 && tepEpWirelessCache.scopeKey === scopeKey && deepEnough(tepEpWirelessCache.depth || 'full', tepEpWirelessCache.win) && (Date.now() - tepEpWirelessCache.ts) < TEP_EP_WIRELESS_CACHE_MS) { if (onRound) { try { onRound(tepEpWirelessCache); } catch (_) { /* */ } } return Promise.resolve(tepEpWirelessCache); }
     if (tepEpWirelessInflight) {
       const fl = tepEpWirelessInflight;
-      if (fl._tepScopeKey === scopeKey && deepEnough(fl._tepDepth || 'full')) {
+      if (fl._tepScopeKey === scopeKey && deepEnough(fl._tepDepth || 'full', fl._tepWin)) {
         if (onRound) fl.then((c) => { try { onRound(c); } catch (_) { /* */ } });
         return fl;
       }
       // A poll for another site, or a shallower one, is running. Its result
       // would not answer this call, so wait for it and then run this one -
       // returning it as-is handed callers another site's records.
-      return fl.catch(() => null).then(() => tepFetchEndpointWirelessMap(force, onRound, { scope: scope || null, depth }));
+      return fl.catch(() => null).then(() => tepFetchEndpointWirelessMap(force, onRound, { scope: scope || null, depth, win }));
     }
     const polled = new Set();   // offsets answered this run, from the network or the store
     let netPulls = 0, storeHits = 0;
@@ -25260,14 +25330,14 @@
             const id = String(machine.machineId);
             // Per-sample signal timeline (index 0 = newest round).
             let hist = histById.get(id);
-            if (!hist) { hist = new Array(TEP_EP_WIRELESS_SAMPLES).fill(null); histById.set(id, hist); }
+            if (!hist) { hist = new Array(win).fill(null); histById.set(id, hist); }
             if (off != null && off >= 0 && off < hist.length) hist[off] = q;
             // Per-sample SERVING BSSID, same indexing. The roam Map below counts
             // how often each AP served but loses the ORDER, so it cannot say
             // whether a client settled on one AP or ping-ponged between two.
             // This keeps the sequence, which is what a roam timeline needs.
             let bhist = bhistById.get(id);
-            if (!bhist) { bhist = new Array(TEP_EP_WIRELESS_SAMPLES).fill(null); bhistById.set(id, bhist); }
+            if (!bhist) { bhist = new Array(win).fill(null); bhistById.set(id, bhist); }
             if (off != null && off >= 0 && off < bhist.length) bhist[off] = bssid;
             // Roaming record: every distinct BSSID this agent used across the window.
             let roam = roamById.get(id);
@@ -25279,7 +25349,7 @@
                 // Per-sample quality for this AP alone (index 0 = newest), so the
                 // hover card can show how THIS radio behaved rather than only the
                 // client's blended average across every AP it used.
-                hist: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null),
+                hist: new Array(win).fill(null),
                 // Client-level metrics ATTRIBUTED to this AP: each round's values
                 // describe the link that was up in that round, and that link was
                 // this AP. Averaged per AP they answer "was it better on the
@@ -25288,9 +25358,9 @@
                 // The same attributed metrics, but kept PER ROUND (index 0 =
                 // newest) so each can be charted over the hour for this BSSID
                 // on its own, not only averaged.
-                ser: { snr: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null), rssi: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null),
-                  tx: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null), thr: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null),
-                  retr: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null), noise: new Array(TEP_EP_WIRELESS_SAMPLES).fill(null) } };
+                ser: { snr: new Array(win).fill(null), rssi: new Array(win).fill(null),
+                  tx: new Array(win).fill(null), thr: new Array(win).fill(null),
+                  retr: new Array(win).fill(null), noise: new Array(win).fill(null) } };
               roam.set(bssid, rap);
             }
             rap.count++;
@@ -25314,7 +25384,7 @@
             // Create once (stable object so the index can point at it), then
             // overwrite the primary fields — the last (newest) round wins.
             let rec = byMachineId.get(id);
-            if (!rec) { rec = { machineId: id, history: hist, bssidHistory: bhist, roam: roam, _curOff: Infinity, polled, depth }; byMachineId.set(id, rec); rec.round0 = round0; }
+            if (!rec) { rec = { machineId: id, history: hist, bssidHistory: bhist, roam: roam, _curOff: Infinity, polled, depth, win }; byMachineId.set(id, rec); rec.round0 = round0; }
             // History above is written by offset and so is order-independent.
             // The scalar fields below describe the CURRENT association, so only
             // a round at least as new as the newest already seen may set them.
@@ -25361,8 +25431,10 @@
         // Poll the N sample rounds OLDEST → NEWEST (the oldest round has settled
         // data, so the first request paints fast); report whether ANY request
         // succeeded (to detect an unsupported filter).
-        const deadline = Date.now() + TEP_EP_WIRELESS_MAX_MS;
-        const plan = tepWirelessPlan(depth);
+        const plan = tepWirelessPlan(depth, win);
+        // The time cap scales with the rounds asked for, so reading two hours
+        // is not cut off at the budget for one.
+        const deadline = Date.now() + TEP_EP_WIRELESS_MAX_MS * Math.max(1, plan.length / TEP_EP_WIRELESS_SAMPLES);
         tepWlStorePrune();
         const runRounds = async (filters, filterIds) => {
           let anyOk = false;
@@ -25400,7 +25472,7 @@
             if (got) {
               // Progressive paint: publish a partial cache (index rebuilt from the
               // current records) so the board appears as soon as the first sample lands.
-              tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, depth: 'partial', polled, byMachineId, index: buildIndex() };
+              tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, depth: 'partial', win, polled, byMachineId, index: buildIndex() };
               if (onRound) { try { onRound(tepEpWirelessCache); } catch (_) { /* */ } }
             }
           }
@@ -25426,19 +25498,19 @@
         const outside = scopeIds ? Array.from(byMachineId.keys()).filter((id) => !scope.has(id)).length : 0;
         const localized = !!(useMachineFilter && !tepEpWirelessFilterUnsupported && outside === 0);
         const inScope = scopeIds ? Array.from(byMachineId.keys()).filter((id) => scope.has(id)).length : byMachineId.size;
-        log('Wireless: ' + byMachineId.size + ' agent(s), last ' + TEP_EP_WIRELESS_SAMPLES + ' min'
+        log('Wireless: ' + byMachineId.size + ' agent(s), last ' + win + ' min'
           + ' · ' + polled.size + ' round(s) read (' + netPulls + ' pulled, ' + storeHits + ' already held' + (depth === 'sketch' ? ', sketch' : '') + ')'
           + (scopeIds ? ' · ' + inScope + ' at this site ' + (localized ? '(server-scoped poll)' : '(filtered locally)') : ' (account-wide)')
           + (byMachineId.size ? ' — ' + Array.from(byMachineId.values()).map((c) => c.name + '=' + c.bssid).join(', ') : ''), 'tep-log-info');
         tepWirelessFlushMetricKeys();
       } finally { if (tepEpWirelessInflight === flight) tepEpWirelessInflight = null; }
       // A deadline can cut a run short; the cache then only claims the depth it reached.
-      const reached = (depth === 'full' && polled.size < TEP_EP_WIRELESS_SAMPLES) ? 'sketch' : depth;
+      const reached = (depth === 'full' && polled.size < win) ? 'sketch' : depth;
       for (const rec of byMachineId.values()) rec.depth = reached;
-      tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, depth: reached, polled, netPulls, storeHits, byMachineId, index: buildIndex() };
+      tepEpWirelessCache = { ts: Date.now(), round: round0, scopeKey, depth: reached, win, polled, netPulls, storeHits, byMachineId, index: buildIndex() };
       return tepEpWirelessCache;
     })();
-    flight._tepScopeKey = scopeKey; flight._tepDepth = depth;
+    flight._tepScopeKey = scopeKey; flight._tepDepth = depth; flight._tepWin = win;
     tepEpWirelessInflight = flight;
     return flight;
   }
@@ -26818,9 +26890,10 @@
     // `polled`: the rounds this record was actually read for (null = all of
     // them). A sketch reads a spread of the hour, so "no sample" and "not
     // read" are different statements and every consumer keeps them apart.
-    const polled = (rec.polled && rec.polled.size < TEP_EP_WIRELESS_SAMPLES) ? rec.polled : null;
+    const win = Array.isArray(rec.history) && rec.history.length ? rec.history.length : TEP_EP_WIRELESS_SAMPLES;
+    const polled = (rec.polled && rec.polled.size < win) ? rec.polled : null;
     return { roaming: aps.length > 1 || ssids > 1, aps, ssids, bssids: aps.length, serving, handoffs, seq, wat: tepIsWatRec(rec),
-      polled, roundsRead: polled ? polled.size : TEP_EP_WIRELESS_SAMPLES, round0: rec.round0 || null };
+      polled, roundsRead: polled ? polled.size : win, win, round0: rec.round0 || null };
   }
 
   /* ── RF analysis ──────────────────────────────────────────────────────────
@@ -27900,7 +27973,8 @@
     const spark = tepRfTrendSvg(tepRfApSeries(ap, 'dbm'), info || { wat }, -95, -35, TEP_RF_RSSI_GOOD, 34);
     // Window coverage: an AP seen in 4 of 60 rounds is a very different
     // statement from one seen in 58, and the average alone hides it.
-    const read = (info && info.roundsRead) || TEP_EP_WIRELESS_SAMPLES;
+    const W = (info && info.win) || TEP_EP_WIRELESS_SAMPLES;
+    const read = (info && info.roundsRead) || W;
     const pct = Math.round((ap.samples / read) * 100);
     const spread = (ap.qMin != null && ap.qMax != null && ap.qMax !== ap.qMin)
       ? ap.qMin + '–' + ap.qMax + '%' : null;
@@ -27910,7 +27984,7 @@
       + '<div class="tt-ip">' + macFmt(ap.bssid) + (ap.channel != null ? ' · ch ' + ap.channel : '')
       + (ap.phyMode ? ' · ' + esc(ap.phyMode) : '') + (ap.vendor ? ' · ' + esc(ap.vendor) : '') + '</div>'
       + (spark ? '<div class="tep-rf-sparkbox" style="color:' + gc + '">' + spark
-        + '<div class="tep-rf-sparkax"><span>' + tepWirelessWindowLabel() + ' ago</span>'
+        + '<div class="tep-rf-sparkax"><span>' + tepWirelessWindowLabel(W) + ' ago</span>'
         + '<span class="tep-rf-sparkt">' + TEP_RF_RSSI_GOOD + ' dBm target</span><span>now</span></div></div>' : '')
       + '<div class="tep-rf-ctab">'
       + row('Signal', nd.dbm != null ? Math.round(nd.dbm) + ' dBm' + (grade ? ' · ' + grade : '') : null, gc)
@@ -27923,7 +27997,7 @@
       + row('Retries', ap.retrans != null ? Math.round(ap.retrans) + '%' : null,
         ap.retrans != null && ap.retrans >= TEP_RF_RETRANS_HIGH ? TEP_RF_GRADE_COLOR.bad : '')
       + (wat ? '' : row('Roamed onto', ap.roamIn ? ap.roamIn + '\u00d7' : (serving ? 'held throughout' : null), ''))
-      + row(wat ? 'Tested in' : 'Associated', ap.samples + ' of ' + read + (wat ? ' rounds' : ' min') + (read < TEP_EP_WIRELESS_SAMPLES ? ' read' : '') + ' <i>(' + pct + '%)</i>', '')
+      + row(wat ? 'Tested in' : 'Associated', ap.samples + ' of ' + read + (wat ? ' rounds' : ' min') + (read < W ? ' read' : '') + ' <i>(' + pct + '%)</i>', '')
       + row(wat ? 'Last tested' : 'Last on it', ap.lastAgo != null ? ago(ap.lastAgo) : null, '')
       + row('First seen', ap.firstAgo != null && ap.firstAgo !== ap.lastAgo ? ago(ap.firstAgo) : null, '')
       + '</div>'
@@ -27951,8 +28025,8 @@
   function tepRfHeadSubText(info) {
     const s = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
     return info.wat
-      ? s(info.bssids, 'BSSID') + ' tested \u00b7 ' + s(info.ssids, 'SSID') + ' \u00b7 last ' + tepWirelessWindowPhrase()
-      : s(info.bssids, 'access point') + ' \u00b7 ' + s(info.ssids, 'SSID') + ' \u00b7 ' + s(info.handoffs, 'handoff') + ' in the last ' + tepWirelessWindowPhrase();
+      ? s(info.bssids, 'BSSID') + ' tested \u00b7 ' + s(info.ssids, 'SSID') + ' \u00b7 last ' + tepWirelessWindowPhrase(info.win)
+      : s(info.bssids, 'access point') + ' \u00b7 ' + s(info.ssids, 'SSID') + ' \u00b7 ' + s(info.handoffs, 'handoff') + ' in the last ' + tepWirelessWindowPhrase(info.win);
   }
   function tepRfEyebrowText(info) { return info.wat ? 'Wireless Active Testing' : 'Wireless \u00b7 roaming client'; }
 
@@ -27972,6 +28046,29 @@
     body._tepRf = { rec, info, facts: facts || (prev && prev.facts) || null, sel: keep ? prev.sel : null, hot: undefined };
     tepRfHot(body, null);   // a hover mark from the previous record must not outlive it
     tepRfRailAttach(body);
+    if (!body._tepRfSearchWired && body.addEventListener) {
+      body._tepRfSearchWired = true;
+      body.addEventListener('input', (e) => {
+        if (!e.target.classList || !e.target.classList.contains('tep-rf-q')) return;
+        body._tepRfQ = e.target.value; body._tepRfQOpen = true;
+        tepRfSearchApply(body);
+      });
+      body.addEventListener('focusin', (e) => {
+        if (e.target.classList && e.target.classList.contains('tep-rf-q') && e.target.value) { body._tepRfQOpen = true; tepRfSearchApply(body); }
+      });
+      body.addEventListener('keydown', (e) => {
+        if (!e.target.classList || !e.target.classList.contains('tep-rf-q')) return;
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.target.value = ''; body._tepRfQ = ''; tepRfSearchApply(body); e.target.blur(); }
+        else if (e.key === 'Enter') {
+          e.preventDefault();
+          const first = body.querySelector('.tep-rf-hit[data-bssid]');
+          if (first) { body._tepRfQOpen = false; tepRfSelect(body, first.getAttribute('data-bssid')); tepRfSearchApply(body); }
+        } else if (e.key === 'ArrowDown') {
+          const first = body.querySelector('.tep-rf-hit');
+          if (first) { e.preventDefault(); first.focus(); }
+        }
+      });
+    }
     if (!body._tepRfWired) {
       body._tepRfWired = true;
       const railKey = (t) => { const el = t && t.closest ? t.closest('.tep-rf-rail [data-bssid]') : null; return el ? el.getAttribute('data-bssid') : null; };
@@ -27984,7 +28081,8 @@
         const r = ch.getBoundingClientRect();
         if (!r.width) return;
         const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-        tepRfPerfReadout(body, Math.round((1 - f) * (TEP_EP_WIRELESS_SAMPLES - 1)));
+        const wn = (body._tepRf && body._tepRf.info && body._tepRf.info.win) || TEP_EP_WIRELESS_SAMPLES;
+        tepRfPerfReadout(body, Math.round((1 - f) * (wn - 1)));
       });
       body.addEventListener('click', (e) => {
         if (!e.target.closest || !e.target.closest('.tep-rf-rail')) return;
@@ -28002,21 +28100,28 @@
           e.preventDefault();
           if (what === 'close') tepRfSelect(body, null);
           else if (what === 'name') tepRfNameEdit(body);
+          else if (what === 'qclear') { body._tepRfQ = ''; body._tepRfQOpen = false; tepRfSearchApply(body); const qi = body.querySelector('.tep-rf-q'); if (qi) { qi.value = ''; qi.focus(); } }
           else if (what === 'names') tepApNamesDialog({ bssids: ((body._tepRf && body._tepRf.info && body._tepRf.info.aps) || []).map((a) => a.bssid) });
           else if (what === 'fill' && body._tepRfHost && body._tepRfHost.fill && !act.disabled) { act.disabled = true; act.textContent = 'Reading\u2026'; body._tepRfHost.fill(); }
           return;
         }
         if (e.target.closest('a') || e.target.closest('.tep-rf-pin')) return;
         const k = railKey(e.target);
+        if (k && e.target.closest('.tep-rf-hit')) { body._tepRfQOpen = false; tepRfSelect(body, k); tepRfSearchApply(body); return; }
         if (k) tepRfSelect(body, k);
       });
       body.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
-        const el = e.target.closest ? e.target.closest('.tep-rf-rail [data-bssid][role="button"]') : null;
-        if (el) { e.preventDefault(); tepRfSelect(body, el.getAttribute('data-bssid')); }
+        const el = e.target.closest ? e.target.closest('.tep-rf-rail [data-bssid][role="button"], .tep-rf-hit[data-bssid]') : null;
+        if (el) {
+          e.preventDefault();
+          if (el.classList.contains('tep-rf-hit')) { body._tepRfQOpen = false; tepRfSelect(body, el.getAttribute('data-bssid')); tepRfSearchApply(body); }
+          else tepRfSelect(body, el.getAttribute('data-bssid'));
+        }
       });
     }
     tepRfApplySel(body, false);
+    tepRfSearchApply(body);
   }
   /** Turn the pinned AP's name into a field. Enter keeps it, Escape leaves it,
    *  an empty name goes back to whatever the other sources say. The name is
@@ -28077,15 +28182,90 @@
     if (slot) {
       const ap = (sel && sel !== 'hub') ? st.info.aps.find((a) => a.bssid === sel) : null;
       slot.innerHTML = sel === 'hub' ? tepRfHubDetailHtml(st.rec, st.info, st.facts)
-        : ap ? tepRfApDetailHtml(ap, st.info, st.rec) : tepRfDetailHintHtml(st.info);
+        : ap ? tepRfApDetailHtml(ap, st.info, st.rec) : '';
     }
     if (sel != null) for (const el of body.querySelectorAll('[data-bssid="' + sel + '"]')) el.classList.add('is-sel');
     if (scroll && sel != null) { const rail = body.querySelector('.tep-rf-rail'); if (rail) rail.scrollTop = 0; }
   }
-  function tepRfDetailHintHtml(info) {
-    return '<div class="tep-rf-hint"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V12m0-1a1.5 1.5 0 0 1 3 0v4.5a6 6 0 0 1-6 6h-.6a5 5 0 0 1-4-2L4.6 15a1.6 1.6 0 0 1 2.5-2L9 14.8"/></svg>'
-      + '<span>Click an access point, a timeline bar or ' + (info && info.wat ? 'the testing AP' : 'the client') + ' at the centre to pin its full detail here.</span></div>';
+  /* ── Search ─────────────────────────────────────────────────────────────
+   *  The top of the rail finds access points in this view: by name (imported
+   *  or typed), MAC/BSSID in any format, SSID, channel, band, PHY mode,
+   *  vendor, or how good the signal is ("voice", "weak", "hole"). Typing dims
+   *  everything that does not match - on the plot, in the table, the charts
+   *  and the timeline - and lists the matches; picking one pins it, like a
+   *  click on the plot. It replaced a line of help text. CONFIRMED via user
+   *  request (that space as a search for AP names and other terms).
+   *  The query lives on the view's body, so a repaint or a refresh of the
+   *  record keeps it. */
+  const TEP_RF_GRADE_WORDS = { good: 'good voice video strong', fair: 'fair data ok', poor: 'poor weak', bad: 'bad hole coverage-hole' };
+  function tepRfSearchHay(ap, info) {
+    const mac = ap.bssid ? ap.bssid.match(/../g).join(':') : '';
+    const g = tepRfRssiGrade(tepRfDbm(ap));
+    const band = tepWirelessBand(ap.channel) || '';
+    return [ap.apName || '', mac, tepRfApShort(ap), ap.ssid || '', ap.channel != null ? 'ch' + ap.channel + ' ch ' + ap.channel + ' channel ' + ap.channel : '',
+      band, band.replace(/\s+/g, ''), ap.phyMode || '', ap.vendor || '', g ? TEP_RF_GRADE_WORDS[g] : '',
+      ap.serving ? (info && info.wat ? 'latest' : 'associated serving') : ''].join(' ').toLowerCase();
   }
+  /** { aps: [ap...], hub: bool } for a query. Every word must match. A bare
+   *  number up to 3 digits is a channel; anything that looks like part of a
+   *  MAC is also tried against the BSSID with its separators stripped. */
+  function tepRfSearchMatches(info, rec, q) {
+    const words = String(q || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return null;
+    const test = (hay, hex, ch, name) => words.every((w) => {
+      // A short number is a channel - or part of the AP's name ("AP 205"),
+      // never a fragment of a MAC.
+      if (/^\d{1,3}$/.test(w) && ch != null) return String(ch) === w || hay.indexOf(w + ' ghz') >= 0 || (!!name && name.toLowerCase().indexOf(w) >= 0);
+      if (hay.indexOf(w) >= 0) return true;
+      const hx = /^[0-9a-f:.\-]{2,}$/.test(w) ? w.replace(/[^0-9a-f]/g, '') : '';
+      return !!(hx && hex && hex.indexOf(hx) >= 0);
+    });
+    const aps = ((info && info.aps) || []).filter((ap) => test(tepRfSearchHay(ap, info), ap.bssid || '', ap.channel, ap.apName || ''));
+    const hubHay = [rec && rec.name, info && info.wat ? 'testing ap tester agent eye' : 'client agent', rec && rec.platform].join(' ').toLowerCase();
+    return { aps, hub: test(hubHay, '', null) };
+  }
+  function tepRfSearchHtml() {
+    return '<div class="tep-rf-search"><div class="rs-box">'
+      + '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
+      + '<input type="text" class="tep-rf-q" placeholder="Search APs: name, MAC, SSID, channel, band…" autocomplete="off" spellcheck="false" aria-label="Search access points in this view">'
+      + '<span class="rs-n" aria-live="polite"></span>'
+      + '<button type="button" class="rs-x" data-rf-act="qclear" aria-label="Clear the search" hidden>✕</button></div>'
+      + '<div class="tep-rf-hits" role="listbox"></div></div>';
+  }
+  /** Mark matches across the view and list them. */
+  function tepRfSearchApply(body) {
+    if (!body || !body._tepRf || !body.querySelectorAll) return;
+    const st = body._tepRf, q = body._tepRfQ || '';
+    const inp = body.querySelector('.tep-rf-q'), n = body.querySelector('.rs-n'), x = body.querySelector('.rs-x'), list = body.querySelector('.tep-rf-hits');
+    if (inp && inp.value !== q && document.activeElement !== inp) inp.value = q;
+    for (const el of body.querySelectorAll('.is-q')) el.classList.remove('is-q');
+    const m = q.trim() ? tepRfSearchMatches(st.info, st.rec, q) : null;
+    body.classList.toggle('rf-has-q', !!m);
+    if (x) x.hidden = !q;
+    if (!m) { if (n) n.textContent = ''; if (list) list.innerHTML = ''; return; }
+    const keys = m.aps.map((a) => a.bssid).concat(m.hub ? ['hub'] : []);
+    for (const k of keys) for (const el of body.querySelectorAll('[data-bssid="' + k + '"]')) el.classList.add('is-q');
+    const total = (st.info.aps || []).length;
+    if (n) {
+      n.textContent = m.aps.length ? m.aps.length + ' of ' + total : m.hub ? (st.info.wat ? 'the testing AP' : 'the client') : 'No match';
+      n.classList.toggle('is-none', !m.aps.length && !m.hub);
+    }
+    if (!list) return;
+    if (!body._tepRfQOpen) { list.innerHTML = ''; return; }
+    const esc = tepEscapeHtmlText;
+    const rows = m.aps.slice(0, 8).map((a) => {
+      const d = tepRfDbm(a), g = tepRfRssiGrade(d), band = tepWirelessBand(a.channel);
+      return '<div class="tep-rf-hit" role="option" tabindex="0" data-bssid="' + esc(a.bssid) + '">'
+        + '<b class="r-key" style="background:' + tepRfApColor(st.info, a.bssid) + '"></b>'
+        + '<span class="h-tx"><span class="h-nm">' + esc(tepRfApShort(a)) + '</span>'
+        + '<span class="h-sub">' + esc([a.ssid, a.channel != null ? 'ch ' + a.channel : '', band].filter(Boolean).join(' · ')) + '</span></span>'
+        + '<span class="h-v" style="color:' + (g ? TEP_RF_GRADE_COLOR[g] : 'var(--tdt-unk)') + '">' + (d != null ? Math.round(d) + '<em>dBm</em>' : '') + '</span></div>';
+    });
+    if (m.hub) rows.unshift('<div class="tep-rf-hit" role="option" tabindex="0" data-bssid="hub"><span class="h-eye"><svg viewBox="0 0 24 24" width="16" height="16">' + tepRfEyeIconInner() + '</svg></span>'
+      + '<span class="h-tx"><span class="h-nm">' + esc(st.rec.name || '') + '</span><span class="h-sub">' + (st.info.wat ? 'the testing AP' : 'the client') + '</span></span></div>');
+    list.innerHTML = rows.join('') + (m.aps.length > 8 ? '<div class="h-more">and ' + (m.aps.length - 8) + ' more - narrow the search</div>' : '');
+  }
+
   /** The pinned detail for ONE access point - everything the hover card says,
    *  plus a larger history, a plain verdict, where it ranks against the others
    *  and the way out to ThousandEyes. */
@@ -28111,7 +28291,7 @@
     if (ranked.length > 1 && pos === 0) versus = 'Strongest of the ' + ranked.length + ', ' + Math.round(ranked[0].d - ranked[1].d) + ' dB ahead of ' + esc(tepRfApShort(ranked[1].a)) + '.';
     else if (ranked.length > 1 && pos > 0) versus = 'No. ' + (pos + 1) + ' of ' + ranked.length + ' by signal, ' + Math.round(ranked[0].d - d) + ' dB behind ' + esc(tepRfApShort(ranked[0].a)) + '.';
     const spark = tepRfTrendSvg(tepRfApSeries(ap, 'dbm'), info, -95, -35, TEP_RF_RSSI_GOOD, 48);
-    const read = info.roundsRead || TEP_EP_WIRELESS_SAMPLES;
+    const read = info.roundsRead || info.win || TEP_EP_WIRELESS_SAMPLES;
     const pct = Math.round((ap.samples / read) * 100);
     const spread = (ap.qMin != null && ap.qMax != null && ap.qMax !== ap.qMin) ? ap.qMin + '\u2013' + ap.qMax + '%' : null;
     const dist = d != null ? tepRfDistanceM(d) : null;
@@ -28140,7 +28320,7 @@
       + (ap.phyMode ? ' \u00b7 ' + esc(ap.phyMode) : '') + (ap.vendor ? ' \u00b7 ' + esc(ap.vendor) : '') + '</div>'
       + (verdict ? '<div class="tep-rf-verdict" style="color:' + gc + '">' + verdict + '</div>' : '')
       + (spark ? '<div class="tep-rf-sparkbox tep-rf-sparkbox--lg" style="color:' + gc + '">' + spark
-        + '<div class="tep-rf-sparkax"><span>' + tepRfClock(info, TEP_EP_WIRELESS_SAMPLES - 1) + '</span>'
+        + '<div class="tep-rf-sparkax"><span>' + tepRfClock(info, (info.win || TEP_EP_WIRELESS_SAMPLES) - 1) + '</span>'
         + '<span class="tep-rf-sparkt">' + TEP_RF_RSSI_GOOD + ' dBm target</span><span>' + tepRfClock(info, 0) + '</span></div></div>' : '')
       + '<div class="tep-rf-stats">' + stats + '</div>'
       + (versus ? '<div class="tep-rf-versus">' + versus + '</div>' : '')
@@ -28173,7 +28353,7 @@
       + row(wat ? 'BSSIDs tested' : 'Access points used', info.bssids)
       + row(ssids.length === 1 ? 'SSID' : 'SSIDs', ssids.join(', '))
       + row(bands.length === 1 ? 'Band' : 'Bands', bands.join(', '))
-      + row('Rounds with data', rounds != null ? rounds + ' of ' + (info.roundsRead || TEP_EP_WIRELESS_SAMPLES) + (info.polled ? ' read' : '') : null)
+      + row('Rounds with data', rounds != null ? rounds + ' of ' + (info.roundsRead || info.win || TEP_EP_WIRELESS_SAMPLES) + (info.polled ? ' read' : '') : null)
       + (wat ? '' : row('Handoffs', info.handoffs))
       + row('Connection failures', rec.connFails != null && rec.connFails > 0 ? rec.connFails : null)
       + row('Model', f.model) + row('Platform', f.platform) + row('Software', f.software) + row('Agent version', f.agentVersion)
@@ -28224,7 +28404,7 @@
   let tepRfPerfMetric = 'dbm';   // the metric last picked; survives a repaint and the next view
   /** One metric for one access point, per round (index 0 = newest). */
   function tepRfApSeries(ap, key) {
-    const n = TEP_EP_WIRELESS_SAMPLES, out = new Array(n).fill(null);
+    const n = (ap && Array.isArray(ap.hist) && ap.hist.length) || TEP_EP_WIRELESS_SAMPLES, out = new Array(n).fill(null);
     const ser = (ap && ap.ser) || null, hist = (ap && ap.hist) || null;
     for (let j = 0; j < n; j++) {
       let v = null;
@@ -28375,7 +28555,7 @@
     }).join('');
     const tabs = avail.length > 1 ? '<div class="tep-rf-pf-tabs" role="group" aria-label="Metric">' + avail.map((x) =>
       '<button type="button" class="tep-rf-pf-tab" data-rf-metric="' + x.key + '" aria-pressed="' + (x.key === m.key) + '">' + esc(x.label) + '</button>').join('') + '</div>' : '';
-    const N = TEP_EP_WIRELESS_SAMPLES - 1;
+    const N = (info.win || TEP_EP_WIRELESS_SAMPLES) - 1;
     const ax = [N, Math.round(N * .75), Math.round(N * .5), Math.round(N * .25), 0].map((mm) => '<span>' + tepRfClock(info, mm) + '</span>').join('');
     return '<div class="tep-rf-block tep-rf-perf" data-metric="' + m.key + '">'
       + '<div class="tep-rf-hd">' + (info.wat ? 'Performance by BSSID' : 'Performance by access point')
@@ -28408,7 +28588,7 @@
       }
       return;
     }
-    const N = TEP_EP_WIRELESS_SAMPLES - 1;
+    const N = ((st.info && st.info.win) || TEP_EP_WIRELESS_SAMPLES) - 1;
     perf.style.setProperty('--pf-x', (((N - j) / N) * 100).toFixed(2) + '%');
     if (at) at.textContent = tepRfClock(st.info, j) + ' \u00b7 ' + (j === 0 ? 'now' : j + ' min ago');
     for (const row of perf.querySelectorAll('.tep-rf-pf-row[data-bssid]')) {
@@ -28422,11 +28602,30 @@
     }
   }
   /** Said once, plainly, when the hour was sketched rather than read in full. */
+  /** The "read more" strip. A testing AP opens on its newest
+   *  TEP_EP_WIRELESS_FIRST_MIN minutes; one press fills the hour, the next
+   *  reaches back to TEP_WL_MAX_WIN minutes. While there is more to read the
+   *  button pulses, so it is plain that it does something. CONFIRMED via user
+   *  request. A client (whose hour is always read in full) gets the strip only
+   *  if a poll was cut short. */
+  function tepRfDepthNext(info) {
+    if (!info) return null;
+    const W = info.win || TEP_EP_WIRELESS_SAMPLES;
+    if (info.polled) return { win: W, more: W - info.roundsRead };
+    if (info.wat && W < TEP_WL_MAX_WIN) return { win: TEP_WL_MAX_WIN, more: TEP_WL_MAX_WIN - W };
+    return null;
+  }
   function tepRfDepthHtml(info) {
-    if (!info || !info.polled) return '';
-    return '<div class="tep-rf-depth"><span><b>' + info.roundsRead + ' of ' + TEP_EP_WIRELESS_SAMPLES + ' minutes read</b> to keep the pull light. '
-      + 'Lines join the readings; dashes are estimates.</span>'
-      + '<button type="button" class="tep-rf-depth-btn" data-rf-act="fill" title="Pull the ' + (TEP_EP_WIRELESS_SAMPLES - info.roundsRead) + ' minutes not read yet. Rounds already read are not pulled again.">Read every minute</button></div>';
+    const nx = tepRfDepthNext(info);
+    if (!nx) return '';
+    const W = info.win || TEP_EP_WIRELESS_SAMPLES;
+    const span = (m) => m % 60 === 0 ? (m / 60) + ' hour' + (m === 60 ? '' : 's') : m + ' minutes';
+    const msg = info.polled
+      ? '<b>' + (info.roundsRead === TEP_EP_WIRELESS_FIRST_MIN && W === TEP_EP_WIRELESS_SAMPLES ? 'The last 30 minutes read' : info.roundsRead + ' of ' + W + ' minutes read') + '</b>, every minute. The rest of the ' + tepWirelessWindowPhrase(W) + ' is a click away.'
+      : '<b>The last ' + tepWirelessWindowPhrase(W) + ' read</b>, every minute. You can go back further.';
+    const label = info.polled ? 'Read the full ' + span(W).replace(/^1 /, '') : 'Go back ' + span(nx.win);
+    return '<div class="tep-rf-depth"><span>' + msg + '</span>'
+      + '<button type="button" class="tep-rf-depth-btn is-more" data-rf-act="fill" title="Pull ' + nx.more + ' more minutes. Minutes already read are not pulled again.">' + label + '</button></div>';
   }
   /* ── The rail can be widened ──────────────────────────────────────────────
    *  At 308px the rail truncates names and squeezes the charts. A grip on its
@@ -28434,22 +28633,31 @@
    *  grip, jumps between the default and a wide setting. The rail's own blocks
    *  respond to the width they are given (container queries in the stylesheet).
    *  CONFIRMED via user request. */
-  const TEP_RF_RAIL_W_KEY = 'tepRfRailW';
-  const TEP_RF_RAIL_W_DEF = 308;
+  /* Width is kept as a SHARE of the view, so it scales with the window:
+     30% by default, and a width dragged to is remembered as a share too.
+     (It used to be a fixed 308px, then 340px; those saved pixel widths are
+     left behind under the old key.) CONFIRMED via user request. */
+  const TEP_RF_RAIL_W_KEY = 'tepRfRailPct';
+  const TEP_RF_RAIL_PCT_DEF = 30;
+  const TEP_RF_RAIL_PCT_WIDE = 45;   // what double-clicking the grip jumps to
   const TEP_RF_RAIL_W_MIN = 280;
-  const TEP_RF_RAIL_W_WIDE = 600;
   const TEP_RF_RAIL_KEEP_PLOT = 340;   // the radar never gets less than this
   function tepRfRailSetW(body, px, persist) {
     if (!body || !body.style) return;
-    const room = (body.clientWidth || 0) - TEP_RF_RAIL_KEEP_PLOT;
+    const bw = body.clientWidth || 0;
+    const room = bw - TEP_RF_RAIL_KEEP_PLOT;
     const max = room > TEP_RF_RAIL_W_MIN ? room : Math.max(TEP_RF_RAIL_W_MIN, px);
     const w = Math.round(Math.max(TEP_RF_RAIL_W_MIN, Math.min(max, px)));
-    body.style.setProperty('--rf-rail-w', w + 'px');
+    const pct = bw > 0 ? (w / bw) * 100 : TEP_RF_RAIL_PCT_DEF;
+    body.style.setProperty('--rf-rail-w', bw > 0 ? pct.toFixed(2) + '%' : TEP_RF_RAIL_PCT_DEF + '%');
     body._tepRfRailW = w;
+    body._tepRfRailPct = pct;
     const grip = body.querySelector ? body.querySelector('.tep-rf-grip') : null;
-    if (grip) grip.setAttribute('aria-valuenow', String(w));
-    if (persist) { try { localStorage.setItem(TEP_RF_RAIL_W_KEY, String(w)); } catch (_) { /* */ } }
+    if (grip) grip.setAttribute('aria-valuenow', String(Math.round(pct)));
+    if (persist) { try { localStorage.setItem(TEP_RF_RAIL_W_KEY, pct.toFixed(2)); } catch (_) { /* */ } }
   }
+  /** The view's width times a share, in pixels. */
+  function tepRfRailPctPx(body, pct) { return ((body && body.clientWidth) || 0) * pct / 100; }
   /** Tell the view its plot area changed size, the same way a window resize does. */
   function tepRfRailRefit() { try { window.dispatchEvent(new Event('resize')); } catch (_) { /* */ } }
   function tepRfRailAttach(body) {
@@ -28463,13 +28671,15 @@
     grip.title = 'Drag to widen \u00b7 double-click to switch between default and wide';
     rail.parentNode.insertBefore(grip, rail);
     let saved = NaN;
-    try { saved = parseInt(localStorage.getItem(TEP_RF_RAIL_W_KEY), 10); } catch (_) { /* */ }
-    tepRfRailSetW(body, Number.isFinite(saved) ? saved : TEP_RF_RAIL_W_DEF, false);
+    try { saved = parseFloat(localStorage.getItem(TEP_RF_RAIL_W_KEY)); } catch (_) { /* */ }
+    const startPct = Number.isFinite(saved) && saved > 5 && saved < 95 ? saved : TEP_RF_RAIL_PCT_DEF;
+    if (body.clientWidth) tepRfRailSetW(body, tepRfRailPctPx(body, startPct), false);
+    else body.style.setProperty('--rf-rail-w', startPct + '%');
     let drag = null, lastFit = 0;
     grip.addEventListener('pointerdown', (e) => {
       if (e.button != null && e.button !== 0) return;
       e.preventDefault();
-      drag = { x: e.clientX, w: body._tepRfRailW || TEP_RF_RAIL_W_DEF };
+      drag = { x: e.clientX, w: rail.getBoundingClientRect().width || body._tepRfRailW || tepRfRailPctPx(body, TEP_RF_RAIL_PCT_DEF) };
       body.classList.add('rf-resizing');
       try { grip.setPointerCapture(e.pointerId); } catch (_) { /* */ }
     });
@@ -28484,15 +28694,20 @@
       drag = null;
       body.classList.remove('rf-resizing');
       try { grip.releasePointerCapture(e.pointerId); } catch (_) { /* */ }
-      tepRfRailSetW(body, body._tepRfRailW, true);
+      const cur = body.querySelector('.tep-rf-rail');
+      tepRfRailSetW(body, (cur && cur.getBoundingClientRect().width) || body._tepRfRailW, true);
       tepRfRailRefit();
     };
     grip.addEventListener('pointerup', end);
     grip.addEventListener('pointercancel', end);
-    const toggle = () => { tepRfRailSetW(body, (body._tepRfRailW || 0) > TEP_RF_RAIL_W_DEF + 60 ? TEP_RF_RAIL_W_DEF : TEP_RF_RAIL_W_WIDE, true); tepRfRailRefit(); };
+    const toggle = () => {
+      const now = (body._tepRfRailPct != null) ? body._tepRfRailPct : TEP_RF_RAIL_PCT_DEF;
+      tepRfRailSetW(body, tepRfRailPctPx(body, now > TEP_RF_RAIL_PCT_DEF + 5 ? TEP_RF_RAIL_PCT_DEF : TEP_RF_RAIL_PCT_WIDE), true);
+      tepRfRailRefit();
+    };
     grip.addEventListener('dblclick', toggle);
     grip.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); tepRfRailSetW(body, (body._tepRfRailW || TEP_RF_RAIL_W_DEF) + (e.key === 'ArrowLeft' ? 32 : -32), true); tepRfRailRefit(); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); tepRfRailSetW(body, (body.querySelector('.tep-rf-rail').getBoundingClientRect().width || body._tepRfRailW) + (e.key === 'ArrowLeft' ? 32 : -32), true); tepRfRailRefit(); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggle(); }
     });
   }
@@ -28645,7 +28860,7 @@
      preferred the level 54-degree disc, so it is 0. CONFIRMED via user request. */
   const TEP_RF_LEAN_DEG = 0;
   const TEP_RF_PERSP_PX = 1750;    // perspective distance; smaller = stronger foreshortening
-  const TEP_RF_LIFT_PX = 22;       // stem: the gap between an access point's point on the disc and the bottom of its marker
+  const TEP_RF_LIFT_PX = 38;       // stem: the gap between an access point's point on the disc and the bottom of its marker
   const TEP_RF_TILT_KEY = 'tepRfTilt';
   function tepRfTiltOn() {
     try { return localStorage.getItem(TEP_RF_TILT_KEY) !== '0'; } catch (_) { return true; }
@@ -28824,6 +29039,7 @@
         const c = svgEl('circle'); c.setAttribute('cx', CX.toFixed(1)); c.setAttribute('cy', CY.toFixed(1)); c.setAttribute('r', String(TEP_RF_R_OUT));
         c.setAttribute('fill', 'url(#rfrim-' + uid + ')'); c.setAttribute('stroke', 'none'); svg.appendChild(c);
       } }
+    let targetTag = null;   // the voice-target label; kept off markers below
     // ── Scale: plain dBm ticks, plus the one ring that means something ─────
     const scaleX = Math.cos(scaleTh), scaleY = Math.sin(scaleTh);
     const ringVals = [];
@@ -28855,7 +29071,8 @@
       const tag = document.createElement('div'); tag.className = 'tep-rf-target-tag';
       tag.textContent = TEP_RF_RSSI_GOOD + ' dBm \u00b7 voice target';
       tag.title = 'Inside this ring a client has enough signal for voice and video; outside it, data only.';
-      placeP(tag, CX + r * Math.cos(targetTh), CY + r * Math.sin(targetTh)); stage.appendChild(tag); }
+      placeP(tag, CX + r * Math.cos(targetTh), CY + r * Math.sin(targetTh)); stage.appendChild(tag);
+      targetTag = { el: tag, r }; }
     // Bezel: tick marks round the rim, as on a polar plot or a scope. The
     // twelve bearing lines that used to cross the whole field are gone - the
     // only lines inside the rim now are the ones that carry a reading.
@@ -29118,7 +29335,7 @@
     // nearby spots that still read as its own: along its spoke for a reading,
     // along or beside its arc for a tag. Measured rather than predicted -
     // a marker's height depends on its labels.
-    if ((distLbls.length || cciTags.length || nodeEls.length) && stage.querySelectorAll && stage.getBoundingClientRect) {
+    if ((distLbls.length || cciTags.length || nodeEls.length || targetTag) && stage.querySelectorAll && stage.getBoundingClientRect) {
       const hitArea = (r, list) => list.reduce((sum, q) => {
         const w = Math.min(r.right, q.right + 4) - Math.max(r.left, q.left - 4), hh = Math.min(r.bottom, q.bottom + 4) - Math.max(r.top, q.top - 4);
         return sum + (w > 0 && hh > 0 ? w * hh : 0);
@@ -29127,6 +29344,13 @@
       // can land on each other. A marker floats on a stem, so it may step
       // aside - its footprint, the true point, never moves; the stem slants
       // to follow it.
+      // A marker's footprint on screen includes the band pill hanging below it.
+      const markRect = (el) => {
+        const r = el.getBoundingClientRect(), b = el.querySelector ? el.querySelector('.tep-ap-band') : null;
+        if (!b) return r;
+        const q = b.getBoundingClientRect();
+        return { left: Math.min(r.left, q.left), right: Math.max(r.right, q.right), top: Math.min(r.top, q.top), bottom: Math.max(r.bottom, q.bottom) };
+      };
       if (nodeEls.length > 1) {
         const taken = Array.prototype.map.call(stage.querySelectorAll('.tep-agentap-fix'), (el) => el.getBoundingClientRect());
         const steps = [[0, 0], [-56, 0], [56, 0], [0, -46], [-56, -34], [56, -34], [-104, 0], [104, 0], [-90, -50], [90, -50], [0, -96]];
@@ -29134,16 +29358,16 @@
           let best = steps[0], bestA = Infinity;
           for (const sp of steps) {
             place(n.el, n.q[0] + sp[0], n.q[1] + sp[1]);
-            const a = hitArea(n.el.getBoundingClientRect(), taken);
+            const a = hitArea(markRect(n.el), taken);
             if (a < bestA) { bestA = a; best = sp; }
             if (a === 0) break;
           }
           place(n.el, n.q[0] + best[0], n.q[1] + best[1]);
           if (best[0] || best[1]) { n.stem.setAttribute('x2', (n.q[0] + best[0]).toFixed(1)); n.stem.setAttribute('y2', (n.q[1] + best[1] - lift).toFixed(1)); }
-          taken.push(n.el.getBoundingClientRect());
+          taken.push(markRect(n.el));
         }
       }
-      const boxes = Array.prototype.map.call(stage.querySelectorAll('.tep-rf-ap, .tep-agentap-fix'), (el) => el.getBoundingClientRect());
+      const boxes = Array.prototype.map.call(stage.querySelectorAll('.tep-rf-ap, .tep-rf-ap .tep-ap-band, .tep-agentap-fix'), (el) => el.getBoundingClientRect());
       const overlap = (r) => boxes.reduce((sum, q) => {
         const w = Math.min(r.right, q.right + 4) - Math.max(r.left, q.left - 4), hh = Math.min(r.bottom, q.bottom + 4) - Math.max(r.top, q.top - 4);
         return sum + (w > 0 && hh > 0 ? w * hh : 0);
@@ -29163,9 +29387,17 @@
         if (fin && fin.width) boxes.push(fin);   // later words avoid this one too
       };
       for (const d of distLbls) {
-        const nd = d.nd, at = (rr) => [CX + rr * Math.cos(nd.th), CY + rr * Math.sin(nd.th)];
+        const nd = d.nd, at = (rr, dth) => [CX + rr * Math.cos(nd.th + (dth || 0)), CY + rr * Math.sin(nd.th + (dth || 0))];
         const rs = [d.lr, nd.r - 82, nd.r + 62, nd.r - 130, nd.r + 104, nd.r - 52].filter((rr, k, a) => rr >= TEP_RF_R_IN + 30 && a.indexOf(rr) === k);
-        settle(d.el, rs.map(at));
+        // Then beside the spoke, either side, for a marker with no room along it.
+        const side = [];
+        for (const rr of [nd.r, nd.r - 40, nd.r + 40]) for (const dth of [0.22, -0.22, 0.38, -0.38]) if (rr >= TEP_RF_R_IN + 20) side.push(at(rr, dth));
+        settle(d.el, rs.map((rr) => at(rr)).concat(side));
+      }
+      // The voice-target label slides along its own ring to a free spot.
+      if (targetTag) {
+        const offs = [0, 0.14, -0.14, 0.28, -0.28, 0.42, -0.42, 0.6, -0.6];
+        settle(targetTag.el, offs.map((d) => [CX + targetTag.r * Math.cos(targetTh + d), CY + targetTag.r * Math.sin(targetTh + d)]));
       }
       for (const c of cciTags) {
         const at = (t) => [(1 - t) * (1 - t) * c.a.x + 2 * (1 - t) * t * c.bx + t * t * c.b.x, (1 - t) * (1 - t) * c.a.y + 2 * (1 - t) * t * c.by + t * t * c.b.y];
@@ -29227,7 +29459,7 @@
     canvas._tepContentW = stageW; canvas._tepContentH = stageH;
     if (!canvas._tepUserZoomed && canvas._tepPZfit) canvas._tepPZfit(stageW, stageH);
     // New nodes were just created: put the selection and hover marks back.
-    if (body && body._tepRf) { body._tepRf.hot = undefined; tepRfHot(body, null); tepRfApplySel(body, false); }
+    if (body && body._tepRf) { body._tepRf.hot = undefined; tepRfHot(body, null); tepRfApplySel(body, false); tepRfSearchApply(body); }
   }
 
   /* ── Analysis rail ────────────────────────────────────────────────────────
@@ -29282,7 +29514,7 @@
     const legend = (info.aps || []).slice(0, 8).map((a) => '<span class="tep-rf-tl-key" data-bssid="' + esc(a.bssid) + '" role="button" tabindex="0"><b style="background:' + colOf(a.bssid) + '"></b>'
       + esc(tepRfApShort(a)) + (a.channel != null ? ' <u>ch ' + a.channel + '</u>' : '') + '</span>').join('');
     return '<div class="tep-rf-block"><div class="tep-rf-hd">' + (info.wat ? 'Test timeline' : 'Roam timeline')
-      + '<span class="tep-rf-hd-n">' + (info.wat ? info.bssids + ' BSSID' + (info.bssids === 1 ? '' : 's') : info.handoffs + ' handoff' + (info.handoffs === 1 ? '' : 's')) + ' / ' + tepWirelessWindowLabel() + '</span></div>'
+      + '<span class="tep-rf-hd-n">' + (info.wat ? info.bssids + ' BSSID' + (info.bssids === 1 ? '' : 's') : info.handoffs + ' handoff' + (info.handoffs === 1 ? '' : 's')) + ' / ' + tepWirelessWindowLabel(info.win) + '</span></div>'
       + '<div class="tep-rf-tl">' + cells + '</div>'
       + '<div class="tep-rf-tl-ax">' + [seq.length - 1, Math.round((seq.length - 1) * .75), Math.round((seq.length - 1) * .5), Math.round((seq.length - 1) * .25), 0]
         .map((mm) => '<span>' + tepRfClock(info, mm) + '</span>').join('') + '</div>'
@@ -29364,7 +29596,8 @@
     // The detail slot comes first: a pinned access point (or the hub) opens at
     // the top, where a click lands the eye. tepRfApplySel fills it.
     return '<div class="tep-rf-rail">'
-      + '<div class="tep-rf-detail">' + tepRfDetailHintHtml(info) + '</div>'
+      + tepRfSearchHtml()
+      + '<div class="tep-rf-detail"></div>'
       + tepRfLinkBlockHtml(rec, info)
       + tepRfDepthHtml(info)
       + tepRfRoamTimelineHtml(rec, info)
@@ -29397,7 +29630,7 @@
     const esc = tepEscapeHtmlText;
     tepCloseDeviceTopoView();
     const overlay = document.createElement('div');
-    overlay.className = 'tep-devtopo-overlay';
+    overlay.className = 'tep-devtopo-overlay tep-rf-overlay';
     const backIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
     overlay.innerHTML = '<div class="tep-devtopo-panel">'
@@ -29449,7 +29682,8 @@
       // round store, so this pulls only what is missing.
       fill: () => {
         const id = String(cur.rec.machineId);
-        tepFetchEndpointWirelessMap(false, null, { scope: new Set([id]), depth: 'full' })
+        const nx = tepRfDepthNext(cur.info);
+        tepFetchEndpointWirelessMap(false, null, { scope: new Set([id]), depth: 'full', win: nx ? nx.win : undefined })
           .then((cache) => { const r2 = cache && cache.byMachineId ? cache.byMachineId.get(id) : null; swap(r2 || cur.rec); })
           .catch(() => swap(cur.rec));
       },
@@ -29460,7 +29694,14 @@
     overlay._tepOnResize = onResize;
     requestAnimationFrame(() => { requestAnimationFrame(() => { if (tepDeviceTopoEl === overlay) { overlay.classList.add('tep-devtopo-overlay--in'); try { tepPlaySignalLock(0.7); } catch (_) { /* */ } } }); });
     paint();
-    tepDeviceTopoKeyHandler = (e) => { if (e.key === 'Escape') { e.stopPropagation(); tepCloseDeviceTopoView(); } };
+    // Escape inside a filled-in search clears the search (its own handler)
+    // rather than closing the whole view.
+    tepDeviceTopoKeyHandler = (e) => {
+      if (e.key !== 'Escape') return;
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains('tep-rf-q') && a.value) return;
+      e.stopPropagation(); tepCloseDeviceTopoView();
+    };
     document.addEventListener('keydown', tepDeviceTopoKeyHandler, true);
   }
 
@@ -29481,7 +29722,7 @@
     tepDevtopoScopeMachineIds = new Set([id]);
     tepDevtopoSubnetPubNum = null;
     const overlay = document.createElement('div');
-    overlay.className = 'tep-devtopo-overlay';
+    overlay.className = 'tep-devtopo-overlay tep-rf-overlay';
     const backIcon = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
     overlay.innerHTML = '<div class="tep-devtopo-panel">'
