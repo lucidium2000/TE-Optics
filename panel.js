@@ -99,22 +99,46 @@
   var reduce = false;
   try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
 
-  // Theme. This rule is duplicated from src/panel.js on purpose: the skeleton
-  // paints before the build exists, so it cannot ask the build what the theme
-  // is. Light is the default and dark counts ONLY when someone actually clicked
-  // the toggle (tep-theme-explicit), exactly as applyTheme() decides it --
-  // otherwise a stale 'dark' left in storage by an older build would flash a
-  // dark skeleton at someone whose panel then renders light.
-  // applyTheme() sets data-tep-theme="light" for light and REMOVES the attribute
-  // for dark, so a present attribute is authoritative but an absent one tells us
-  // nothing (it also means "the build has not run on this page yet").
+  // Theme: follow the ThousandEyes page, the way the build does. The build
+  // reads TE's own painted colours (tepReadTePaintedTheme in src/panel.js) and
+  // stores each reading as tep-te-theme-seen; this used to ignore both and
+  // keep an older rule - light unless the panel's toggle had been clicked to
+  // dark - so on a dark ThousandEyes page the skeleton came up light and then
+  // flipped as the panel arrived. CONFIRMED via user report.
+  // In order: the page as painted right now; the last reading the panel
+  // stored; the old rule, for a first-ever run on a page too bare to read.
   var light = true;
   try {
-    var attr = D.documentElement.getAttribute('data-tep-theme');
-    if (attr === 'light') light = true;
+    var seen = localStorage.getItem('tep-te-theme-seen');
+    if (seen === 'light' || seen === 'dark') light = seen === 'light';
     else light = !(localStorage.getItem('tep-theme-explicit') === '1'
                 && localStorage.getItem('tep-theme') === 'dark');
   } catch (e) {}
+  try { var live = hostTheme(); if (live) light = live === 'light'; } catch (e) {}
+  // Same method as the build: hit-test a grid of points, climb from each to
+  // the first opaque background, skip anything of ours, and take the MEDIAN
+  // luma so a white card on a dark page (or the reverse) cannot swing it.
+  // TE leaves <html> and <body> at their defaults, which is why reading those
+  // alone said "light" on a dark app.
+  function hostTheme() {
+    var w = window.innerWidth || 0, h = window.innerHeight || 0, L = [];
+    if (w < 40 || h < 40) return null;
+    var XS = [0.10, 0.32, 0.55, 0.78, 0.94], YS = [0.18, 0.45, 0.72, 0.92];
+    for (var i = 0; i < XS.length; i++) for (var j = 0; j < YS.length; j++) {
+      var el = D.elementFromPoint(Math.round(w * XS[i]), Math.round(h * YS[j]));
+      for (; el && el !== D.documentElement; el = el.parentElement) {
+        var id = el.id || '', cn = typeof el.className === 'string' ? el.className : '';
+        if (id === 'te-panel-root' || id.indexOf('tep-') === 0 || /(^|\s)tep-/.test(cn)) { el = null; break; }
+        var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s\/]+([\d.]+))?/i.exec(getComputedStyle(el).backgroundColor || '');
+        if (!m || (m[4] != null && parseFloat(m[4]) < 0.9)) continue;
+        L.push(0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]);
+        break;
+      }
+    }
+    if (L.length < 4) return null;
+    L.sort(function (a, b) { return a - b; });
+    return L[Math.floor(L.length / 2)] < 128 ? 'dark' : 'light';
+  }
 
   // Coarse Natural Earth land, simplified from the build's own basemap to ~7KB
   // so the shim stays small. Rendered inline (not a data: URI) because TE's
